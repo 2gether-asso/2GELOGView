@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2GELOG | V4.6</title>
+    <title>2GELOG</title>
     
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -11,125 +11,77 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
-        :root { 
-            --bg-deep: #0a0c10; 
-            --panel: #161b22; 
-            --accent: #6366f1; 
-            --text-main: #e6edf3;
-        }
-        body { 
-            font-family: 'Plus Jakarta Sans', sans-serif; 
-            background: var(--bg-deep); 
-            color: var(--text-main);
-            background-image: radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.08) 0%, transparent 40%);
-        }
+        :root { --bg-deep: #0a0c10; --panel: #161b22; --accent: #6366f1; --text-main: #e6edf3; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: var(--bg-deep); color: var(--text-main); }
         .custom-scroll::-webkit-scrollbar { width: 4px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-        
-        .glass-panel { 
-            background: var(--panel); 
-            border: 1px solid rgba(255, 255, 255, 0.05); 
-            border-radius: 1.5rem;
-        }
-
+        .glass-panel { background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 1.5rem; }
         .fc { height: 100% !important; --fc-border-color: rgba(255,255,255,0.05); }
-        .fc .fc-view-harness { flex-grow: 1; }
-        .fc-theme-standard td, .fc-theme-standard th { border: 1px solid rgba(255,255,255,0.05); }
         
-        .rich-event {
-            padding: 5px 7px;
-            border-radius: 6px;
-            border-left-width: 4px;
-            background: rgba(0,0,0,0.4);
-            transition: all 0.2s;
-            overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-        .rich-event:hover { background: rgba(255,255,255,0.08); transform: translateY(-1px); }
-
-        .event-canceled {
-            background: rgba(50, 50, 50, 0.4) !important;
-            opacity: 0.6;
-            filter: grayscale(0.8);
-        }
-
-        .stat-card {
-            background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 100%);
-            border: 1px solid rgba(255,255,255,0.05);
-        }
+        /* Styles enrichis des événements */
+        .rich-event { padding: 4px 6px; border-radius: 6px; border-left-width: 3px; position: relative; transition: all 0.2s; }
+        .event-canceled { opacity: 0.4; filter: grayscale(0.8); border-left-color: #ef4444 !important; }
+        .event-contre { border-left-color: #f59e0b !important; background: rgba(245, 158, 11, 0.15) !important; border-left-style: dashed; }
+        .event-planned { opacity: 0.6; border-left-style: dotted !important; background: rgba(100, 116, 139, 0.1) !important; }
         
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        /* Variantes de couleurs de fond demandées */
+        .bg-default { background: rgba(99, 102, 241, 0.15); } /* Bleu Indigo par défaut */
+        .bg-partenaire { background: rgba(239, 68, 68, 0.2) !important; } /* Rouge */
+        .bg-sanctuaire { background: rgba(168, 85, 247, 0.2) !important; } /* Violet */
+
+        .stat-card { background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 100%); border: 1px solid rgba(255,255,255,0.05); }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         .animate-in { animation: fadeIn 0.3s ease-out forwards; }
     </style>
 </head>
 <body class="h-screen overflow-hidden p-4">
 
     <div class="h-full grid grid-cols-1 lg:grid-cols-[300px_1fr_320px] gap-5">
-        
-        <!-- SIDEBAR LEFT -->
         <aside class="flex flex-col gap-5 overflow-hidden">
             <div class="glass-panel p-6">
                 <h1 class="text-3xl font-900 italic tracking-tighter bg-gradient-to-br from-white to-indigo-500 bg-clip-text text-transparent">LOG - 2GETHER</h1>
                 <p class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-1">Planning en temps réel</p>
             </div>
-            
             <div class="grid grid-cols-1 gap-3">
                 <div class="stat-card p-4 rounded-2xl border-l-4 border-indigo-500">
-                    <div class="text-[9px] uppercase text-indigo-400 font-black mb-1 tracking-widest">Visionnage (Filtré)</div>
-                    <div class="flex justify-between items-baseline">
-                        <span id="stat-watch-sessions" class="text-2xl font-800">0</span>
-                        <span id="stat-watch-time" class="text-xs font-semibold text-slate-400">0h00</span>
-                    </div>
+                    <div class="text-[9px] uppercase text-indigo-400 font-black mb-1">Visionnage</div>
+                    <div class="flex justify-between items-baseline"><span id="stat-watch-sessions" class="text-2xl font-800">0</span><span id="stat-watch-time" class="text-xs font-semibold text-slate-400">0h00</span></div>
                 </div>
                 <div class="stat-card p-4 rounded-2xl border-l-4 border-emerald-500">
-                    <div class="text-[9px] uppercase text-emerald-400 font-black mb-1 tracking-widest">Gaming (Filtré)</div>
-                    <div class="flex justify-between items-baseline">
-                        <span id="stat-game-sessions" class="text-2xl font-800">0</span>
-                        <span id="stat-game-time" class="text-xs font-semibold text-slate-400">0h00</span>
-                    </div>
+                    <div class="text-[9px] uppercase text-emerald-400 font-black mb-1">Gaming</div>
+                    <div class="flex justify-between items-baseline"><span id="stat-game-sessions" class="text-2xl font-800">0</span><span id="stat-game-time" class="text-xs font-semibold text-slate-400">0h00</span></div>
                 </div>
             </div>
-
             <div class="glass-panel p-5 flex flex-col flex-grow min-h-0">
-                <p class="text-[10px] font-800 uppercase tracking-widest text-slate-500 mb-4">Répartition & Filtres</p>
+                <p class="text-[10px] font-800 uppercase tracking-widest text-slate-500 mb-4">Filtres Thématiques</p>
                 <div id="filter-list" class="flex flex-col gap-1 overflow-y-auto custom-scroll pr-2"></div>
             </div>
         </aside>
 
-        <!-- MAIN CONTENT -->
         <main class="flex flex-col gap-5 overflow-hidden">
             <header class="glass-panel h-14 flex items-center px-5 gap-4">
-                <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <input type="text" id="recherche" placeholder="Rechercher (titre, jeu, série...)" class="bg-transparent border-none outline-none w-full text-sm text-white placeholder:text-slate-600 font-medium">
+                <input type="text" id="recherche" placeholder="Rechercher un titre, une note ou un lieu..." class="bg-transparent border-none outline-none w-full text-sm text-white placeholder:text-slate-600 font-medium">
             </header>
-
             <div class="glass-panel flex-grow p-5 flex flex-col min-h-0">
                 <div id="view-header" class="hidden mb-4 flex justify-between items-end">
                     <h2 id="view-title" class="text-xl font-800 text-white">Résultats</h2>
-                    <button onclick="App.clearFilters()" class="text-[10px] font-bold text-indigo-400 uppercase hover:underline">Retour Calendrier</button>
+                    <button onclick="App.clearFilters()" class="text-[10px] font-bold text-indigo-400 uppercase hover:underline">Fermer</button>
                 </div>
-
-                <div id="cal-wrap" class="flex-grow overflow-hidden">
-                    <div id="calendrier"></div>
-                </div>
-                <div id="list-wrap" class="hidden h-full overflow-y-auto custom-scroll space-y-3"></div>
+                <div id="cal-wrap" class="flex-grow overflow-hidden"><div id="calendrier"></div></div>
+                <div id="list-wrap" class="hidden h-full overflow-y-auto custom-scroll space-y-3 pb-10"></div>
             </div>
         </main>
 
-        <!-- RIGHT SIDEBAR -->
         <aside class="glass-panel p-5 flex flex-col h-full overflow-hidden">
             <div class="flex justify-between items-center mb-6">
-                <div>
-                    <h2 class="text-sm font-800 text-white uppercase italic">Prévus</h2>
-                    <p class="text-[9px] text-slate-500 font-bold uppercase">Chronologie estimée</p>
-                </div>
+                <h2 class="text-sm font-800 text-white uppercase italic">Prochainement</h2>
                 <span id="count-res" class="bg-white/5 text-[10px] font-black px-2 py-1 rounded-lg border border-white/10">0</span>
             </div>
             <div id="reserve-list" class="space-y-3 overflow-y-auto flex-grow custom-scroll pr-2"></div>
         </aside>
     </div>
 
-    <!-- MODAL -->
+    <!-- MODALE -->
     <div id="fenetre" class="hidden fixed inset-0 bg-black/90 backdrop-blur-xl z-[9999] flex items-center justify-center p-4 transition-all duration-300 opacity-0" onclick="if(event.target == this) App.UI.closeModal()">
         <div class="max-w-md w-full bg-[#0d1117] rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden transform transition-all scale-95" id="modaleContent">
             <div id="fCouleur" class="h-32 flex items-center justify-center relative">
@@ -137,14 +89,18 @@
                 <div class="absolute inset-0 bg-gradient-to-t from-[#0d1117] to-transparent"></div>
             </div>
             <div class="p-8 text-center -mt-4 relative z-20">
-                <div id="fStatusBadge" class="hidden inline-block px-3 py-1 rounded-full text-[8px] font-900 uppercase tracking-widest mb-3"></div>
+                <div class="flex justify-center gap-2 mb-4">
+                    <div id="fStatusBadge" class="hidden px-3 py-1 rounded-full text-[8px] font-900 uppercase tracking-widest border"></div>
+                    <div id="fProgressBadge" class="px-3 py-1 rounded-full text-[8px] font-900 uppercase tracking-widest border border-white/10"></div>
+                </div>
                 <h2 id="fTitre" class="text-xl font-800 text-white mb-1"></h2>
+                <div id="fLoc" class="hidden text-[10px] font-black text-rose-400 uppercase mb-2 tracking-widest flex items-center justify-center gap-2"><span>📍</span><span id="fLocVal"></span></div>
                 <div id="fDate" class="text-[10px] font-bold text-indigo-400 uppercase mb-6 tracking-widest"></div>
                 <div class="grid grid-cols-2 gap-3 mb-6">
                     <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Durée</div><div id="fDuree" class="text-sm font-800 text-white">--</div></div>
                     <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Type</div><div id="fType" class="text-sm font-800 text-white">--</div></div>
                 </div>
-                <div class="bg-white/5 p-4 rounded-xl text-left text-xs text-slate-300 italic mb-6 leading-relaxed" id="fNotes"></div>
+                <div class="bg-white/5 p-4 rounded-xl text-left text-xs text-slate-300 italic mb-6 leading-relaxed max-h-48 overflow-y-auto custom-scroll" id="fNotes"></div>
                 <button onclick="App.UI.closeModal()" class="w-full py-4 bg-indigo-600 rounded-2xl text-xs font-900 uppercase text-white shadow-lg">Fermer</button>
             </div>
         </div>
@@ -153,29 +109,30 @@
     <script>
         const CONFIG = {
             CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVu8Z5ZxyDpRVG3eFFLuWH_iWKZyKuLWKvW617wBfAMT6no6UVah6HSqlhM8LDKjheEc4EBfSXgooM/pub?gid=0&single=true&output=csv",
-            DEFAULT_DATE: new Date(),
             THEMES : {
-                "Soirée Jeux":      { img: "soiree-jeux.png",      col: "#4fc4e8", category: "game" },
-                "Bravery":          { img: "bravery.png",          col: "#e8c44f", category: "game" },
-                "Soirée Film":      { img: "soiree-film.png",      col: "#e84f4f", category: "watch" },
-                "Soirée Série":     { img: "soiree-serie.png",     col: "#e84f4f", category: "watch" },
-                "Soirée Spéciale":  { img: "soiree-speciale.png",  col: "#704fe8", category: "watch" },
-                "Hors Prog":        { img: "hors-prog.png",        col: "#914fe8", category: "watch" },
-                "Gazette 2025":     { img: "gazette-2025.png",     col: "#bd8f5e", category: "watch" },
-                "Gazette 2026":     { img: "gazette-2026.png",     col: "#5ebd8f", category: "watch" },
-                "Event St Valentin":{ img: "st-valentin.png",      col: "#bd5ea4", category: "watch" },
-                "Meet Up":          { img: "meet-up.png",          col: "#5ebdb0", category: "watch" },
-                "Event Halloween":  { img: "halloween.png",        col: "#e6b33e", category: "watch" },
-                "Event Nowel":      { img: "nowel.png",            col: "#79bd57", category: "watch" },
-                "JDR":              { img: "jdr.png",              col: "#e342de", category: "game" },
-                "Soirée Minecraft": { img: "minecraft.png",        col: "#42e342", category: "game" },
-                "Annulé / Reporté": { img: "hors-prog.png",        col: "#ef4444", category: "watch", status: "canceled" },
-                "default":          { img: "hors-prog.png",        col: "#914fe8", category: "watch" }
+                "Soirée Jeux":      { img: "soiree-jeux.png", col: "#4fc4e8", cat: "game" },
+                "Bravery":          { img: "bravery.png", col: "#e8c44f", cat: "game" },
+                "Soirée Film":      { img: "soiree-film.png", col: "#e84f4f", cat: "watch" },
+                "Soirée Série":     { img: "soiree-serie.png", col: "#e84f4f", cat: "watch" },
+                "Soirée Spéciale":  { img: "soiree-speciale.png", col: "#704fe8", cat: "watch" },
+                "Hors Prog":        { img: "hors-prog.png", col: "#914fe8", cat: "watch" },
+                "Gazette 2025":     { img: "gazette-2025.png", col: "#bd8f5e", cat: "watch" },
+                "Gazette 2026":     { img: "gazette-2026.png", col: "#5ebd8f", cat: "watch" },
+                "Event St Valentin":{ img: "st-valentin.png", col: "#bd5ea4", cat: "watch" },
+                "Meet Up":          { img: "meet-up.png", col: "#3b82f6", cat: "watch" },
+                "Partenaire":       { img: "meet-up.png", col: "#ef4444", cat: "watch" },
+                "Sanctuaire":       { img: "meet-up.png", col: "#a855f7", cat: "watch" },
+                "Event Halloween":  { img: "halloween.png", col: "#e6b33e", cat: "watch" },
+                "Event Nowel":      { img: "nowel.png", col: "#79bd57", cat: "watch" },
+                "JDR":              { img: "jdr.png", col: "#e342de", cat: "game" },
+                "Soirée Minecraft": { img: "minecraft.png", col: "#42e342", cat: "game" },
+                "Annulé / Reporté": { img: "hors-prog.png", col: "#ef4444", cat: "watch" },
+                "default":          { img: "hors-prog.png", col: "#914fe8", cat: "watch" }
             }
         };
 
         const App = {
-            state: { raw: [], events: [], filters: { category: null, search: "" }, calendar: null },
+            state: { raw: [], events: [], forbidden: new Set(), filters: { category: null, search: "" }, calendar: null },
             
             init() { this.initCalendar(); this.fetchData(); this.bindEvents(); },
 
@@ -190,7 +147,8 @@
                 const data = this.processData(); 
                 this.state.events = data.filteredEvents; 
                 this.updateStats(data.stats); 
-                this.state.calendar.refetchEvents(); 
+                this.state.calendar.removeAllEvents();
+                this.state.calendar.addEventSource(this.state.events);
                 this.renderSearch(data.filteredEvents); 
                 this.renderPrevus(); 
                 this.renderFilters(data.categoryStats);
@@ -198,155 +156,126 @@
 
             processData() {
                 const results = { filteredEvents: [], stats: { watch: {n:0, t:0}, game: {n:0, t:0} }, categoryStats: {} };
-                
-                this.state.raw.forEach(row => {
-                    const title = row["Nom de l'event"]; if (!title) return;
-                    const notes = row["Notes"] || "";
-                    const themeName = row["Type d'event"];
-                    const theme = CONFIG.THEMES[themeName] || CONFIG.THEMES.default;
-                    const duration = this.utils.parseDuration(row["Durée Réelle"]);
-                    const startFull = row["Date de début"];
-                    const startDate = this.utils.parseDate(startFull);
-                    
-                    const isCanceledByNote = notes.toLowerCase().includes("annulé") || notes.toLowerCase().includes("reporté");
+                const today = new Date(); today.setHours(0,0,0,0);
+                this.state.forbidden.clear();
 
-                    const eventObj = { 
-                        title, notes, type: themeName, img: theme.img, 
-                        col: theme.col, category: theme.category, dur: duration, 
-                        isCanceled: theme.status === "canceled" || isCanceledByNote, 
-                        time: startFull?.includes(' ') ? startFull.split(' ')[1] : "",
-                        hasNotes: notes.length > 0 && notes !== "Aucun détail."
+                this.state.raw.forEach(row => {
+                    const d = this.utils.parseDate(row["Date de début"]);
+                    if (d && (row["Type d'event"] === "Soirée Film" || row["Type d'event"] === "Soirée Série")) 
+                        this.state.forbidden.add(d.toISOString().split('T')[0]);
+                });
+
+                this.state.raw.forEach(row => {
+                    let title = row["Nom de l'event"]; if (!title) return;
+                    let notes = row["Notes"] || "";
+                    let type = row["Type d'event"];
+                    const start = this.utils.parseDate(row["Date de début"]);
+                    const end = this.utils.parseDate(row["Date de fin"]);
+
+                    // Segmentation IRL
+                    const isPartenaire = notes.toLowerCase().includes("partenaire");
+                    const isSanctuaire = notes.toLowerCase().includes("sanctuaire");
+                    const isCanceled = notes.toLowerCase().includes("annulé") || notes.toLowerCase().includes("reporté") || type === "Annulé / Reporté";
+                    
+                    if (isPartenaire) type = "Partenaire";
+                    else if (isSanctuaire) type = "Sanctuaire";
+                    else if (isCanceled) type = "Annulé / Reporté";
+
+                    const theme = CONFIG.THEMES[type] || CONFIG.THEMES.default;
+                    
+                    if (!start) {
+                        const datePrevue = this.utils.extractDate(notes);
+                        if (datePrevue) {
+                            this.addInst(results, {
+                                title: `[PRÉVU] ${title}`, notes, type, img: theme.img, col: "#64748b",
+                                start: datePrevue.toISOString().split('T')[0],
+                                isCanceled: false, isPlanned: true, progressStatus: "Planifié",
+                                hasNotes: notes.length > 5
+                            }, theme);
+                        }
+                        return;
+                    }
+
+                    let isContre = notes.toLowerCase().includes("remplacé");
+                    const base = { 
+                        title: isContre ? "Contre Soirée" : title, 
+                        notes: isContre ? `Initialement : ${title}\n---\n${notes}` : notes, 
+                        type, img: theme.img, col: theme.col, category: theme.cat, 
+                        dur: this.utils.parseDuration(row["Durée Réelle"]),
+                        isCanceled, isContre, isPlanned: false,
+                        progressStatus: (end && end < today) ? "Terminé" : "En Cours",
+                        hasNotes: notes.length > 5,
+                        location: this.utils.extractLoc(notes),
+                        isPartenaire, isSanctuaire // Flags pour le style
                     };
 
-                    if (!startDate) return;
+                    const episodes = this.utils.extractEpisodes(notes);
+                    const pauseDate = this.utils.extractSpecificDate(notes, "pause");
+                    const repriseDate = this.utils.extractSpecificDate(notes, "reprise");
 
-                    let cur = new Date(startDate);
-                    const limit = this.utils.parseDate(row["Date de fin"]) || CONFIG.DEFAULT_DATE;
-                    
-                    do {
-                        const dateStr = cur.toISOString().split('T')[0];
-                        const instance = { ...eventObj, start: dateStr };
-                        
-                        // FIX: Si le filtre sélectionné est "Annulé / Reporté", on vérifie isCanceled
-                        // Sinon, on vérifie la correspondance exacte du Type d'event.
-                        let matchesCategory = false;
-                        if (!this.state.filters.category) {
-                            matchesCategory = true;
-                        } else if (this.state.filters.category === "Annulé / Reporté") {
-                            matchesCategory = instance.isCanceled;
-                        } else {
-                            matchesCategory = instance.type === this.state.filters.category;
+                    if (type === "Meet Up" || isPartenaire || isSanctuaire) {
+                        let cur = new Date(start);
+                        const limit = end || start;
+                        while (cur <= limit) {
+                            this.addInst(results, { ...base, start: cur.toISOString().split('T')[0], isIRL: (type !== "Meet Up") }, theme);
+                            cur.setDate(cur.getDate() + 1);
                         }
-
-                        const matchesSearch = !this.state.filters.search || 
-                            title.toLowerCase().includes(this.state.filters.search.toLowerCase()) ||
-                            notes.toLowerCase().includes(this.state.filters.search.toLowerCase());
-
-                        if (!results.categoryStats[themeName]) results.categoryStats[themeName] = 0;
-                        results.categoryStats[themeName] += duration;
-
-                        if (matchesCategory && matchesSearch) {
-                            results.filteredEvents.push(instance);
-                            if (!instance.isCanceled && results.stats[theme.category]) {
-                                results.stats[theme.category].n++; 
-                                results.stats[theme.category].t += duration;
-                            }
+                    } 
+                    else if (episodes.length > 0) {
+                        episodes.forEach(ep => { 
+                            if (!this.state.forbidden.has(ep.date) && !this.isPaused(ep.date, pauseDate, repriseDate)) 
+                                this.addInst(results, { ...base, start: ep.date, sub: ep.text }, theme); 
+                        });
+                    } 
+                    else if (notes.toLowerCase().includes("hebdo") || type === "Soirée Série") {
+                        let cur = new Date(start);
+                        const limit = end || new Date(today.getTime() + (90 * 24 * 60 * 60 * 1000));
+                        while (cur <= limit) {
+                            const iso = cur.toISOString().split('T')[0];
+                            if (!this.isPaused(iso, pauseDate, repriseDate)) this.addInst(results, { ...base, start: iso }, theme);
+                            cur.setDate(cur.getDate() + 7);
                         }
-
-                        if (themeName !== "Soirée Série") break;
-                        cur.setDate(cur.getDate() + 7);
-                    } while (cur <= limit);
+                    } 
+                    else {
+                        this.addInst(results, { ...base, start: start.toISOString().split('T')[0] }, theme);
+                    }
                 });
                 return results;
             },
 
-            updateStats(s) {
-                document.getElementById('stat-watch-sessions').innerText = s.watch.n;
-                document.getElementById('stat-watch-time').innerText = this.utils.formatMinutes(s.watch.t);
-                document.getElementById('stat-game-sessions').innerText = s.game.n;
-                document.getElementById('stat-game-time').innerText = this.utils.formatMinutes(s.game.t);
+            isPaused(dateIso, pause, reprise) {
+                const d = new Date(dateIso);
+                return pause && d >= pause && (!reprise || d < reprise);
             },
 
-            renderSearch(events) {
-                const wrap = document.getElementById('list-wrap');
-                const head = document.getElementById('view-header');
-                const isActive = this.state.filters.search.length > 0 || this.state.filters.category;
+            addInst(results, inst, theme) {
+                const matchesCat = !this.state.filters.category || inst.type === this.state.filters.category;
+                const matchesSearch = !this.state.filters.search || inst.title.toLowerCase().includes(this.state.filters.search.toLowerCase());
                 
-                if (isActive) {
-                    wrap.classList.remove('hidden'); document.getElementById('cal-wrap').classList.add('hidden'); head.classList.remove('hidden');
-                    document.getElementById('view-title').innerText = this.state.filters.category || "Résultats";
-                    wrap.innerHTML = events.sort((a,b) => new Date(b.start) - new Date(a.start)).map((ev, idx) => `
-                        <div class="glass-panel p-4 flex justify-between items-center hover:bg-white/5 cursor-pointer animate-in" onclick="App.UI.openModalByIndex(${idx})">
-                            <div class="flex items-center gap-4">
-                                <img src="img/${ev.img}" class="w-8 h-8 drop-shadow-lg">
-                                <div>
-                                    <div class="text-xs font-800 ${ev.isCanceled ? 'line-through opacity-40 text-rose-400' : ''}">${ev.title}</div>
-                                    <div class="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">${ev.type} • ${ev.dur} min</div>
-                                </div>
-                            </div>
-                            <div class="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full">${this.utils.formatDateFR(ev.start)}</div>
-                        </div>`).join('');
-                } else { 
-                    wrap.classList.add('hidden'); document.getElementById('cal-wrap').classList.remove('hidden'); head.classList.add('hidden');
-                    if(this.state.calendar) this.state.calendar.updateSize();
-                }
-            },
+                if (!results.categoryStats[inst.type]) results.categoryStats[inst.type] = 0;
+                results.categoryStats[inst.type] += inst.dur;
 
-            renderFilters(catStats) {
-                const c = document.getElementById('filter-list');
-                c.innerHTML = "";
-                Object.keys(CONFIG.THEMES).filter(k => k !== 'default').forEach(k => {
-                    const time = catStats[k] || 0;
-                    const b = document.createElement('button');
-                    const active = this.state.filters.category === k;
-                    b.className = `w-full text-left px-3 py-2 rounded-xl text-[10px] font-700 uppercase transition-all flex items-center justify-between group ${active ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'text-slate-500 hover:text-slate-300'}`;
-                    b.innerHTML = `<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full" style="background:${CONFIG.THEMES[k].col}"></span><span>${k}</span></div><span class="text-[8px] opacity-40 group-hover:opacity-100">${this.utils.formatMinutes(time)}</span>`;
-                    b.onclick = () => { this.state.filters.category = active ? null : k; this.refresh(); };
-                    c.appendChild(b);
-                });
-            },
-
-            clearFilters() {
-                this.state.filters.category = null; this.state.filters.search = "";
-                document.getElementById('recherche').value = ""; this.refresh();
-            },
-
-            initCalendar() {
-                this.state.calendar = new FullCalendar.Calendar(document.getElementById('calendrier'), {
-                    initialView: 'dayGridMonth', locale: 'fr', firstDay: 1, height: '100%',
-                    headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,dayGridWeek' },
-                    events: (info, success) => success(this.state.events),
-                    eventClick: (info) => this.UI.openModal({ title: info.event.title, ...info.event.extendedProps, start: info.event.start }),
-                    eventContent: (arg) => {
-                        const p = arg.event.extendedProps;
-                        return { html: `
-                            <div class="rich-event ${p.isCanceled ? 'event-canceled' : ''}" style="border-color:${p.col}">
-                                <div class="flex items-center justify-between mb-0.5">
-                                    <span class="text-[8px] font-black opacity-60">${p.time || ''}</span>
-                                    ${p.hasNotes ? '<span class="text-[8px]">📝</span>' : ''}
-                                </div>
-                                <div class="text-[11px] font-bold truncate leading-tight ${p.isCanceled ? 'line-through text-rose-400' : 'text-white'}">
-                                    ${arg.event.title}
-                                </div>
-                                ${p.isCanceled ? `<div class="text-[8px] font-medium text-slate-400 truncate mt-0.5 italic">${p.notes}</div>` : ''}
-                            </div>` };
+                if (matchesCat && matchesSearch) {
+                    results.filteredEvents.push(inst);
+                    if (!inst.isCanceled && !inst.isPlanned && results.stats[theme.cat]) { 
+                        results.stats[theme.cat].n++; results.stats[theme.cat].t += inst.dur; 
                     }
-                }); 
-                this.state.calendar.render();
-            },
-
-            bindEvents() { 
-                document.getElementById('recherche').addEventListener('input', (e) => { this.state.filters.search = e.target.value; this.refresh(); }); 
+                }
             },
 
             utils: {
                 parseDate(s) { if (!s || !s.includes('/')) return null; const [d, m, y] = s.split(' ')[0].split('/'); return new Date(y, m - 1, d, 12, 0); },
                 parseDuration(d) { if (!d || !d.includes(':')) return 0; const [h, m] = d.split(':'); return (parseInt(h) || 0) * 60 + (parseInt(m) || 0); },
                 formatMinutes(m) { return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; },
-                formatDateFR(iso) { if(!iso) return "Prévu"; return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }); },
-                extractDate(text) { 
-                    const match = text?.match(/\d{2}\/\d{2}\/\d{4}/); if (!match) return null;
-                    const [d, m, y] = match[0].split('/'); return new Date(y, m - 1, d);
+                formatDateFR(iso) { return iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : "Prévu"; },
+                extractLoc(text) { const m = text.match(/Loc\s*:\s*(.*)/i); return m ? m[1].trim() : null; },
+                extractDate(text) { const m = text?.match(/\d{2}\/\d{2}\/\d{4}/); return m ? this.parseDate(m[0]) : null; },
+                extractSpecificDate(text, kw) { const m = text.match(new RegExp(`${kw}\\s+(\\d{2}/\\d{2}/\\d{4})`, "i")); return m ? this.parseDate(m[1]) : null; },
+                extractEpisodes(notes) {
+                    return notes.split('\n').map(l => {
+                        const m = l.match(/(\d{2}\/\d{2}\/\d{4}):\s*(.*)/);
+                        return m ? { date: `${m[1].split('/')[2]}-${m[1].split('/')[1]}-${m[1].split('/')[0]}`, text: m[2].trim() } : null;
+                    }).filter(x => x);
                 }
             },
 
@@ -357,42 +286,136 @@
                     document.getElementById('fDate').innerText = App.utils.formatDateFR(data.start);
                     document.getElementById('fNotes').innerText = data.notes;
                     document.getElementById('fDuree').innerText = data.dur > 0 ? App.utils.formatMinutes(data.dur) : "--";
-                    document.getElementById('fType').innerText = data.type || "Event";
-                    document.getElementById('fIcone').src = "img/" + (data.img || "hors-prog.png");
-                    const b = document.getElementById('fStatusBadge'); b.className = "hidden inline-block px-3 py-1 rounded-full text-[8px] font-900 uppercase mb-3";
-                    if (data.isCanceled) { b.innerText = "Annulé / Reporté"; b.classList.add('bg-rose-500/20', 'text-rose-500', 'border', 'border-rose-500/30'); b.classList.remove('hidden'); }
+                    document.getElementById('fType').innerText = data.type;
+                    document.getElementById('fIcone').src = "img/" + data.img;
+                    
+                    const locEl = document.getElementById('fLoc');
+                    if(data.location) { locEl.classList.remove('hidden'); document.getElementById('fLocVal').innerText = data.location; }
+                    else locEl.classList.add('hidden');
+
+                    const pb = document.getElementById('fProgressBadge');
+                    pb.innerText = data.progressStatus;
+                    pb.className = `px-3 py-1 rounded-full text-[8px] font-900 uppercase tracking-widest border ${data.progressStatus === 'Terminé' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`;
+                    
+                    const b = document.getElementById('fStatusBadge');
+                    b.className = "px-3 py-1 rounded-full text-[8px] font-900 uppercase border " + (data.isCanceled || data.isContre || data.isPlanned || data.isIRL ? "" : "hidden");
+                    if(data.isCanceled) { b.innerText = "Annulé"; b.classList.add('bg-rose-500/20', 'text-rose-500', 'border-rose-500/30'); }
+                    else if(data.isContre) { b.innerText = "Contre Soirée"; b.classList.add('bg-amber-500/20', 'text-amber-500', 'border-amber-500/30'); }
+                    else if(data.isIRL) { b.innerText = "Évènement IRL"; b.classList.add('bg-emerald-500/20', 'text-emerald-400', 'border-emerald-500/30'); }
+                    else if(data.isPlanned) { b.innerText = "Planification"; b.classList.add('bg-slate-500/20', 'text-slate-400', 'border-slate-500/30'); }
+
                     document.getElementById('fCouleur').style.background = `radial-gradient(circle at 50% 0%, ${data.col}40 0%, transparent 100%)`;
                     m.classList.remove('hidden'); setTimeout(() => { m.classList.add('opacity-100'); document.getElementById('modaleContent').classList.remove('scale-95'); }, 10);
                 },
-                openModalByData(b64) {
-                    const row = JSON.parse(decodeURIComponent(escape(atob(b64))));
-                    const theme = CONFIG.THEMES[row["Type d'event"]] || CONFIG.THEMES.default;
-                    const notes = row["Notes"] || "";
-                    const isC = theme.status === "canceled" || notes.toLowerCase().includes("annulé") || notes.toLowerCase().includes("reporté");
-                    this.openModal({ title: row["Nom de l'event"], notes, type: row["Type d'event"], img: theme.img, col: theme.col, dur: App.utils.parseDuration(row["Durée Réelle"]), start: null, isCanceled: isC });
-                },
-                openModalByIndex(idx) { this.openModal(App.state.events[idx]); },
                 closeModal() {
                     const m = document.getElementById('fenetre'); 
                     m.classList.remove('opacity-100'); document.getElementById('modaleContent').classList.add('scale-95');
                     setTimeout(() => m.classList.add('hidden'), 300);
                 }
             },
+
+            initCalendar() {
+                this.state.calendar = new FullCalendar.Calendar(document.getElementById('calendrier'), {
+                    initialView: 'dayGridMonth', locale: 'fr', firstDay: 1, height: '100%',
+                    headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,dayGridWeek' },
+                    eventClick: (info) => this.UI.openModal({ ...info.event.extendedProps, title: info.event.title, start: info.event.start }),
+                    eventContent: (arg) => {
+                        const p = arg.event.extendedProps;
+                        const bgClass = p.isPartenaire ? 'bg-partenaire' : (p.isSanctuaire ? 'bg-sanctuaire' : 'bg-default');
+                        return { html: `
+                            <div class="rich-event ${bgClass} ${p.isCanceled ? 'event-canceled' : ''} ${p.isContre ? 'event-contre' : ''} ${p.isPlanned ? 'event-planned' : ''}" style="border-left-color:${p.col}">
+                                <div class="flex items-center justify-between mb-0.5">
+                                    <span class="text-[7px] font-black uppercase ${p.progressStatus === 'Terminé' ? 'text-emerald-500' : 'text-amber-400'}">${p.progressStatus}</span>
+                                    <div class="flex gap-1">${p.location ? '<span>📍</span>' : ''}${p.hasNotes ? '<span>📝</span>' : ''}</div>
+                                </div>
+                                <div class="text-[10px] font-bold truncate leading-tight ${p.isCanceled ? 'line-through text-rose-400' : 'text-white'}">${arg.event.title}</div>
+                                ${p.sub ? `<div class="text-[8px] font-medium text-indigo-300 truncate mt-0.5 italic">${p.sub}</div>` : ''}
+                            </div>` };
+                    }
+                }); 
+                this.state.calendar.render();
+            },
+
+            renderSearch(events) {
+                const wrap = document.getElementById('list-wrap');
+                const calWrap = document.getElementById('cal-wrap');
+                const isActive = this.state.filters.search.length > 0 || this.state.filters.category;
+                
+                if (isActive) {
+                    wrap.classList.remove('hidden'); calWrap.classList.add('hidden'); document.getElementById('view-header').classList.remove('hidden');
+                    wrap.innerHTML = events.sort((a,b) => new Date(b.start) - new Date(a.start)).map((ev) => `
+                        <div class="glass-panel p-4 flex justify-between items-center hover:bg-white/5 cursor-pointer animate-in" onclick='App.UI.openModal(${JSON.stringify(ev).replace(/'/g, "&apos;")})'>
+                            <div class="flex items-center gap-4 min-w-0"><img src="img/${ev.img}" class="w-8 h-8 opacity-80 shrink-0">
+                                <div class="min-w-0">
+                                    <div class="text-xs font-800 truncate ${ev.isCanceled ? 'line-through text-rose-400 opacity-50' : ''}">${ev.title}</div>
+                                    <div class="flex items-center gap-2"><div class="text-[8px] font-black uppercase ${ev.progressStatus === 'Terminé' ? 'text-emerald-500' : 'text-amber-500'}">${ev.progressStatus}</div>${ev.location ? `<div class="text-[8px] font-bold text-rose-400 uppercase italic">📍 ${ev.location}</div>` : ''}</div>
+                                </div>
+                            </div>
+                            <div class="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full shrink-0">${this.utils.formatDateFR(ev.start)}</div>
+                        </div>`).join('') || `<div class="text-center py-10 text-slate-500 text-xs">Aucun résultat</div>`;
+                } else { 
+                    wrap.classList.add('hidden'); calWrap.classList.remove('hidden'); document.getElementById('view-header').classList.add('hidden');
+                    setTimeout(() => this.state.calendar?.updateSize(), 50);
+                }
+            },
+
+            renderFilters(catStats) {
+                const c = document.getElementById('filter-list'); c.innerHTML = "";
+                Object.keys(CONFIG.THEMES).filter(k => k !== 'default').forEach(k => {
+                    const active = this.state.filters.category === k;
+                    const b = document.createElement('button');
+                    b.className = `w-full text-left px-3 py-2 rounded-xl text-[10px] font-700 uppercase flex items-center justify-between group transition-all ${active ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'text-slate-500 hover:text-slate-300'}`;
+                    b.innerHTML = `<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full" style="background:${CONFIG.THEMES[k].col}"></span><span>${k}</span></div><span class="text-[8px] opacity-40">${this.utils.formatMinutes(catStats[k] || 0)}</span>`;
+                    b.onclick = () => { this.state.filters.category = active ? null : k; this.refresh(); };
+                    c.appendChild(b);
+                });
+            },
+
             renderPrevus() {
                 const res = this.state.raw.filter(r => r["Nom de l'event"] && !r["Date de début"])
-                    .map(r => ({ ...r, extractedDate: App.utils.extractDate(r["Notes"]) }))
-                    .sort((a, b) => (a.extractedDate || 1) - (b.extractedDate || -1));
+                    .map(r => ({ ...r, ext: App.utils.extractDate(r["Notes"]) }))
+                    .sort((a, b) => (a.ext || new Date(2099,0,1)) - (b.ext || new Date(2099,0,1)));
+                
                 document.getElementById('count-res').innerText = res.length;
                 document.getElementById('reserve-list').innerHTML = res.map(row => {
-                    const t = CONFIG.THEMES[row["Type d'event"]] || CONFIG.THEMES.default;
-                    return `<div class="stat-card p-3 rounded-xl hover:border-indigo-500/50 cursor-pointer flex items-center justify-between group transition-all" onclick="App.UI.openModalByData('${btoa(unescape(encodeURIComponent(JSON.stringify(row))))}')">
+                    const type = row["Type d'event"];
+                    const t = CONFIG.THEMES[type] || CONFIG.THEMES.default;
+                    const evData = { 
+                        title: row["Nom de l'event"], notes: row["Notes"] || "", img: t.img, col: t.col, type: type, 
+                        dur: 0, start: row.ext ? row.ext.toISOString().split('T')[0] : null, progressStatus: 'Planifié', 
+                        isCanceled: false, isPlanned: true, hasNotes: (row["Notes"] || "").length > 5
+                    };
+                    return `
+                    <div class="stat-card p-3 rounded-xl hover:border-indigo-500/50 cursor-pointer flex items-center justify-between group animate-in" 
+                         onclick='App.UI.openModal(${JSON.stringify(evData).replace(/'/g, "&apos;")})'>
                         <div class="flex items-center gap-3 overflow-hidden">
-                            <img src="img/${t.img}" class="w-5 h-5 opacity-70 group-hover:opacity-100">
-                            <div class="text-[10px] font-700 uppercase truncate text-slate-400 group-hover:text-white">${row["Nom de l'event"]}</div>
+                            <img src="img/${t.img}" class="w-5 h-5 opacity-50 group-hover:opacity-100 transition-opacity">
+                            <div class="min-w-0">
+                                <div class="text-[10px] font-700 uppercase truncate text-slate-400 group-hover:text-white transition-colors">${row["Nom de l'event"]}</div>
+                                <div class="text-[7px] font-black text-slate-600 uppercase">${type}</div>
+                            </div>
                         </div>
-                        <div class="text-[8px] font-black text-indigo-400/40 group-hover:text-indigo-400 shrink-0 ml-2">${row.extractedDate ? row.extractedDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : "TBD"}</div>
+                        <div class="text-[8px] font-black text-indigo-400/40 group-hover:text-indigo-400 ml-2 shrink-0">
+                            ${row.ext ? row.ext.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : "À DÉTERMINER"}
+                        </div>
                     </div>`;
                 }).join('');
+            },
+
+            updateStats(s) {
+                document.getElementById('stat-watch-sessions').innerText = s.watch.n;
+                document.getElementById('stat-watch-time').innerText = this.utils.formatMinutes(s.watch.t);
+                document.getElementById('stat-game-sessions').innerText = s.game.n;
+                document.getElementById('stat-game-time').innerText = this.utils.formatMinutes(s.game.t);
+            },
+
+            bindEvents() { 
+                document.getElementById('recherche').addEventListener('input', (e) => { this.state.filters.search = e.target.value; this.refresh(); }); 
+            },
+
+            clearFilters() { 
+                this.state.filters.category = null; this.state.filters.search = ""; 
+                document.getElementById('recherche').value = ""; this.refresh();
             }
         };
         document.addEventListener('DOMContentLoaded', () => App.init());
