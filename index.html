@@ -16,18 +16,23 @@
         .custom-scroll::-webkit-scrollbar { width: 4px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
         .glass-panel { background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 1.5rem; }
-        .fc { height: 100% !important; --fc-border-color: rgba(255,255,255,0.05); }
         
+        /* FULL WIDTH OVERRIDE - Pour maximiser la visibilité sur mobile/desktop */
+        .fc-daygrid-event-harness { margin: 1px 0 !important; width: 100% !important; }
+        .fc-event { background: none !important; border: none !important; margin: 0 !important; width: 100% !important; display: block !important; }
+        .fc-daygrid-day-events { padding: 0 !important; }
+        .fc { height: 100% !important; --fc-border-color: rgba(255,255,255,0.05); }
+
         /* Styles enrichis des événements */
-        .rich-event { padding: 4px 6px; border-radius: 6px; border-left-width: 3px; position: relative; transition: all 0.2s; }
+        .rich-event { padding: 6px 10px; border-radius: 4px; border-left-width: 4px; position: relative; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); width: 100%; }
         .event-canceled { opacity: 0.4; filter: grayscale(0.8); border-left-color: #ef4444 !important; }
         .event-contre { border-left-color: #f59e0b !important; background: rgba(245, 158, 11, 0.15) !important; border-left-style: dashed; }
         .event-planned { opacity: 0.6; border-left-style: dotted !important; background: rgba(100, 116, 139, 0.1) !important; }
         
-        /* Variantes de couleurs de fond demandées */
-        .bg-default { background: rgba(99, 102, 241, 0.15); } /* Bleu Indigo par défaut */
-        .bg-partenaire { background: rgba(239, 68, 68, 0.2) !important; } /* Rouge */
-        .bg-sanctuaire { background: rgba(168, 85, 247, 0.2) !important; } /* Violet */
+        /* Variantes de couleurs de fond */
+        .bg-default { background: rgba(99, 102, 241, 0.12); } 
+        .bg-partenaire { background: rgba(239, 68, 68, 0.18) !important; } 
+        .bg-sanctuaire { background: rgba(168, 85, 247, 0.18) !important; }
 
         .stat-card { background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 100%); border: 1px solid rgba(255,255,255,0.05); }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -37,6 +42,7 @@
 <body class="h-screen overflow-hidden p-4">
 
     <div class="h-full grid grid-cols-1 lg:grid-cols-[300px_1fr_320px] gap-5">
+        <!-- Sidebar Gauche : Stats & Filtres -->
         <aside class="flex flex-col gap-5 overflow-hidden">
             <div class="glass-panel p-6">
                 <h1 class="text-3xl font-900 italic tracking-tighter bg-gradient-to-br from-white to-indigo-500 bg-clip-text text-transparent">LOG - 2GETHER</h1>
@@ -58,6 +64,7 @@
             </div>
         </aside>
 
+        <!-- Main : Calendrier & Recherche -->
         <main class="flex flex-col gap-5 overflow-hidden">
             <header class="glass-panel h-14 flex items-center px-5 gap-4">
                 <input type="text" id="recherche" placeholder="Rechercher un titre, une note ou un lieu..." class="bg-transparent border-none outline-none w-full text-sm text-white placeholder:text-slate-600 font-medium">
@@ -72,6 +79,7 @@
             </div>
         </main>
 
+        <!-- Sidebar Droite : Prochainement -->
         <aside class="glass-panel p-5 flex flex-col h-full overflow-hidden">
             <div class="flex justify-between items-center mb-6">
                 <h2 class="text-sm font-800 text-white uppercase italic">Prochainement</h2>
@@ -81,7 +89,7 @@
         </aside>
     </div>
 
-    <!-- MODALE -->
+    <!-- MODALE UNIFIÉE -->
     <div id="fenetre" class="hidden fixed inset-0 bg-black/90 backdrop-blur-xl z-[9999] flex items-center justify-center p-4 transition-all duration-300 opacity-0" onclick="if(event.target == this) App.UI.closeModal()">
         <div class="max-w-md w-full bg-[#0d1117] rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden transform transition-all scale-95" id="modaleContent">
             <div id="fCouleur" class="h-32 flex items-center justify-center relative">
@@ -96,8 +104,9 @@
                 <h2 id="fTitre" class="text-xl font-800 text-white mb-1"></h2>
                 <div id="fLoc" class="hidden text-[10px] font-black text-rose-400 uppercase mb-2 tracking-widest flex items-center justify-center gap-2"><span>📍</span><span id="fLocVal"></span></div>
                 <div id="fDate" class="text-[10px] font-bold text-indigo-400 uppercase mb-6 tracking-widest"></div>
-                <div class="grid grid-cols-2 gap-3 mb-6">
+                <div class="grid grid-cols-3 gap-3 mb-6">
                     <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Durée</div><div id="fDuree" class="text-sm font-800 text-white">--</div></div>
+                    <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Heure</div><div id="fHeure" class="text-sm font-800 text-white">--</div></div>
                     <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Type</div><div id="fType" class="text-sm font-800 text-white">--</div></div>
                 </div>
                 <div class="bg-white/5 p-4 rounded-xl text-left text-xs text-slate-300 italic mb-6 leading-relaxed max-h-48 overflow-y-auto custom-scroll" id="fNotes"></div>
@@ -159,20 +168,23 @@
                 const today = new Date(); today.setHours(0,0,0,0);
                 this.state.forbidden.clear();
 
+                // 1. Détection des conflits
                 this.state.raw.forEach(row => {
                     const d = this.utils.parseDate(row["Date de début"]);
                     if (d && (row["Type d'event"] === "Soirée Film" || row["Type d'event"] === "Soirée Série")) 
                         this.state.forbidden.add(d.toISOString().split('T')[0]);
                 });
 
+                // 2. Traitement principal
                 this.state.raw.forEach(row => {
                     let title = row["Nom de l'event"]; if (!title) return;
                     let notes = row["Notes"] || "";
                     let type = row["Type d'event"];
-                    const start = this.utils.parseDate(row["Date de début"]);
+                    const startRaw = row["Date de début"];
+                    const start = this.utils.parseDate(startRaw);
                     const end = this.utils.parseDate(row["Date de fin"]);
+                    const heure = startRaw?.includes(' ') ? startRaw.split(' ')[1] : null;
 
-                    // Segmentation IRL
                     const isPartenaire = notes.toLowerCase().includes("partenaire");
                     const isSanctuaire = notes.toLowerCase().includes("sanctuaire");
                     const isCanceled = notes.toLowerCase().includes("annulé") || notes.toLowerCase().includes("reporté") || type === "Annulé / Reporté";
@@ -188,7 +200,7 @@
                         if (datePrevue) {
                             this.addInst(results, {
                                 title: `[PRÉVU] ${title}`, notes, type, img: theme.img, col: "#64748b",
-                                start: datePrevue.toISOString().split('T')[0],
+                                start: datePrevue.toISOString().split('T')[0], heure: null,
                                 isCanceled: false, isPlanned: true, progressStatus: "Planifié",
                                 hasNotes: notes.length > 5
                             }, theme);
@@ -202,11 +214,13 @@
                         notes: isContre ? `Initialement : ${title}\n---\n${notes}` : notes, 
                         type, img: theme.img, col: theme.col, category: theme.cat, 
                         dur: this.utils.parseDuration(row["Durée Réelle"]),
-                        isCanceled, isContre, isPlanned: false,
+                        isCanceled, isContre, isPlanned: false, heure,
+                        startStr: start ? start.toISOString().split('T')[0] : null,
+                        endStr: end ? end.toISOString().split('T')[0] : null,
                         progressStatus: (end && end < today) ? "Terminé" : "En Cours",
                         hasNotes: notes.length > 5,
                         location: this.utils.extractLoc(notes),
-                        isPartenaire, isSanctuaire // Flags pour le style
+                        isPartenaire, isSanctuaire
                     };
 
                     const episodes = this.utils.extractEpisodes(notes);
@@ -237,7 +251,7 @@
                         }
                     } 
                     else {
-                        this.addInst(results, { ...base, start: start.toISOString().split('T')[0] }, theme);
+                        this.addInst(results, { ...base, start: base.startStr }, theme);
                     }
                 });
                 return results;
@@ -268,6 +282,11 @@
                 parseDuration(d) { if (!d || !d.includes(':')) return 0; const [h, m] = d.split(':'); return (parseInt(h) || 0) * 60 + (parseInt(m) || 0); },
                 formatMinutes(m) { return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; },
                 formatDateFR(iso) { return iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : "Prévu"; },
+                formatRange(start, end) {
+                    const f = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : null;
+                    const s = f(start); const e = f(end);
+                    return e && s !== e ? `Du ${s} au ${e}` : (s || "Prévu");
+                },
                 extractLoc(text) { const m = text.match(/Loc\s*:\s*(.*)/i); return m ? m[1].trim() : null; },
                 extractDate(text) { const m = text?.match(/\d{2}\/\d{2}\/\d{4}/); return m ? this.parseDate(m[0]) : null; },
                 extractSpecificDate(text, kw) { const m = text.match(new RegExp(`${kw}\\s+(\\d{2}/\\d{2}/\\d{4})`, "i")); return m ? this.parseDate(m[1]) : null; },
@@ -283,7 +302,8 @@
                 openModal(data) {
                     const m = document.getElementById('fenetre');
                     document.getElementById('fTitre').innerText = data.title;
-                    document.getElementById('fDate').innerText = App.utils.formatDateFR(data.start);
+                    document.getElementById('fDate').innerText = App.utils.formatRange(data.start || data.startStr, data.endStr);
+                    document.getElementById('fHeure').innerText = data.heure || "--:--";
                     document.getElementById('fNotes').innerText = data.notes;
                     document.getElementById('fDuree').innerText = data.dur > 0 ? App.utils.formatMinutes(data.dur) : "--";
                     document.getElementById('fType').innerText = data.type;
@@ -325,7 +345,10 @@
                         return { html: `
                             <div class="rich-event ${bgClass} ${p.isCanceled ? 'event-canceled' : ''} ${p.isContre ? 'event-contre' : ''} ${p.isPlanned ? 'event-planned' : ''}" style="border-left-color:${p.col}">
                                 <div class="flex items-center justify-between mb-0.5">
-                                    <span class="text-[7px] font-black uppercase ${p.progressStatus === 'Terminé' ? 'text-emerald-500' : 'text-amber-400'}">${p.progressStatus}</span>
+                                    <div class="flex items-center gap-1">
+                                        <span class="text-[7px] font-black uppercase text-indigo-300">${p.heure || ''}</span>
+                                        <span class="text-[7px] font-black uppercase ${p.progressStatus === 'Terminé' ? 'text-emerald-500' : 'text-amber-400'}">${p.progressStatus}</span>
+                                    </div>
                                     <div class="flex gap-1">${p.location ? '<span>📍</span>' : ''}${p.hasNotes ? '<span>📝</span>' : ''}</div>
                                 </div>
                                 <div class="text-[10px] font-bold truncate leading-tight ${p.isCanceled ? 'line-through text-rose-400' : 'text-white'}">${arg.event.title}</div>
