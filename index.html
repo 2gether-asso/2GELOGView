@@ -17,17 +17,19 @@
         .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
         .glass-panel { background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 1.5rem; }
         
-        /* FULL WIDTH OVERRIDE */
+        /* FULL WIDTH OVERRIDE - Pour maximiser la visibilité sur mobile/desktop */
         .fc-daygrid-event-harness { margin: 1px 0 !important; width: 100% !important; }
         .fc-event { background: none !important; border: none !important; margin: 0 !important; width: 100% !important; display: block !important; }
         .fc-daygrid-day-events { padding: 0 !important; }
         .fc { height: 100% !important; --fc-border-color: rgba(255,255,255,0.05); }
 
+        /* Styles enrichis des événements */
         .rich-event { padding: 6px 10px; border-radius: 4px; border-left-width: 4px; position: relative; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); width: 100%; }
         .event-canceled { opacity: 0.4; filter: grayscale(0.8); border-left-color: #ef4444 !important; }
         .event-contre { border-left-color: #f59e0b !important; background: rgba(245, 158, 11, 0.15) !important; border-left-style: dashed; }
         .event-planned { opacity: 0.6; border-left-style: dotted !important; background: rgba(100, 116, 139, 0.1) !important; }
         
+        /* Variantes de couleurs de fond */
         .bg-default { background: rgba(99, 102, 241, 0.12); } 
         .bg-partenaire { background: rgba(239, 68, 68, 0.18) !important; } 
         .bg-sanctuaire { background: rgba(168, 85, 247, 0.18) !important; }
@@ -104,9 +106,7 @@
                     <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Type</div><div id="fType" class="text-sm font-800 text-white">--</div></div>
                 </div>
                 <div class="bg-white/5 p-4 rounded-xl text-left text-xs text-slate-300 italic mb-6 leading-relaxed max-h-48 overflow-y-auto custom-scroll" id="fNotes"></div>
-                <div class="flex gap-2">
-                    <button onclick="App.UI.closeModal()" class="w-full py-4 bg-indigo-600 rounded-2xl text-xs font-900 uppercase text-white shadow-lg">Fermer</button>
-                </div>
+                <button onclick="App.UI.closeModal()" class="w-full py-4 bg-indigo-600 rounded-2xl text-xs font-900 uppercase text-white shadow-lg">Fermer</button>
             </div>
         </div>
     </div>
@@ -164,7 +164,7 @@
                 const today = new Date(); today.setHours(0,0,0,0);
                 this.state.forbidden.clear();
 
-                // 1. Détection des conflits (Films)
+                // 1. Détection des conflits (Films uniquement sont prioritaires)
                 this.state.raw.forEach(row => {
                     const d = this.utils.parseDate(row["Date de début"]);
                     if (d && row["Type d'event"] === "Soirée Film") 
@@ -179,15 +179,21 @@
                     const startRaw = row["Date de début"];
                     const start = this.utils.parseDate(startRaw);
                     const end = this.utils.parseDate(row["Date de fin"]);
-                    const heureGlobale = startRaw?.includes(' ') ? startRaw.split(' ')[1] : null;
+                    
+                    // Uniformisation de l'heure globale
+                    const heureGlobale = startRaw?.includes(' ') ? this.utils.formatHeure(startRaw.split(' ')[1]) : null;
 
+                    // Détection des types IRL et statuts spéciaux
                     const isPartenaire = notes.toLowerCase().includes("partenaire");
                     const isSanctuaire = notes.toLowerCase().includes("sanctuaire");
-                    const isCanceled = notes.toLowerCase().includes("annulé") || notes.toLowerCase().includes("reporté") || type === "Annulé / Reporté";
+                    
+                    const hasGenericAnnule = /annul[eé]/i.test(notes);
+                    const hasGenericReporte = /report[eé]/i.test(notes);
+                    let isCanceledBase = hasGenericAnnule || type === "Annulé / Reporté" || hasGenericReporte;
                     
                     if (isPartenaire) type = "Partenaire";
                     else if (isSanctuaire) type = "Sanctuaire";
-                    else if (isCanceled) type = "Annulé / Reporté";
+                    else if (isCanceledBase) type = "Annulé / Reporté";
 
                     const theme = CONFIG.THEMES[type] || CONFIG.THEMES.default;
                     
@@ -210,7 +216,7 @@
                         notes: isContre ? `Initialement : ${title}\n---\n${notes}` : notes, 
                         type, img: theme.img, col: theme.col, category: theme.cat, 
                         dur: this.utils.parseDuration(row["Durée Réelle"]),
-                        isCanceled, isContre, isPlanned: false, heure: heureGlobale,
+                        isContre, isPlanned: false, heure: heureGlobale,
                         startStr: start ? start.toISOString().split('T')[0] : null,
                         endStr: end ? end.toISOString().split('T')[0] : null,
                         progressStatus: (end && end < today) ? "Terminé" : "En Cours",
@@ -223,20 +229,23 @@
                     const pauseDate = this.utils.extractSpecificDate(notes, "pause");
                     const repriseDate = this.utils.extractSpecificDate(notes, "reprise");
 
+                    // Logique d'expansion (IRL, Hebdo ou Épisodes précis)
                     if (type === "Meet Up" || isPartenaire || isSanctuaire) {
                         let cur = new Date(start);
                         const limit = end || start;
                         while (cur <= limit) {
-                            this.addInst(results, { ...base, start: cur.toISOString().split('T')[0], isIRL: (type !== "Meet Up") }, theme);
+                            const iso = cur.toISOString().split('T')[0];
+                            const timeStr = 'T' + (base.heure || '12:00') + ':00'; // Tri par heure
+                            this.addInst(results, { ...base, start: iso + timeStr, isCanceled: isCanceledBase, isIRL: (type !== "Meet Up") }, theme);
                             cur.setDate(cur.getDate() + 1);
                         }
                     } 
                     else if (episodes.length > 0) {
                         episodes.forEach(ep => { 
                             if (!this.state.forbidden.has(ep.date) && !this.isPaused(ep.date, pauseDate, repriseDate)) {
-                                // S'il y a une heure spécifique liée à cet épisode précis, on remplace l'heure globale
                                 const heureInst = ep.heure ? ep.heure : heureGlobale;
-                                this.addInst(results, { ...base, start: ep.date, sub: ep.text, heure: heureInst }, theme); 
+                                const timeStr = 'T' + (heureInst || '12:00') + ':00'; // Tri par heure
+                                this.addInst(results, { ...base, start: ep.date + timeStr, sub: ep.text, heure: heureInst, isCanceled: isCanceledBase }, theme); 
                             }
                         });
                     } 
@@ -246,13 +255,15 @@
                         while (cur <= limit) {
                             const iso = cur.toISOString().split('T')[0];
                             if (!this.state.forbidden.has(iso) && !this.isPaused(iso, pauseDate, repriseDate)) {
-                                this.addInst(results, { ...base, start: iso }, theme);
+                                const timeStr = 'T' + (base.heure || '12:00') + ':00'; // Tri par heure
+                                this.addInst(results, { ...base, start: iso + timeStr, isCanceled: isCanceledBase }, theme);
                             }
                             cur.setDate(cur.getDate() + 7);
                         }
                     } 
                     else {
-                        this.addInst(results, { ...base, start: base.startStr }, theme);
+                        const timeStr = 'T' + (base.heure || '12:00') + ':00'; // Tri par heure
+                        this.addInst(results, { ...base, start: base.startStr + timeStr, isCanceled: isCanceledBase }, theme);
                     }
                 });
                 return results;
@@ -289,17 +300,21 @@
                     const s = f(start); const e = f(end);
                     return e && s !== e ? `Du ${s} au ${e}` : (s || "Prévu");
                 },
+                formatHeure(h) {
+                    if (!h) return null;
+                    let parts = h.split(':').slice(0, 2);
+                    if (parts[0].length === 1) parts[0] = '0' + parts[0];
+                    return parts.join(':');
+                },
                 extractLoc(text) { const m = text.match(/Loc\s*:\s*(.*)/i); return m ? m[1].trim() : null; },
                 extractDate(text) { const m = text?.match(/\d{2}\/\d{2}\/\d{4}/); return m ? this.parseDate(m[0]) : null; },
                 extractSpecificDate(text, kw) { const m = text.match(new RegExp(`${kw}\\s+(\\d{2}/\\d{2}/\\d{4})`, "i")); return m ? this.parseDate(m[1]) : null; },
-                
-                // Extraction améliorée supportant : "DD/MM/YYYY à HH:mm :" ou "DD/MM/YYYY HH:mm :" ou juste "DD/MM/YYYY :"
                 extractEpisodes(notes) {
                     return notes.split('\n').map(l => {
-                        const m = l.match(/(\d{2}\/\d{2}\/\d{4})(?:\s+à)?\s*(\d{2}:\d{2})?:\s*(.*)/i);
+                        const m = l.match(/(\d{2}\/\d{2}\/\d{4})(?:\s+à)?\s*(\d{1,2}:\d{2}(?::\d{2})?)?:\s*(.*)/i);
                         return m ? { 
                             date: `${m[1].split('/')[2]}-${m[1].split('/')[1]}-${m[1].split('/')[0]}`, 
-                            heure: m[2] || null, 
+                            heure: m[2] ? this.formatHeure(m[2]) : null, 
                             text: m[3].trim() 
                         } : null;
                     }).filter(x => x);
@@ -345,6 +360,7 @@
             initCalendar() {
                 this.state.calendar = new FullCalendar.Calendar(document.getElementById('calendrier'), {
                     initialView: 'dayGridMonth', locale: 'fr', firstDay: 1, height: '100%',
+                    eventOrder: "start",
                     headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,dayGridWeek' },
                     eventClick: (info) => this.UI.openModal({ ...info.event.extendedProps, title: info.event.title, start: info.event.start }),
                     eventContent: (arg) => {
