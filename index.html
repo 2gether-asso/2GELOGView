@@ -165,11 +165,11 @@
                 this.state.forbidden.clear();
 
                 // 1. Détection des conflits (Films uniquement sont prioritaires)
-                this.state.raw.forEach(row => {
-                    const d = this.utils.parseDate(row["Date de début"]);
-                    if (d && row["Type d'event"] === "Soirée Film") 
-                        this.state.forbidden.add(d.toISOString().split('T')[0]);
-                });
+                // this.state.raw.forEach(row => {
+                //     const d = this.utils.parseDate(row["Date de début"]);
+                //     if (d && row["Type d'event"] === "Soirée Film") 
+                //         this.state.forbidden.add(d.toISOString().split('T')[0]);
+                // });
 
                 // 2. Traitement principal
                 this.state.raw.forEach(row => {
