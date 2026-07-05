@@ -18,7 +18,7 @@ function renderRow(e, idx) {
     const title = escapeHtml(e.title);
     const type = escapeHtml(e.type || 'Événement');
     const notes = escapeHtml(e.notes);
-    const posterUrl = sanitizeUrl(e.meta?.image);
+    const posterUrl = sanitizeUrl(e.image);
     const tagsHtml = (e.tags || [])
         .map(t => `<span class="text-[11px] bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
         .join('');
@@ -116,7 +116,7 @@ function renderGroupRow(group, indexOf) {
         .map(t => `<span class="text-[11px] bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
         .join('');
 
-    const posterUrl = sanitizeUrl(first.meta?.image);
+    const posterUrl = sanitizeUrl(first.image);
     const posterLayer = posterUrl
         ? `<div class="absolute inset-0 bg-cover bg-center opacity-20" style="background-image:url('${posterUrl}')"></div>
            <div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/40 to-black/10"></div>`

@@ -75,9 +75,10 @@ export class ModalView {
             iconEl.style.display = 'none';
         }
 
-        // Affiche/jaquette du film, de la série ou du jeu (métadonnée manuelle @image).
+        // Affiche/jaquette du film, de la série ou du jeu (event.image résolu par
+        // EventGenerator : @image de l'événement, sinon celle par défaut du type).
         const posterContainer = document.getElementById('modal-poster-container');
-        const posterUrl = sanitizeUrl(event.meta?.image);
+        const posterUrl = sanitizeUrl(event.image);
         if (posterUrl) {
             const posterEl = document.getElementById('modal-event-poster');
             posterEl.src = posterUrl;
@@ -87,9 +88,10 @@ export class ModalView {
             posterContainer.classList.add('hidden');
         }
 
-        // Lien externe (métadonnée manuelle @lien ou @link, ex: IMDB, Steam, page officielle).
+        // Lien externe (event.url résolu par EventGenerator : @url/@lien/@link de
+        // l'événement, sinon celui par défaut du type ; ex: IMDB, Steam, chaîne...).
         const linkContainer = document.getElementById('modal-link-container');
-        const linkUrl = sanitizeUrl(event.meta?.lien || event.meta?.link);
+        const linkUrl = sanitizeUrl(event.url);
         if (linkUrl) {
             document.getElementById('modal-event-link').href = linkUrl;
             linkContainer.classList.remove('hidden');

@@ -46,9 +46,10 @@ export function renderEventCard(e, readableDate = null) {
     const type = escapeHtml(e.type || 'Événement');
 
     const iconSrc = getIconSrc(e);
-    // @image : affiche/jaquette du film, de la série ou du jeu, en fond translucide
-    // de la tuile (métadonnée manuelle, voir GUIDE_METADONNEES.md).
-    const posterUrl = sanitizeUrl(e.meta?.image);
+    // e.image (résolu par EventGenerator : @image de l'événement, sinon celle par défaut
+    // du type) : affiche/jaquette du film, de la série ou du jeu, en fond translucide de
+    // la tuile (voir GUIDE_METADONNEES.md).
+    const posterUrl = sanitizeUrl(e.image);
 
     const tagsRender = (e.tags && e.tags.length > 0)
         ? `<div class="flex flex-wrap gap-1 mt-1.5">

@@ -75,11 +75,17 @@ Clés reconnues actuellement :
 | `@location` | Lieu affiché sur la tuile et dans la modale — **si absent, la valeur par défaut "Discord 2GETHER" est affichée automatiquement** |
 | `@episode` ou `@diffusion` | Affiché en priorité sur la tuile et dans la modale ("📌 Episode(s)") — **prime toujours** sur la numérotation automatique des séries et sur le texte des lignes datées (§ 5) |
 | `@image` | URL d'une affiche/jaquette (film, série, jeu) : affichée en fond translucide sur la tuile et en grand dans la modale. Doit commencer par `http://` ou `https://`, sinon ignorée. |
-| `@lien` ou `@link` | URL externe (IMDB, Steam, page officielle...) : affichée comme bouton cliquable dans la modale, ouvert dans un nouvel onglet. |
+| `@url` (ou `@lien`/`@link`) | URL externe (IMDB, Steam, page officielle...) : affichée comme bouton cliquable dans la modale, ouvert dans un nouvel onglet. Les trois orthographes sont équivalentes. |
 
 > Le champ "lieu" (📍) n'est donc jamais vide : toutes les sessions sont considérées comme
 > se déroulant sur le Discord "2GETHER" sauf précision contraire via `@location` ou l'ancien
 > format `Loc :`.
+
+> **`@image` et `@url` ont aussi une valeur par défaut par type d'événement**, configurable
+> dans `src/config.js` (champs `image`/`url` de chaque entrée de `THEMES`). Si un événement
+> ne précise pas sa propre `@image`/`@url`, celle par défaut du type est utilisée à la place
+> (par exemple, une bannière générique pour "Soirée Jeux") ; si le type n'en définit pas non
+> plus, rien ne s'affiche. La métadonnée de l'événement prime toujours sur celle du type.
 
 > **Les accents n'ont pas d'importance** : `@episode:` et `@Épisode:` sont strictement
 > équivalents. Écrivez comme vous préférez.

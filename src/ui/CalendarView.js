@@ -14,14 +14,19 @@ export class CalendarView {
             return null;
         }
 
+        // Sur mobile, les vues en grille (Mois/Semaine) sont peu lisibles sur un petit
+        // écran : on verrouille la vue Planning (liste) en masquant les boutons qui
+        // permettraient de basculer vers les autres vues.
+        const isMobile = window.matchMedia('(max-width: 639px)').matches;
+
         const calendar = new FullCalendar.Calendar(calendarEl, {
-            initialView: 'dayGridMonth',
+            initialView: isMobile ? 'listMonth' : 'dayGridMonth',
             locale: 'fr',
             firstDay: 1, // Lundi
             headerToolbar: {
                 left: 'prev,next today',
                 center: 'title',
-                right: 'dayGridMonth,timeGridWeek,listMonth'
+                right: isMobile ? '' : 'dayGridMonth,timeGridWeek,listMonth'
             },
             buttonText: {
                 today: "Aujourd'hui",

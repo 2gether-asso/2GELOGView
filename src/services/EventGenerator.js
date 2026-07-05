@@ -272,6 +272,10 @@ export class EventGenerator {
             progressStatus: "En Cours",
             // Lieu par défaut si ni "Loc :", ni @loc/@location n'est renseigné dans les Notes.
             location: parsedNotes.meta.loc || parsedNotes.meta.location || CONFIG.DEFAULT_LOCATION,
+            // @image/@url (ou @lien/@link) de l'événement priment sur l'affiche/lien par
+            // défaut du type (voir config.js) ; null si ni l'un ni l'autre n'est défini.
+            image: parsedNotes.meta.image || theme.image || null,
+            url: parsedNotes.meta.url || parsedNotes.meta.lien || parsedNotes.meta.link || theme.url || null,
             ...restOverrides
         };
 
