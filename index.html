@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2GELOG</title>
+    <title>2GELOG - Glassmorphism Ultimate Engine</title>
     
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -11,461 +11,262 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
-        :root { --bg-deep: #0a0c10; --panel: #161b22; --accent: #6366f1; --text-main: #e6edf3; }
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background: var(--bg-deep); color: var(--text-main); }
-        .custom-scroll::-webkit-scrollbar { width: 4px; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-        .glass-panel { background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 1.5rem; }
+        :root { 
+            --bg-deep: #06080c; 
+            --glass-bg: rgba(22, 27, 34, 0.45);
+            --glass-border: rgba(255, 255, 255, 0.06);
+            --accent: #6366f1; 
+            --text-main: #f0f6fc; 
+        }
+        body { 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+            background: radial-gradient(circle at 50% 0%, #111827 0%, var(--bg-deep) 70%); 
+            color: var(--text-main); 
+            overflow: hidden; 
+        }
         
-        /* FULL WIDTH OVERRIDE - Pour maximiser la visibilité sur mobile/desktop */
-        .fc-daygrid-event-harness { margin: 1px 0 !important; width: 100% !important; }
-        .fc-event { background: none !important; border: none !important; margin: 0 !important; width: 100% !important; display: block !important; }
-        .fc-daygrid-day-events { padding: 0 !important; }
-        .fc { height: 100% !important; --fc-border-color: rgba(255,255,255,0.05); }
+        .glass-panel { background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border); }
+        .glass-card { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.04); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .glass-card:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); }
 
-        /* Styles enrichis des événements */
-        .rich-event { padding: 6px 10px; border-radius: 4px; border-left-width: 4px; position: relative; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); width: 100%; }
-        .event-canceled { opacity: 0.4; filter: grayscale(0.8); border-left-color: #ef4444 !important; }
-        .event-contre { border-left-color: #f59e0b !important; background: rgba(245, 158, 11, 0.15) !important; border-left-style: dashed; }
-        .event-planned { opacity: 0.6; border-left-style: dotted !important; background: rgba(100, 116, 139, 0.1) !important; }
+        .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 10px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.3); }
         
-        /* Variantes de couleurs de fond */
-        .bg-default { background: rgba(99, 102, 241, 0.12); } 
-        .bg-partenaire { background: rgba(239, 68, 68, 0.18) !important; } 
-        .bg-sanctuaire { background: rgba(168, 85, 247, 0.18) !important; }
+        .fc {
+            --fc-border-color: rgba(255, 255, 255, 0.05);
+            --fc-page-bg-color: transparent;
+            /* FullCalendar utilise ces deux variables (fond des en-têtes de jour en vue
+               Planning, et fond au survol d'une ligne) avec des valeurs pensées pour un
+               thème clair par défaut ; sans cette surcharge, le survol d'une ligne de la
+               vue Planning passe en blanc quasi opaque et rend le texte illisible. */
+            --fc-neutral-bg-color: rgba(255, 255, 255, 0.04);
+            --fc-list-event-hover-bg-color: rgba(255, 255, 255, 0.05);
+            height: 100% !important;
+        }
+        .fc-theme-standard td, .fc-theme-standard th { border: 1px solid rgba(255,255,255,0.05) !important; }
+        .fc .fc-toolbar-title { font-size: 1.2rem; font-weight: 800; color: #ffffff; letter-spacing: -0.02em; }
+        .fc .fc-button-primary { background-color: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.05); color: #c9d1d9; font-size: 0.78rem; font-weight: 600; padding: 5px 10px; backdrop-filter: blur(4px); border-radius: 8px; transition: all 0.2s; }
+        .fc .fc-button-primary:hover { background-color: rgba(255,255,255,0.08); border-color: rgba(99, 102, 241, 0.4); color: #fff; }
+        .fc .fc-button-active { background-color: #6366f1 !important; border-color: #818cf8 !important; color: #ffffff !important; box-shadow: 0 0 15px rgba(99, 102, 241, 0.4); }
+        .fc-col-header-cell-cushion { color: #8b949e; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 8px 0 !important; }
+        .fc-daygrid-day-number { color: #8b949e; font-size: 0.75rem; padding: 6px 8px !important; font-weight: 700; }
+        .fc-day-today { background: rgba(99, 102, 241, 0.05) !important; }
+        
+        .fc-daygrid-day-events { padding-bottom: 8px !important; }
+        .fc-daygrid-day-frame { min-height: 100% !important; }
+        .fc-event { background: transparent !important; border: none !important; padding: 0 !important; margin: 2px 4px !important; }
+        .fc-scroller { overflow: auto !important; }
+        .fc-scroller::-webkit-scrollbar { width: 4px; }
+        .fc-scroller::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
 
-        .stat-card { background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 100%); border: 1px solid rgba(255,255,255,0.05); }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-in { animation: fadeIn 0.3s ease-out forwards; }
+        /* Petits écrans : la barre d'outils FullCalendar (prev/next/vues) passe sur
+           plusieurs lignes plutôt que de déborder ou d'écraser le titre. */
+        @media (max-width: 639px) {
+            .fc .fc-toolbar { flex-wrap: wrap; gap: 8px; row-gap: 8px; }
+            .fc .fc-toolbar-title { font-size: 1rem; }
+            .fc .fc-button-primary { font-size: 0.7rem; padding: 4px 8px; }
+        }
     </style>
 </head>
-<body class="h-screen overflow-hidden p-4">
+<body class="h-screen w-screen flex flex-col antialiased">
 
-    <div class="h-full grid grid-cols-1 lg:grid-cols-[300px_1fr_320px] gap-5">
-        <aside class="flex flex-col gap-5 overflow-hidden">
-            <div class="glass-panel p-6">
-                <h1 class="text-3xl font-900 italic tracking-tighter bg-gradient-to-br from-white to-indigo-500 bg-clip-text text-transparent">LOG - 2GETHER</h1>
-                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-1">Planning en temps réel</p>
-            </div>
-            <div class="grid grid-cols-1 gap-3">
-                <div class="stat-card p-4 rounded-2xl border-l-4 border-indigo-500">
-                    <div class="text-[9px] uppercase text-indigo-400 font-black mb-1">Visionnage</div>
-                    <div class="flex justify-between items-baseline"><span id="stat-watch-sessions" class="text-2xl font-800">0</span><span id="stat-watch-time" class="text-xs font-semibold text-slate-400">0h00</span></div>
-                </div>
-                <div class="stat-card p-4 rounded-2xl border-l-4 border-emerald-500">
-                    <div class="text-[9px] uppercase text-emerald-400 font-black mb-1">Gaming</div>
-                    <div class="flex justify-between items-baseline"><span id="stat-game-sessions" class="text-2xl font-800">0</span><span id="stat-game-time" class="text-xs font-semibold text-slate-400">0h00</span></div>
-                </div>
-            </div>
-            <div class="glass-panel p-5 flex flex-col flex-grow min-h-0">
-                <p class="text-[10px] font-800 uppercase tracking-widest text-slate-500 mb-4">Filtres Thématiques</p>
-                <div id="filter-list" class="flex flex-col gap-1 overflow-y-auto custom-scroll pr-2"></div>
-            </div>
-        </aside>
+    <header class="shrink-0 border-b border-white/5 bg-[#161b22]/40 backdrop-blur-xl flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-40">
+        <div class="flex items-center space-x-4">
+            <div class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
+            <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
+                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2</span>
+            </h1>
+        </div>
 
-        <main class="flex flex-col gap-5 overflow-hidden">
-            <header class="glass-panel h-14 flex items-center px-5 gap-4">
-                <input type="text" id="recherche" placeholder="Rechercher un titre, une note ou un lieu..." class="bg-transparent border-none outline-none w-full text-sm text-white placeholder:text-slate-600 font-medium">
-            </header>
-            <div class="glass-panel flex-grow p-5 flex flex-col min-h-0">
-                <div id="view-header" class="hidden mb-4 flex justify-between items-end">
-                    <h2 id="view-title" class="text-xl font-800 text-white">Résultats</h2>
-                    <button onclick="App.clearFilters()" class="text-[10px] font-bold text-indigo-400 uppercase hover:underline">Fermer</button>
-                </div>
-                <div id="cal-wrap" class="flex-grow overflow-hidden"><div id="calendrier"></div></div>
-                <div id="list-wrap" class="hidden h-full overflow-y-auto custom-scroll space-y-3 pb-10"></div>
+        <div class="flex items-center gap-2 sm:space-x-3 flex-wrap w-full sm:w-auto order-3 sm:order-none">
+            <button id="btn-admin-view" class="hidden text-[11px] font-bold text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
+                📊 Rétrospective
+            </button>
+            <button id="btn-clear-filters" class="text-[11px] font-bold text-rose-400 hover:text-rose-300 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
+                ✕ Annuler les filtres
+            </button>
+            <div class="w-full sm:w-72 relative">
+                <label for="recherche" class="sr-only">Rechercher un événement</label>
+                <input type="text" id="recherche" placeholder="Rechercher un stream, jeu, tag..." class="w-full bg-black/40 border border-white/5 rounded-xl pl-3 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all backdrop-blur-md">
+                <span class="absolute right-3 top-2.5 text-slate-600 text-xs pointer-events-none" aria-hidden="true">🔍</span>
             </div>
-        </main>
+        </div>
+    </header>
 
-        <aside class="glass-panel p-5 flex flex-col h-full overflow-hidden">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-sm font-800 text-white uppercase italic">Prochainement</h2>
-                <span id="count-res" class="bg-white/5 text-[10px] font-black px-2 py-1 rounded-lg border border-white/10">0</span>
-            </div>
-            <div id="reserve-list" class="space-y-3 overflow-y-auto flex-grow custom-scroll pr-2"></div>
-        </aside>
-    </div>
-
-    <div id="fenetre" class="hidden fixed inset-0 bg-black/90 backdrop-blur-xl z-[9999] flex items-center justify-center p-4 transition-all duration-300 opacity-0" onclick="if(event.target == this) App.UI.closeModal()">
-        <div class="max-w-md w-full bg-[#0d1117] rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden transform transition-all scale-95" id="modaleContent">
-            <div id="fCouleur" class="h-32 flex items-center justify-center relative">
-                <img id="fIcone" src="" class="h-20 z-10 object-contain">
-                <div class="absolute inset-0 bg-gradient-to-t from-[#0d1117] to-transparent"></div>
-            </div>
-            <div class="p-8 text-center -mt-4 relative z-20">
-                <div class="flex justify-center gap-2 mb-4">
-                    <div id="fStatusBadge" class="hidden px-3 py-1 rounded-full text-[8px] font-900 uppercase tracking-widest border"></div>
-                    <div id="fProgressBadge" class="px-3 py-1 rounded-full text-[8px] font-900 uppercase tracking-widest border border-white/10"></div>
+    <div class="border-b border-white/5 bg-[#161b22]/20 backdrop-blur-md shrink-0 text-xs text-slate-400">
+        <button id="btn-toggle-filters" class="w-full flex items-center justify-between px-3 sm:px-6 py-1.5 hover:bg-white/5 transition-all" aria-expanded="true" aria-controls="filters-bar-content">
+            <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500">🔧 Filtres (catégories, tags, types)</span>
+            <span id="filters-chevron" class="text-slate-500 text-[10px]" aria-hidden="true">▾</span>
+        </button>
+        <div id="filters-bar-content" class="px-3 sm:px-6 pb-2 flex flex-col gap-2">
+            <div class="flex flex-wrap items-center gap-4">
+                <div class="flex items-center space-x-2">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500">Catégories :</span>
+                    <div class="flex gap-1.5" id="filter-categories-container">
+                        <button data-cat="all" class="px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold shadow-[0_0_15px_rgba(99,102,241,0.4)]">Tous</button>
+                        <button data-cat="watch" class="px-3 py-1 rounded-lg bg-white/5 border border-white/5 hover:border-white/10 hover:bg-white/10 transition-all">🎬 Visionnage</button>
+                        <button data-cat="game" class="px-3 py-1 rounded-lg bg-white/5 border border-white/5 hover:border-white/10 hover:bg-white/10 transition-all">🎮 Gaming</button>
+                    </div>
                 </div>
-                <h2 id="fTitre" class="text-xl font-800 text-white mb-1"></h2>
-                <div id="fLoc" class="hidden text-[10px] font-black text-rose-400 uppercase mb-2 tracking-widest flex items-center justify-center gap-2"><span>📍</span><span id="fLocVal"></span></div>
-                <div id="fDate" class="text-[10px] font-bold text-indigo-400 uppercase mb-6 tracking-widest"></div>
-                <div class="grid grid-cols-3 gap-3 mb-6">
-                    <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Durée</div><div id="fDuree" class="text-sm font-800 text-white">--</div></div>
-                    <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Heure</div><div id="fHeure" class="text-sm font-800 text-white">--</div></div>
-                    <div class="bg-white/5 p-3 rounded-2xl"><div class="text-[8px] uppercase text-slate-500 mb-1">Type</div><div id="fType" class="text-sm font-800 text-white">--</div></div>
+                <div class="h-4 w-px bg-white/10"></div>
+                <div class="flex items-center space-x-2 flex-1 min-w-0">
+                    <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500 shrink-0">Tags Récurrents :</span>
+                    <div id="filter-tags-container" class="flex gap-1.5 overflow-x-auto custom-scroll pb-1"></div>
                 </div>
-                <div class="bg-white/5 p-4 rounded-xl text-left text-xs text-slate-300 italic mb-6 leading-relaxed max-h-48 overflow-y-auto custom-scroll" id="fNotes"></div>
-                <button onclick="App.UI.closeModal()" class="w-full py-4 bg-indigo-600 rounded-2xl text-xs font-900 uppercase text-white shadow-lg">Fermer</button>
+            </div>
+            <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
+                <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500 shrink-0">Types :</span>
+                <div id="filter-types-container" class="flex gap-1.5 flex-wrap"></div>
             </div>
         </div>
     </div>
 
-    <script>
-        const CONFIG = {
-            CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVu8Z5ZxyDpRVG3eFFLuWH_iWKZyKuLWKvW617wBfAMT6no6UVah6HSqlhM8LDKjheEc4EBfSXgooM/pub?gid=0&single=true&output=csv",
-            THEMES : {
-                "Soirée Jeux":      { img: "soiree-jeux.png", col: "#4fc4e8", cat: "game" },
-                "Bravery":          { img: "bravery.png", col: "#e8c44f", cat: "game" },
-                "Soirée Film":      { img: "soiree-film.png", col: "#e84f4f", cat: "watch" },
-                "Soirée Série":     { img: "soiree-serie.png", col: "#e84f4f", cat: "watch" },
-                "Soirée Spéciale":  { img: "soiree-speciale.png", col: "#704fe8", cat: "watch" },
-                "Hors Prog":        { img: "hors-prog.png", col: "#914fe8", cat: "watch" },
-                "Gazette 2025":     { img: "gazette-2025.png", col: "#bd8f5e", cat: "watch" },
-                "Gazette 2026":     { img: "gazette-2026.png", col: "#5ebd8f", cat: "watch" },
-                "Event St Valentin":{ img: "st-valentin.png", col: "#bd5ea4", cat: "watch" },
-                "Meet Up":          { img: "meet-up.png", col: "#3b82f6", cat: "watch" },
-                "Partenaire":       { img: "meet-up.png", col: "#ef4444", cat: "watch" },
-                "Sanctuaire":       { img: "meet-up.png", col: "#a855f7", cat: "watch" },
-                "Event Halloween":  { img: "halloween.png", col: "#e6b33e", cat: "watch" },
-                "Event Nowel":      { img: "nowel.png", col: "#79bd57", cat: "watch" },
-                "JDR":              { img: "jdr.png", col: "#e342de", cat: "game" },
-                "Soirée Minecraft": { img: "minecraft.png", col: "#42e342", cat: "game" },
-                "Annulé / Reporté": { img: "hors-prog.png", col: "#ef4444", cat: "watch" },
-                "default":          { img: "hors-prog.png", col: "#914fe8", cat: "watch" }
-            }
-        };
+    <main class="flex-1 flex overflow-hidden w-full relative">
+        <section class="flex-1 p-4 h-full relative overflow-y-auto overflow-x-hidden custom-scroll bg-black/[0.05]">
+            <div id="calendar" class="w-full h-full"></div>
+            <div id="search-results" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
+        </section>
 
-        const App = {
-            state: { raw: [], events: [], forbidden: new Set(), filters: { category: null, search: "" }, calendar: null },
-            
-            init() { this.initCalendar(); this.fetchData(); this.bindEvents(); },
+        <section id="sidebar-panel" class="w-full sm:w-80 absolute sm:relative inset-y-0 right-0 z-20 sm:z-auto border-l border-white/5 bg-[#0d1117] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden p-4 space-y-4 backdrop-blur-sm transition-all shadow-2xl sm:shadow-none">
+            <div class="space-y-2 shrink-0">
+                <div class="flex items-center justify-between px-1">
+                    <h2 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Statistiques globales</h2>
+                    <button id="btn-toggle-sidebar" title="Masquer le panneau" aria-label="Masquer le panneau de statistiques" class="text-slate-500 hover:text-white text-xs p-1 rounded-md hover:bg-white/5 transition-all">✕</button>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="glass-panel p-3 rounded-xl flex flex-col shadow-sm">
+                        <span class="text-[10px] font-bold text-slate-400">🎬 Visionnage</span>
+                        <span id="stat-watch-sessions" class="text-base font-black text-slate-100 mt-0.5">0</span>
+                        <span id="stat-watch-time" class="text-[11px] text-indigo-400 font-bold mt-0.5 truncate">0 min</span>
+                    </div>
+                    <div class="glass-panel p-3 rounded-xl flex flex-col shadow-sm">
+                        <span class="text-[10px] font-bold text-slate-400">🎮 Gaming</span>
+                        <span id="stat-game-sessions" class="text-base font-black text-slate-100 mt-0.5">0</span>
+                        <span id="stat-game-time" class="text-[11px] text-emerald-400 font-bold mt-0.5 truncate">0 min</span>
+                    </div>
+                </div>
+                <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-[11px] text-slate-400 shadow-sm">
+                    <span>🚫 Annulations & Reports</span>
+                    <span id="stat-canceled-count" class="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">0</span>
+                </div>
+            </div>
 
-            async fetchData() { 
-                Papa.parse(CONFIG.CSV_URL, { 
-                    download: true, header: true, skipEmptyLines: true, 
-                    complete: (r) => { this.state.raw = r.data; this.refresh(); } 
-                }); 
-            },
+            <div class="flex-1 flex flex-col min-h-0">
+                <div class="flex items-center justify-between px-1 mb-2 shrink-0">
+                    <h2 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">🔮 Prochainement</h2>
+                    <span id="upcoming-count" class="text-[10px] font-bold bg-white/5 border border-white/5 text-slate-400 px-2 py-0.5 rounded-md">0</span>
+                </div>
+                <div id="upcoming-list" class="flex-1 overflow-y-auto space-y-2 pr-1 custom-scroll">
+                    <div class="text-center text-xs text-slate-600 py-12">Aucun événement planifié</div>
+                </div>
+            </div>
+        </section>
 
-            refresh() { 
-                const data = this.processData(); 
-                this.state.events = data.filteredEvents; 
-                this.updateStats(data.stats); 
-                this.state.calendar.removeAllEvents();
-                this.state.calendar.addEventSource(this.state.events);
-                this.renderSearch(data.filteredEvents); 
-                this.renderPrevus(); 
-                this.renderFilters(data.categoryStats);
-            },
+        <button id="btn-reopen-sidebar" title="Afficher les statistiques" aria-label="Afficher le panneau de statistiques" class="hidden fixed right-0 top-1/2 -translate-y-1/2 z-30 bg-[#161b22]/90 border border-white/10 border-r-0 rounded-l-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">📊</button>
+    </main>
 
-            processData() {
-                const results = { filteredEvents: [], stats: { watch: {n:0, t:0}, game: {n:0, t:0} }, categoryStats: {} };
-                const today = new Date(); today.setHours(0,0,0,0);
-                this.state.forbidden.clear();
-
-                // 1. Détection des conflits (Films uniquement sont prioritaires)
-                // this.state.raw.forEach(row => {
-                //     const d = this.utils.parseDate(row["Date de début"]);
-                //     if (d && row["Type d'event"] === "Soirée Film") 
-                //         this.state.forbidden.add(d.toISOString().split('T')[0]);
-                // });
-
-                // 2. Traitement principal
-                this.state.raw.forEach(row => {
-                    let title = row["Nom de l'event"]; if (!title) return;
-                    let notes = row["Notes"] || "";
-                    let type = row["Type d'event"];
-                    const startRaw = row["Date de début"];
-                    const start = this.utils.parseDate(startRaw);
-                    const end = this.utils.parseDate(row["Date de fin"]);
-                    
-                    // Uniformisation de l'heure globale
-                    const heureGlobale = startRaw?.includes(' ') ? this.utils.formatHeure(startRaw.split(' ')[1]) : null;
-
-                    // Détection des types IRL et statuts spéciaux
-                    const isPartenaire = notes.toLowerCase().includes("partenaire");
-                    const isSanctuaire = notes.toLowerCase().includes("sanctuaire");
-                    
-                    const hasGenericAnnule = /annul[eé]/i.test(notes);
-                    const hasGenericReporte = /report[eé]/i.test(notes);
-                    let isCanceledBase = hasGenericAnnule || type === "Annulé / Reporté" || hasGenericReporte;
-                    
-                    if (isPartenaire) type = "Partenaire";
-                    else if (isSanctuaire) type = "Sanctuaire";
-                    else if (isCanceledBase) type = "Annulé / Reporté";
-
-                    const theme = CONFIG.THEMES[type] || CONFIG.THEMES.default;
-                    
-                    if (!start) {
-                        const datePrevue = this.utils.extractDate(notes);
-                        if (datePrevue) {
-                            this.addInst(results, {
-                                title: `[PRÉVU] ${title}`, notes, type, img: theme.img, col: "#64748b",
-                                start: datePrevue.toISOString().split('T')[0], heure: null,
-                                isCanceled: false, isPlanned: true, progressStatus: "Planifié",
-                                hasNotes: notes.length > 5
-                            }, theme);
-                        }
-                        return;
-                    }
-
-                    let isContre = notes.toLowerCase().includes("remplacé");
-                    const base = { 
-                        title: isContre ? "Contre Soirée" : title, 
-                        notes: isContre ? `Initialement : ${title}\n---\n${notes}` : notes, 
-                        type, img: theme.img, col: theme.col, category: theme.cat, 
-                        dur: this.utils.parseDuration(row["Durée Réelle"]),
-                        isContre, isPlanned: false, heure: heureGlobale,
-                        startStr: start ? start.toISOString().split('T')[0] : null,
-                        endStr: end ? end.toISOString().split('T')[0] : null,
-                        progressStatus: (end && end < today) ? "Terminé" : "En Cours",
-                        hasNotes: notes.length > 5,
-                        location: this.utils.extractLoc(notes),
-                        isPartenaire, isSanctuaire
-                    };
-
-                    const episodes = this.utils.extractEpisodes(notes);
-                    const pauseDate = this.utils.extractSpecificDate(notes, "pause");
-                    const repriseDate = this.utils.extractSpecificDate(notes, "reprise");
-
-                    // Logique d'expansion (IRL, Hebdo ou Épisodes précis)
-                    if (type === "Meet Up" || isPartenaire || isSanctuaire) {
-                        let cur = new Date(start);
-                        const limit = end || start;
-                        while (cur <= limit) {
-                            const iso = cur.toISOString().split('T')[0];
-                            const timeStr = 'T' + (base.heure || '12:00') + ':00'; // Tri par heure
-                            this.addInst(results, { ...base, start: iso + timeStr, isCanceled: isCanceledBase, isIRL: (type !== "Meet Up") }, theme);
-                            cur.setDate(cur.getDate() + 1);
-                        }
-                    } 
-                    else if (episodes.length > 0) {
-                        episodes.forEach(ep => { 
-                            if (!this.state.forbidden.has(ep.date) && !this.isPaused(ep.date, pauseDate, repriseDate)) {
-                                const heureInst = ep.heure ? ep.heure : heureGlobale;
-                                const timeStr = 'T' + (heureInst || '12:00') + ':00'; // Tri par heure
-                                this.addInst(results, { ...base, start: ep.date + timeStr, sub: ep.text, heure: heureInst, isCanceled: isCanceledBase }, theme); 
-                            }
-                        });
-                    } 
-                    else if (notes.toLowerCase().includes("hebdo") || type === "Soirée Série") {
-                        let cur = new Date(start);
-                        const limit = end || new Date(today.getTime() + (90 * 24 * 60 * 60 * 1000));
-                        while (cur <= limit) {
-                            const iso = cur.toISOString().split('T')[0];
-                            if (!this.state.forbidden.has(iso) && !this.isPaused(iso, pauseDate, repriseDate)) {
-                                const timeStr = 'T' + (base.heure || '12:00') + ':00'; // Tri par heure
-                                this.addInst(results, { ...base, start: iso + timeStr, isCanceled: isCanceledBase }, theme);
-                            }
-                            cur.setDate(cur.getDate() + 7);
-                        }
-                    } 
-                    else {
-                        const timeStr = 'T' + (base.heure || '12:00') + ':00'; // Tri par heure
-                        this.addInst(results, { ...base, start: base.startStr + timeStr, isCanceled: isCanceledBase }, theme);
-                    }
-                });
-                return results;
-            },
-
-            isPaused(dateIso, pause, reprise) {
-                const pauseIso = pause ? pause.toISOString().split('T')[0] : null;
-                const repriseIso = reprise ? reprise.toISOString().split('T')[0] : null;
-                return pauseIso && dateIso >= pauseIso && (!repriseIso || dateIso < repriseIso);
-            },
-
-            addInst(results, inst, theme) {
-                const matchesCat = !this.state.filters.category || inst.type === this.state.filters.category;
-                const matchesSearch = !this.state.filters.search || inst.title.toLowerCase().includes(this.state.filters.search.toLowerCase());
-                
-                if (!results.categoryStats[inst.type]) results.categoryStats[inst.type] = 0;
-                results.categoryStats[inst.type] += inst.dur;
-
-                if (matchesCat && matchesSearch) {
-                    results.filteredEvents.push(inst);
-                    if (!inst.isCanceled && !inst.isPlanned && results.stats[theme.cat]) { 
-                        results.stats[theme.cat].n++; results.stats[theme.cat].t += inst.dur; 
-                    }
-                }
-            },
-
-            utils: {
-                parseDate(s) { if (!s || !s.includes('/')) return null; const [d, m, y] = s.split(' ')[0].split('/'); return new Date(y, m - 1, d, 12, 0); },
-                parseDuration(d) { if (!d || !d.includes(':')) return 0; const [h, m] = d.split(':'); return (parseInt(h) || 0) * 60 + (parseInt(m) || 0); },
-                formatMinutes(m) { return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; },
-                formatDateFR(iso) { return iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : "Prévu"; },
-                formatRange(start, end) {
-                    const f = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : null;
-                    const s = f(start); const e = f(end);
-                    return e && s !== e ? `Du ${s} au ${e}` : (s || "Prévu");
-                },
-                formatHeure(h) {
-                    if (!h) return null;
-                    let parts = h.split(':').slice(0, 2);
-                    if (parts[0].length === 1) parts[0] = '0' + parts[0];
-                    return parts.join(':');
-                },
-                extractLoc(text) { const m = text.match(/Loc\s*:\s*(.*)/i); return m ? m[1].trim() : null; },
-                extractDate(text) { const m = text?.match(/\d{2}\/\d{2}\/\d{4}/); return m ? this.parseDate(m[0]) : null; },
-                extractSpecificDate(text, kw) { const m = text.match(new RegExp(`${kw}\\s+(\\d{2}/\\d{2}/\\d{4})`, "i")); return m ? this.parseDate(m[1]) : null; },
-                extractEpisodes(notes) {
-                    return notes.split('\n').map(l => {
-                        const m = l.match(/(\d{2}\/\d{2}\/\d{4})(?:\s+à)?\s*(\d{1,2}:\d{2}(?::\d{2})?)?:\s*(.*)/i);
-                        return m ? { 
-                            date: `${m[1].split('/')[2]}-${m[1].split('/')[1]}-${m[1].split('/')[0]}`, 
-                            heure: m[2] ? this.formatHeure(m[2]) : null, 
-                            text: m[3].trim() 
-                        } : null;
-                    }).filter(x => x);
-                }
-            },
-
-            UI: {
-                openModal(data) {
-                    const m = document.getElementById('fenetre');
-                    document.getElementById('fTitre').innerText = data.title;
-                    document.getElementById('fDate').innerText = App.utils.formatRange(data.start || data.startStr, data.endStr);
-                    document.getElementById('fHeure').innerText = data.heure || "--:--";
-                    document.getElementById('fNotes').innerText = data.notes;
-                    document.getElementById('fDuree').innerText = data.dur > 0 ? App.utils.formatMinutes(data.dur) : "--";
-                    document.getElementById('fType').innerText = data.type;
-                    document.getElementById('fIcone').src = "img/" + data.img;
-                    
-                    const locEl = document.getElementById('fLoc');
-                    if(data.location) { locEl.classList.remove('hidden'); document.getElementById('fLocVal').innerText = data.location; }
-                    else locEl.classList.add('hidden');
-
-                    const pb = document.getElementById('fProgressBadge');
-                    pb.innerText = data.progressStatus;
-                    pb.className = `px-3 py-1 rounded-full text-[8px] font-900 uppercase tracking-widest border ${data.progressStatus === 'Terminé' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`;
-                    
-                    const b = document.getElementById('fStatusBadge');
-                    b.className = "px-3 py-1 rounded-full text-[8px] font-900 uppercase border " + (data.isCanceled || data.isContre || data.isPlanned || data.isIRL ? "" : "hidden");
-                    if(data.isCanceled) { b.innerText = "Annulé / Reporté"; b.classList.add('bg-rose-500/20', 'text-rose-500', 'border-rose-500/30'); }
-                    else if(data.isContre) { b.innerText = "Contre Soirée"; b.classList.add('bg-amber-500/20', 'text-amber-500', 'border-amber-500/30'); }
-                    else if(data.isIRL) { b.innerText = "Évènement IRL"; b.classList.add('bg-emerald-500/20', 'text-emerald-400', 'border-emerald-500/30'); }
-                    else if(data.isPlanned) { b.innerText = "Planification"; b.classList.add('bg-slate-500/20', 'text-slate-400', 'border-slate-500/30'); }
-
-                    document.getElementById('fCouleur').style.background = `radial-gradient(circle at 50% 0%, ${data.col}40 0%, transparent 100%)`;
-                    m.classList.remove('hidden'); setTimeout(() => { m.classList.add('opacity-100'); document.getElementById('modaleContent').classList.remove('scale-95'); }, 10);
-                },
-                closeModal() {
-                    const m = document.getElementById('fenetre'); 
-                    m.classList.remove('opacity-100'); document.getElementById('modaleContent').classList.add('scale-95');
-                    setTimeout(() => m.classList.add('hidden'), 300);
-                }
-            },
-
-            initCalendar() {
-                this.state.calendar = new FullCalendar.Calendar(document.getElementById('calendrier'), {
-                    initialView: 'dayGridMonth', locale: 'fr', firstDay: 1, height: '100%',
-                    eventOrder: "start",
-                    headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,dayGridWeek' },
-                    eventClick: (info) => this.UI.openModal({ ...info.event.extendedProps, title: info.event.title, start: info.event.start }),
-                    eventContent: (arg) => {
-                        const p = arg.event.extendedProps;
-                        const bgClass = p.isPartenaire ? 'bg-partenaire' : (p.isSanctuaire ? 'bg-sanctuaire' : 'bg-default');
-                        return { html: `
-                            <div class="rich-event ${bgClass} ${p.isCanceled ? 'event-canceled' : ''} ${p.isContre ? 'event-contre' : ''} ${p.isPlanned ? 'event-planned' : ''}" style="border-left-color:${p.col}">
-                                <div class="flex items-center justify-between mb-0.5">
-                                    <div class="flex items-center gap-1">
-                                        <span class="text-[7px] font-black uppercase text-indigo-300">${p.heure || ''}</span>
-                                        <span class="text-[7px] font-black uppercase ${p.progressStatus === 'Terminé' ? 'text-emerald-500' : 'text-amber-400'}">${p.progressStatus}</span>
-                                    </div>
-                                    <div class="flex gap-1">${p.location ? '<span>📍</span>' : ''}${p.hasNotes ? '<span>📝</span>' : ''}</div>
-                                </div>
-                                <div class="text-[10px] font-bold truncate leading-tight ${p.isCanceled ? 'line-through text-rose-400' : 'text-white'}">${arg.event.title}</div>
-                                ${p.sub ? `<div class="text-[8px] font-medium text-indigo-300 truncate mt-0.5 italic">${p.sub}</div>` : ''}
-                            </div>` };
-                    }
-                }); 
-                this.state.calendar.render();
-            },
-
-            renderSearch(events) {
-                const wrap = document.getElementById('list-wrap');
-                const calWrap = document.getElementById('cal-wrap');
-                const isActive = this.state.filters.search.length > 0 || this.state.filters.category;
-                
-                if (isActive) {
-                    wrap.classList.remove('hidden'); calWrap.classList.add('hidden'); document.getElementById('view-header').classList.remove('hidden');
-                    wrap.innerHTML = events.sort((a,b) => new Date(b.start) - new Date(a.start)).map((ev) => `
-                        <div class="glass-panel p-4 flex justify-between items-center hover:bg-white/5 cursor-pointer animate-in" onclick='App.UI.openModal(${JSON.stringify(ev).replace(/'/g, "&apos;")})'>
-                            <div class="flex items-center gap-4 min-w-0"><img src="img/${ev.img}" class="w-8 h-8 opacity-80 shrink-0">
-                                <div class="min-w-0">
-                                    <div class="text-xs font-800 truncate ${ev.isCanceled ? 'line-through text-rose-400 opacity-50' : ''}">${ev.title}</div>
-                                    <div class="flex items-center gap-2"><div class="text-[8px] font-black uppercase ${ev.progressStatus === 'Terminé' ? 'text-emerald-500' : 'text-amber-500'}">${ev.progressStatus}</div>${ev.location ? `<div class="text-[8px] font-bold text-rose-400 uppercase italic">📍 ${ev.location}</div>` : ''}</div>
-                                </div>
-                            </div>
-                            <div class="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full shrink-0">${this.utils.formatDateFR(ev.start)}</div>
-                        </div>`).join('') || `<div class="text-center py-10 text-slate-500 text-xs">Aucun résultat</div>`;
-                } else { 
-                    wrap.classList.add('hidden'); calWrap.classList.remove('hidden'); document.getElementById('view-header').classList.add('hidden');
-                    setTimeout(() => this.state.calendar?.updateSize(), 50);
-                }
-            },
-
-            renderFilters(catStats) {
-                const c = document.getElementById('filter-list'); c.innerHTML = "";
-                Object.keys(CONFIG.THEMES).filter(k => k !== 'default').forEach(k => {
-                    const active = this.state.filters.category === k;
-                    const b = document.createElement('button');
-                    b.className = `w-full text-left px-3 py-2 rounded-xl text-[10px] font-700 uppercase flex items-center justify-between group transition-all ${active ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'text-slate-500 hover:text-slate-300'}`;
-                    b.innerHTML = `<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full" style="background:${CONFIG.THEMES[k].col}"></span><span>${k}</span></div><span class="text-[8px] opacity-40">${this.utils.formatMinutes(catStats[k] || 0)}</span>`;
-                    b.onclick = () => { this.state.filters.category = active ? null : k; this.refresh(); };
-                    c.appendChild(b);
-                });
-            },
-
-            renderPrevus() {
-                const res = this.state.raw.filter(r => r["Nom de l'event"] && !r["Date de début"])
-                    .map(r => ({ ...r, ext: App.utils.extractDate(r["Notes"]) }))
-                    .sort((a, b) => (a.ext || new Date(2099,0,1)) - (b.ext || new Date(2099,0,1)));
-                
-                document.getElementById('count-res').innerText = res.length;
-                document.getElementById('reserve-list').innerHTML = res.map(row => {
-                    const type = row["Type d'event"];
-                    const t = CONFIG.THEMES[type] || CONFIG.THEMES.default;
-                    const evData = { 
-                        title: row["Nom de l'event"], notes: row["Notes"] || "", img: t.img, col: t.col, type: type, 
-                        dur: 0, start: row.ext ? row.ext.toISOString().split('T')[0] : null, progressStatus: 'Planifié', 
-                        isCanceled: false, isPlanned: true, hasNotes: (row["Notes"] || "").length > 5
-                    };
-                    return `
-                    <div class="stat-card p-3 rounded-xl hover:border-indigo-500/50 cursor-pointer flex items-center justify-between group animate-in" 
-                         onclick='App.UI.openModal(${JSON.stringify(evData).replace(/'/g, "&apos;")})'>
-                        <div class="flex items-center gap-3 overflow-hidden">
-                            <img src="img/${t.img}" class="w-5 h-5 opacity-50 group-hover:opacity-100 transition-opacity">
-                            <div class="min-w-0">
-                                <div class="text-[10px] font-700 uppercase truncate text-slate-400 group-hover:text-white transition-colors">${row["Nom de l'event"]}</div>
-                                <div class="text-[7px] font-black text-slate-600 uppercase">${type}</div>
-                            </div>
+    <div id="custom-modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md opacity-0 pointer-events-none transition-all duration-300">
+        <div class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl transform scale-95 transition-all duration-300 flex flex-col space-y-4 text-left" id="custom-modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-event-title">
+            <div class="flex items-start justify-between">
+                <div class="flex items-start space-x-3">
+                    <img id="modal-event-icon" src="./assets/img/hors-prog.png" alt="" class="w-16 aspect-[8/9] rounded-xl object-cover border border-white/10 shrink-0" onerror="this.style.display='none'">
+                    <div class="flex flex-col space-y-1">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <span id="modal-event-type" class="text-[11px] font-black tracking-widest text-indigo-400 uppercase bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md w-fit">TYPE</span>
+                            <span id="modal-event-status"></span>
                         </div>
-                        <div class="text-[8px] font-black text-indigo-400/40 group-hover:text-indigo-400 ml-2 shrink-0">
-                            ${row.ext ? row.ext.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : "À DÉTERMINER"}
-                        </div>
-                    </div>`;
-                }).join('');
-            },
+                        <h3 id="modal-event-title" class="text-base font-extrabold text-white leading-snug mt-1">Titre de l'événement</h3>
+                    </div>
+                </div>
+                <button id="modal-close-btn" aria-label="Fermer" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all font-bold text-sm">✕</button>
+            </div>
 
-            updateStats(s) {
-                document.getElementById('stat-watch-sessions').innerText = s.watch.n;
-                document.getElementById('stat-watch-time').innerText = this.utils.formatMinutes(s.watch.t);
-                document.getElementById('stat-game-sessions').innerText = s.game.n;
-                document.getElementById('stat-game-time').innerText = this.utils.formatMinutes(s.game.t);
-            },
+            <div class="border-t border-white/5 my-1"></div>
 
-            bindEvents() { 
-                document.getElementById('recherche').addEventListener('input', (e) => { this.state.filters.search = e.target.value; this.refresh(); }); 
-            },
+            <div id="modal-poster-container" class="hidden rounded-xl overflow-hidden border border-white/10">
+                <img id="modal-event-poster" src="" alt="" class="w-full max-h-56 object-cover">
+            </div>
 
-            clearFilters() { 
-                this.state.filters.category = null; this.state.filters.search = ""; 
-                document.getElementById('recherche').value = ""; this.refresh();
-            }
-        };
-        document.addEventListener('DOMContentLoaded', () => App.init());
-    </script>
+            <div class="grid grid-cols-2 gap-3 text-sm">
+                <div id="modal-time-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5">
+                    <div class="text-slate-500 font-bold text-[11px] uppercase tracking-wider">📅 Date & Heure</div>
+                    <div id="modal-event-time" class="text-slate-200 font-semibold mt-1">Non spécifié</div>
+                </div>
+                <div id="modal-location-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5">
+                    <div class="text-slate-500 font-bold text-[11px] uppercase tracking-wider">📍 Lieu</div>
+                    <div id="modal-event-location" class="text-emerald-400 font-semibold mt-1">Non spécifié</div>
+                </div>
+            </div>
+
+            <div id="modal-sub-block" class="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl hidden">
+                <div class="text-indigo-400 font-bold text-[11px] uppercase tracking-wider">📌 Episode(s)</div>
+                <div id="modal-event-sub" class="text-indigo-300 font-semibold mt-0.5 text-sm"></div>
+            </div>
+
+            <div id="modal-meta-block" class="grid grid-cols-2 gap-3 text-xs">
+                <div id="modal-host-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
+                    <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">👤 Organisé par</div>
+                    <div id="modal-event-host" class="text-slate-200 font-semibold mt-1"></div>
+                </div>
+                <div id="modal-platform-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
+                    <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">📺 Plateforme</div>
+                    <div id="modal-event-platform" class="text-slate-200 font-semibold mt-1"></div>
+                </div>
+            </div>
+
+            <div class="bg-black/20 p-3 rounded-xl border border-white/5 flex flex-col space-y-1">
+                <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">📝 Notes complémentaires</div>
+                <p id="modal-event-notes" class="text-slate-300 italic text-xs leading-relaxed whitespace-pre-line">Aucune description disponible.</p>
+            </div>
+
+            <div class="flex flex-col space-y-1.5">
+                <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">🏷️ Tags indexés (Cliquables)</div>
+                <div id="modal-event-tags" class="flex flex-wrap gap-1.5"></div>
+            </div>
+
+            <div id="modal-link-container" class="hidden">
+                <a id="modal-event-link" href="#" target="_blank" rel="noopener noreferrer" class="flex items-center justify-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">🔗 Voir la fiche</a>
+            </div>
+        </div>
+    </div>
+
+    <div id="patchnotes-overlay" class="hidden fixed inset-0 z-[65] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+        <div class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="patchnotes-title">
+            <div class="flex items-start justify-between mb-3">
+                <h2 id="patchnotes-title" class="text-lg font-black text-white">🆕 Quoi de neuf ?</h2>
+                <button id="btn-close-patchnotes" aria-label="Fermer" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all font-bold text-sm">✕</button>
+            </div>
+            <div id="patchnotes-content" class="space-y-4 text-sm text-slate-300"></div>
+            <button id="btn-dismiss-patchnotes" class="mt-5 w-full text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">J'ai compris</button>
+        </div>
+    </div>
+
+    <div id="admin-overlay" class="fixed inset-0 z-[60] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-6 sm:p-10">
+        <div class="max-w-5xl mx-auto flex items-center justify-between mb-6">
+            <h2 class="text-xl font-black text-white">🛠️ Mode Admin — Rétrospectives annuelles</h2>
+            <button id="btn-close-admin" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all font-bold text-sm">✕ Fermer</button>
+        </div>
+        <div id="admin-content"></div>
+    </div>
+
+    <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[#06080c]" role="status" aria-live="polite">
+        <div class="h-10 w-10 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin" aria-hidden="true"></div>
+        <p class="text-sm text-slate-400">Chargement du calendrier…</p>
+    </div>
+
+    <div id="error-banner" class="hidden fixed inset-x-0 top-20 z-[70] mx-auto max-w-lg px-4" role="alert">
+        <div class="bg-rose-950/90 border border-rose-500/30 rounded-xl p-4 shadow-2xl backdrop-blur-md flex items-start gap-3">
+            <span class="text-xl" aria-hidden="true">⚠️</span>
+            <div class="flex-1 min-w-0">
+                <div class="text-sm font-bold text-rose-200">Impossible de charger les données</div>
+                <p class="text-xs text-rose-300/80 mt-1">Le planning n'a pas pu être récupéré (connexion réseau, ou le lien du Google Sheet a changé). Réessayez dans quelques instants.</p>
+                <button id="btn-retry-load" class="mt-2 text-xs font-bold text-rose-200 bg-rose-500/20 hover:bg-rose-500/30 px-3 py-1.5 rounded-lg transition-all">🔄 Réessayer</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
 </body>
 </html>
