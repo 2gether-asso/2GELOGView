@@ -46,8 +46,12 @@ export class SearchEngine {
                     event.searchIndex = this.createIndex(event);
                 }
                 
-                // Vérification multi-mots (tous les mots de la requête doivent être dans l'index)
-                const searchWords = cleanedQuery.split(" ");
+                // Vérification multi-mots (tous les mots de la requête doivent être dans l'index).
+                // Un "#" de tête est retiré de chaque mot : l'index stocke les tags sans "#"
+                // (voir createIndex), alors qu'un clic sur un tag (modale, barre "Tags
+                // Récurrents") ou une saisie manuelle "#tag" préfixe la requête avec "#" —
+                // sans ce retrait, ces recherches ne trouvaient jamais aucun résultat.
+                const searchWords = cleanedQuery.split(" ").map(w => w.replace(/^#/, "")).filter(Boolean);
                 return searchWords.every(word => event.searchIndex.includes(word));
             }
 

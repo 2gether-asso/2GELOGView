@@ -10,10 +10,11 @@ import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
 import { SearchEngine } from './services/SearchEngine.js';
 import { IcsExporter } from './services/IcsExporter.js';
+import { DiscordExporter } from './services/DiscordExporter.js';
 import { renderActivityHeatmap } from './ui/ActivityHeatmap.js';
 import { DateUtils } from './utils/DateUtils.js';
 import { escapeHtml } from './utils/Html.js';
-import { formatMinutes } from './utils/Format.js';
+import { formatMinutes, topN } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
 
 const repo = new EventRepository();
@@ -23,6 +24,8 @@ let currentCategory = "all";
 let currentTagFilter = null;
 let currentTypeFilter = null;
 let currentSearchQuery = "";
+let currentDateFrom = null;
+let currentDateTo = null;
 let dataAnomalies = [];
 
 // La sidebar "Prochainement" et le listing de recherche conservent en mémoire
@@ -95,6 +98,20 @@ function renderDashboardStats(events) {
         `).join('');
 
     document.getElementById('stat-canceled-count').innerText = stats.counters.annulations || 0;
+
+    // Top 3 organisateurs (temps cumulé) de l'année en cours : même donnée que la
+    // rétrospective admin (StatsService.byHost), condensée ici pour rester visible sans
+    // passer par le mode ?admin.
+    const hostsContainer = document.getElementById('stat-hosts-container');
+    const topHosts = topN(stats.byHost, 3);
+    hostsContainer.innerHTML = topHosts.length === 0
+        ? `<span class="text-[11px] text-slate-600 italic">Aucune donnée</span>`
+        : topHosts.map(([host, minutes]) => `
+            <div class="flex items-center justify-between gap-2 text-[11px]">
+                <span class="text-slate-300 truncate capitalize">${escapeHtml(host)}</span>
+                <span class="text-slate-500 font-bold shrink-0">${formatMinutes(minutes)}</span>
+            </div>
+        `).join('');
 }
 
 function updateTagsFilterBar(events) {
@@ -211,6 +228,43 @@ function restoreFiltersFromStorage() {
     }
 }
 
+// La période (Du/Au) n'est volontairement PAS mémorisée d'une visite à l'autre (contrairement
+// aux autres filtres) : une plage de dates a peu de sens rechargée plusieurs jours après, et
+// resterait invisible/piégeante pour l'utilisateur qui rouvre l'app. Elle peut en revanche être
+// partagée explicitement par lien (voir openTodayViewFromUrl, ?today=1).
+function setupDateRangeFilter() {
+    const fromInput = document.getElementById('filter-date-from');
+    const toInput = document.getElementById('filter-date-to');
+    const clearBtn = document.getElementById('btn-clear-date-range');
+
+    const applyRange = () => {
+        currentDateFrom = fromInput.value || null;
+        currentDateTo = toInput.value || null;
+        clearBtn.classList.toggle('hidden', !currentDateFrom && !currentDateTo);
+        updateUIState();
+    };
+
+    fromInput.addEventListener('change', applyRange);
+    toInput.addEventListener('change', applyRange);
+    clearBtn.addEventListener('click', () => {
+        fromInput.value = "";
+        toInput.value = "";
+        applyRange();
+    });
+}
+
+// Lien direct "aujourd'hui" (?today=1) : pratique à épingler/partager pour retomber
+// directement sur les sessions du jour, sans dépendre de la vue calendrier active.
+function openTodayViewFromUrl() {
+    if (new URLSearchParams(window.location.search).get('today') !== '1') return;
+    const todayStr = DateUtils.toLocalDateStr(new Date());
+    currentDateFrom = todayStr;
+    currentDateTo = todayStr;
+    document.getElementById('filter-date-from').value = todayStr;
+    document.getElementById('filter-date-to').value = todayStr;
+    document.getElementById('btn-clear-date-range').classList.remove('hidden');
+}
+
 // Marque `isNew` sur les événements à venir absents de l'ensemble mémorisé lors de la
 // dernière visite (badge "🆕 Nouveau"). Ne mémorise que les événements non terminés,
 // pour ne pas faire grossir indéfiniment le localStorage avec tout l'historique passé.
@@ -299,6 +353,12 @@ function updateUIState() {
     if (currentTagFilter) {
         filtered = filtered.filter(e => e.tags && e.tags.includes(currentTagFilter));
     }
+    if (currentDateFrom) {
+        filtered = filtered.filter(e => e.start.split('T')[0] >= currentDateFrom);
+    }
+    if (currentDateTo) {
+        filtered = filtered.filter(e => e.start.split('T')[0] <= currentDateTo);
+    }
 
     const calendarEl = document.getElementById('calendar');
     const searchResultsEl = document.getElementById('search-results');
@@ -322,7 +382,7 @@ function updateUIState() {
     lastFilteredEvents = filtered;
 
     const clearBtn = document.getElementById('btn-clear-filters');
-    if (currentCategory !== "all" || currentTypeFilter || currentTagFilter || isSearching) {
+    if (currentCategory !== "all" || currentTypeFilter || currentTagFilter || currentDateFrom || currentDateTo || isSearching) {
         clearBtn.classList.remove('hidden');
     } else {
         clearBtn.classList.add('hidden');
@@ -413,22 +473,34 @@ function setupFiltersToggle() {
 // Contenu des notes de version : à éditer librement à chaque mise à jour notable.
 // Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
 const PATCH_NOTES = {
-    version: "2026-07-09b",
+    version: "2026-07-09c",
     sections: [
         {
             title: "🚀 Nouveautés",
             items: [
-                "Nouvelle colonne <b>Tags</b> dans le tableur : toutes les balises (#tag, @host, @lieu...) peuvent désormais y être saisies séparément, en laissant Notes pour du texte libre uniquement. La migration est progressive, rien ne casse pour les lignes pas encore migrées.",
+                "Rappels navigateur (bouton 🔕 Rappels) : soyez prévenu 15 minutes avant le début d'une session, même onglet en arrière-plan (opt-in, rien n'est envoyé sans votre accord).",
+                "Bouton 💬 Discord : copie en un clic un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.",
+                "RSVP léger dans la modale (\"Vous y allez ?\") : un pense-bête personnel (Je viens / Peut-être / Non), visible uniquement sur votre appareil.",
+                "Nouveaux boutons dans la modale : 💬 lien direct vers le salon Discord de l'événement (<code>@salon</code>), 🗳️ lien vers un sondage (<code>@sondage</code>) pour voter le prochain film/jeu.",
+                "Filtre par période (\"Du / Au\") dans la barre de filtres, et lien direct <code>?today=1</code> pour n'afficher que les sessions du jour.",
+                "Mode Kiosque (🖥️) : affichage plein écran sans interaction, idéal sur un écran dédié affiché en continu.",
+                "Top organisateurs de l'année ajouté au panneau Statistiques."
+            ]
+        },
+        {
+            title: "🛠️ Corrections",
+            items: [
+                "Nouvelle colonne <b>Tags</b> dans le tableur : toutes les balises (#tag, @host, @lieu...) peuvent désormais y être saisies séparément, en laissant Notes pour du texte libre uniquement.",
                 "Organisateur affiché par défaut : « Helldwin » si aucun @host n'est précisé, au lieu de rester vide.",
-                "Statuts Prévu/En Cours/Terminé recalculés plus finement par occurrence (et plus par ligne entière du tableur) : une série sans durée réelle connue reste \"En Cours\" plutôt que d'être annoncée \"Terminée\" sur une simple estimation, et un événement ponctuel ne reste plus \"En Cours\" indéfiniment.",
-                "Le bandeau \"En direct\" et la pastille animée ne se fient plus indéfiniment à un statut \"En Cours\" incertain (durée non confirmée) : passé quelques heures sans confirmation, l'événement n'est plus annoncé comme diffusé \"maintenant\".",
-                "Vue Semaine : la plage horaire affichée est resserrée à la fenêtre réellement utilisée (14h → 2h du matin), pour ne plus avoir à défiler énormément et perdre de vue les événements tardifs."
+                "Statuts Prévu/En Cours/Terminé recalculés plus finement par occurrence : une série sans durée réelle connue reste \"En Cours\" plutôt que d'être annoncée \"Terminée\" à tort.",
+                "Le bandeau \"En direct\" et la pastille animée ne se fient plus indéfiniment à un statut \"En Cours\" incertain : passé quelques heures sans confirmation, l'événement n'est plus annoncé comme diffusé \"maintenant\".",
+                "Vue Semaine : la plage horaire affichée est resserrée à la fenêtre réellement utilisée (14h → 2h du matin)."
             ]
         },
         {
             title: "ℹ️ À savoir",
             items: [
-                "Le lieu par défaut des événements est désormais « Discord 2GETHER » sauf indication contraire, et certains horaires par défaut ont été corrigés dans le tableur.",
+                "Le lieu par défaut des événements est désormais « Discord 2GETHER » sauf indication contraire.",
                 "Un événement peut toujours être annulé ou reporté à la dernière minute : pensez à vérifier le calendrier avant chaque session.",
                 "L'export .ics est un instantané ponctuel à réimporter manuellement, pas un abonnement synchronisé automatiquement (le site est 100% statique, sans serveur)."
             ]
@@ -462,6 +534,158 @@ function setupPatchNotes() {
     if (localStorage.getItem('patchnotes:seenVersion') !== PATCH_NOTES.version) {
         overlay.classList.remove('hidden');
     }
+}
+
+const NOTIF_ENABLED_KEY = 'notif:enabled';
+const NOTIF_NOTIFIED_KEY = 'notif:notifiedIds';
+const NOTIF_LEAD_MINUTES = 15;
+
+function areNotificationsEnabled() {
+    return typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem(NOTIF_ENABLED_KEY) === '1';
+}
+
+function updateNotifButton() {
+    const btn = document.getElementById('btn-toggle-notifications');
+    const enabled = areNotificationsEnabled();
+    btn.innerHTML = enabled ? '🔔 Rappels activés' : '🔕 Rappels';
+    btn.setAttribute('aria-pressed', String(enabled));
+}
+
+// Rappel navigateur (opt-in, Web Notification API) : la permission une fois accordée par
+// le navigateur ne peut pas être révoquée depuis le JS, donc "désactiver" ne fait que
+// couper notre propre déclenchement (localStorage), la permission système reste accordée.
+async function toggleNotifications() {
+    if (areNotificationsEnabled()) {
+        localStorage.setItem(NOTIF_ENABLED_KEY, '0');
+        updateNotifButton();
+        return;
+    }
+    const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (permission === 'granted') {
+        localStorage.setItem(NOTIF_ENABLED_KEY, '1');
+        new Notification('2GELOG', { body: `Rappels activés : vous serez prévenu ${NOTIF_LEAD_MINUTES} minutes avant chaque session.` });
+    }
+    updateNotifButton();
+}
+
+function setupNotifications() {
+    const btn = document.getElementById('btn-toggle-notifications');
+    if (typeof Notification === 'undefined') {
+        btn.classList.add('hidden');
+        return;
+    }
+    updateNotifButton();
+    btn.addEventListener('click', toggleNotifications);
+}
+
+function getNotifiedIds() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(NOTIF_NOTIFIED_KEY) || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+// Cherche, sur TOUT le dépôt (pas les filtres actifs à l'écran : le rappel doit sonner pour
+// n'importe quelle session à venir), les événements démarrant dans moins de
+// NOTIF_LEAD_MINUTES et déclenche une notification navigateur une seule fois chacun.
+function checkUpcomingNotifications() {
+    if (!areNotificationsEnabled()) return;
+    const now = new Date();
+    const leadMs = NOTIF_LEAD_MINUTES * 60000;
+    const notified = new Set(getNotifiedIds());
+
+    const due = repo.getAll().filter(e => {
+        if (e.isCanceled || e.isPlanned || notified.has(e.id)) return false;
+        const diff = new Date(e.start) - now;
+        return diff > 0 && diff <= leadMs;
+    });
+    if (due.length === 0) return;
+
+    due.forEach(e => {
+        new Notification(`🔴 ${e.title}`, {
+            body: `Commence dans ${Math.round((new Date(e.start) - now) / 60000)} min${e.heure ? ' · ' + e.heure : ''}`,
+            tag: e.id
+        });
+        notified.add(e.id);
+    });
+
+    // Purge les ids de plus de 2 jours pour ne pas faire grossir indéfiniment le localStorage
+    // (l'id embarque la date de début : "2026-07-14T20:00:00__Titre", voir EventGenerator).
+    const cutoff = new Date(now.getTime() - 2 * 24 * 3600000);
+    const pruned = [...notified].filter(id => new Date(id.split('T')[0]) >= cutoff);
+    localStorage.setItem(NOTIF_NOTIFIED_KEY, JSON.stringify(pruned));
+}
+
+let kioskRotationTimer = null;
+let kioskSavedState = null;
+
+// Mode Kiosque : plein écran sans interaction, pensé pour un écran dédié affiché en
+// continu (ex: partagé dans un salon vocal Discord). Alterne automatiquement entre
+// "Aujourd'hui" et "Cette semaine" en réutilisant le filtre de plage de dates (§ Feature 7).
+function applyKioskRange(days) {
+    const from = new Date(); from.setHours(0, 0, 0, 0);
+    const fromStr = DateUtils.toLocalDateStr(from);
+    const to = new Date(from); to.setDate(to.getDate() + days);
+    currentDateFrom = fromStr;
+    currentDateTo = DateUtils.toLocalDateStr(to);
+    updateUIState();
+}
+
+function enterKioskMode() {
+    kioskSavedState = {
+        dateFrom: currentDateFrom,
+        dateTo: currentDateTo,
+        view: calendarInstance ? calendarInstance.view.type : null
+    };
+
+    document.body.classList.add('kiosk-mode');
+    document.getElementById('btn-exit-kiosk').classList.remove('hidden');
+    document.documentElement.requestFullscreen?.().catch(() => {});
+
+    if (calendarInstance) calendarInstance.changeView('listMonth');
+
+    // Démarre sur "Cette semaine" plutôt que "Aujourd'hui" : un jour sans aucune session
+    // (fréquent) afficherait sinon un écran vide en tout premier, qui a tout l'air d'un
+    // mode Kiosque cassé plutôt que "simplement rien de prévu maintenant".
+    let showingWeek = true;
+    applyKioskRange(7);
+    kioskRotationTimer = setInterval(() => {
+        showingWeek = !showingWeek;
+        applyKioskRange(showingWeek ? 7 : 0);
+    }, 20000);
+}
+
+function exitKioskMode() {
+    document.body.classList.remove('kiosk-mode');
+    document.getElementById('btn-exit-kiosk').classList.add('hidden');
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    clearInterval(kioskRotationTimer);
+    kioskRotationTimer = null;
+
+    if (kioskSavedState) {
+        currentDateFrom = kioskSavedState.dateFrom;
+        currentDateTo = kioskSavedState.dateTo;
+        document.getElementById('filter-date-from').value = currentDateFrom || "";
+        document.getElementById('filter-date-to').value = currentDateTo || "";
+        document.getElementById('btn-clear-date-range').classList.toggle('hidden', !currentDateFrom && !currentDateTo);
+        if (calendarInstance && kioskSavedState.view) calendarInstance.changeView(kioskSavedState.view);
+        kioskSavedState = null;
+    }
+    updateUIState();
+}
+
+function setupKioskMode() {
+    document.getElementById('btn-kiosk-mode').addEventListener('click', enterKioskMode);
+    document.getElementById('btn-exit-kiosk').addEventListener('click', exitKioskMode);
+    // La sortie plein écran par Échap (raccourci natif du navigateur) doit aussi
+    // désactiver proprement le mode Kiosque (arrêter la rotation, réafficher les contrôles).
+    document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement && document.body.classList.contains('kiosk-mode')) {
+            exitKioskMode();
+        }
+    });
 }
 
 async function sha256Hex(text) {
@@ -541,6 +765,7 @@ async function loadData() {
         renderCategoryFilterBar();
         updateUIState();
         updateNextEventBanner();
+        checkUpcomingNotifications();
         renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
         openEventFromUrl();
         loadingEl.classList.add('hidden');
@@ -629,6 +854,9 @@ async function initApp() {
         // Restaure les filtres de la dernière visite avant le premier rendu, pour que
         // les barres de filtres et le calendrier reflètent directement le bon état.
         restoreFiltersFromStorage();
+        // ?today=1 (lien partageable) prime sur les filtres restaurés : intention explicite
+        // de l'utilisateur qui a cliqué ce lien précis.
+        openTodayViewFromUrl();
 
         // ModalView pilote la modale existante ; le clic sur un tag relance une recherche.
         ModalView.init((tag) => {
@@ -637,7 +865,7 @@ async function initApp() {
             document.getElementById('search-icon').classList.add('hidden');
             currentSearchQuery = `#${tag}`;
             updateUIState();
-        });
+        }, () => updateUIState());
 
         // Délégation de clic sur la sidebar "Prochainement" : ouvre la modale
         // avec l'objet événement complet (pas de lookup global requis).
@@ -663,6 +891,8 @@ async function initApp() {
         setupPatchNotes();
         setupHelpOverlay();
         setupEscapeToClose();
+        setupNotifications();
+        setupKioskMode();
 
         document.getElementById('btn-retry-load').addEventListener('click', () => loadData());
 
@@ -676,12 +906,23 @@ async function initApp() {
                 openNextEventBanner();
             }
         });
-        // Rafraîchit le compte à rebours régulièrement sans dépendre d'un rechargement des données.
-        setInterval(updateNextEventBanner, 30000);
+        // Rafraîchit le compte à rebours et vérifie les rappels à déclencher régulièrement,
+        // sans dépendre d'un rechargement des données.
+        setInterval(() => { updateNextEventBanner(); checkUpcomingNotifications(); }, 30000);
 
         document.getElementById('btn-export-ics').addEventListener('click', () => {
             const filename = `planning-2gelog-${DateUtils.toLocalDateStr(new Date())}.ics`;
             IcsExporter.download(lastFilteredEvents, filename);
+        });
+
+        document.getElementById('btn-export-discord').addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            const original = btn.innerHTML;
+            const copied = await DiscordExporter.copyToClipboard(repo.getAll());
+            if (copied) {
+                btn.innerHTML = '✅ Copié !';
+                setTimeout(() => { btn.innerHTML = original; }, 1500);
+            }
         });
 
         // CalendarView pilote entièrement l'instance FullCalendar (rendu + clic).
@@ -689,6 +930,7 @@ async function initApp() {
         calendarInstance.render();
 
         setupSearchInput();
+        setupDateRangeFilter();
 
         document.getElementById('filter-categories-container').addEventListener('click', (e) => {
             const btn = e.target.closest('button');
@@ -724,9 +966,14 @@ async function initApp() {
             currentTypeFilter = null;
             currentTagFilter = null;
             currentSearchQuery = "";
+            currentDateFrom = null;
+            currentDateTo = null;
             document.getElementById('recherche').value = "";
             document.getElementById('btn-clear-search').classList.add('hidden');
             document.getElementById('search-icon').classList.remove('hidden');
+            document.getElementById('filter-date-from').value = "";
+            document.getElementById('filter-date-to').value = "";
+            document.getElementById('btn-clear-date-range').classList.add('hidden');
             setActiveCategoryButton(document.querySelector('#filter-categories-container button[data-cat="all"]'));
             renderTypeFilterBar();
             updateTagsFilterBar(repo.getAll());

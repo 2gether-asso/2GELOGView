@@ -1,13 +1,6 @@
 import { StatsService } from '../services/StatsService.js';
 import { escapeHtml } from '../utils/Html.js';
-import { formatMinutes } from '../utils/Format.js';
-
-function topN(obj, n = 5) {
-    return Object.entries(obj)
-        .filter(([key]) => key && key !== "aucun" && key !== "aucune")
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, n);
-}
+import { formatMinutes, topN } from '../utils/Format.js';
 
 function rankedRow(label, minutes) {
     return `

@@ -40,6 +40,10 @@ export class CalendarView {
                 week: "Semaine",
                 list: "Planning"
             },
+            // Filet de sécurité : le placeholder "No events to display" de la vue Planning
+            // n'est pas toujours traduit malgré locale:'fr' (dépend du chargement effectif
+            // du pack de langue) — explicite ici pour ne jamais l'afficher en anglais.
+            noEventsText: "Aucun événement à afficher",
             editable: false,
             selectable: true,
             dayMaxEvents: false,

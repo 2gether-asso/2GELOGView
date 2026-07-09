@@ -1,6 +1,14 @@
 import { CONFIG } from '../config.js';
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { renderStatusBadge, getOvernightSuffix } from './EventCardTemplate.js';
+import { RsvpService } from '../services/RsvpService.js';
+
+const RSVP_IDLE_CLASS = "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200";
+const RSVP_ACTIVE_CLASSES = {
+    yes: "bg-emerald-600/80 border-emerald-400 text-white",
+    maybe: "bg-amber-600/80 border-amber-400 text-white",
+    no: "bg-rose-600/80 border-rose-400 text-white"
+};
 
 // Lieu par défaut (voir EventGenerator) : la carte "Lieu" est masquée quand elle ne
 // contient rien de plus informatif que cette valeur par défaut.
@@ -11,11 +19,13 @@ export class ModalView {
      * Attache les écouteurs d'événements de la modale (fermeture, clic sur tag).
      * Idempotent : peut être appelé plusieurs fois sans dupliquer les listeners.
      * @param {Function} onTagClick - Callback appelé avec le tag (sans #) cliqué dans la modale
+     * @param {Function} onRsvpChange - Callback appelé (sans argument) après un changement de réponse RSVP
      */
-    static init(onTagClick = null) {
+    static init(onTagClick = null, onRsvpChange = null) {
         if (this._initialized) return;
         this._initialized = true;
         this._onTagClick = onTagClick;
+        this._onRsvpChange = onRsvpChange;
 
         const container = document.getElementById('custom-modal-container');
         const closeBtn = document.getElementById('modal-close-btn');
@@ -29,6 +39,17 @@ export class ModalView {
             if (e.key === 'Escape' && !container.classList.contains('pointer-events-none')) {
                 this.hide();
             }
+        });
+
+        // RSVP léger : re-cliquer sur la réponse déjà active l'efface (toggle).
+        document.getElementById('modal-rsvp-container').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-rsvp]');
+            if (!btn || !this._currentEventId) return;
+            const status = btn.dataset.rsvp;
+            const current = RsvpService.get(this._currentEventId);
+            RsvpService.set(this._currentEventId, current === status ? null : status);
+            this._applyRsvpButtonStyles();
+            if (this._onRsvpChange) this._onRsvpChange();
         });
 
         document.getElementById('modal-event-tags').addEventListener('click', (e) => {
@@ -117,14 +138,12 @@ export class ModalView {
 
         // Lien externe (event.url résolu par EventGenerator : @url/@lien/@link de
         // l'événement, sinon celui par défaut du type ; ex: IMDB, Steam, chaîne...).
-        const linkContainer = document.getElementById('modal-link-container');
-        const linkUrl = sanitizeUrl(event.url);
-        if (linkUrl) {
-            document.getElementById('modal-event-link').href = linkUrl;
-            linkContainer.classList.remove('hidden');
-        } else {
-            linkContainer.classList.add('hidden');
-        }
+        this._toggleModalLink('modal-event-link', sanitizeUrl(event.url));
+        // @salon : lien direct vers le salon Discord (vocal/textuel) de l'événement.
+        this._toggleModalLink('modal-event-salon', sanitizeUrl(event.meta?.salon || event.meta?.discord));
+        // @sondage : lien vers un vote externe (Google Form, sondage Discord...), utile
+        // pour les événements "à définir" (prochain film/jeu à choisir par la communauté).
+        this._toggleModalLink('modal-event-sondage', sanitizeUrl(event.meta?.sondage || event.meta?.vote));
 
         // Episode(s) : @episode/@diffusion explicite > texte de la ligne datée (sous-épisode)
         // > numéro auto-généré pour les séries. Un seul bloc pour éviter toute confusion
@@ -153,6 +172,17 @@ export class ModalView {
 
         document.getElementById('modal-event-notes').innerText = event.notes || "Aucune note ou description pour cet événement.";
 
+        // RSVP léger : peu pertinent pour un événement annulé ou déjà terminé.
+        const rsvpContainer = document.getElementById('modal-rsvp-container');
+        if (!event.isCanceled && event.progressStatus !== "Terminé") {
+            rsvpContainer.classList.remove('hidden');
+            rsvpContainer.classList.add('flex');
+            this._applyRsvpButtonStyles();
+        } else {
+            rsvpContainer.classList.add('hidden');
+            rsvpContainer.classList.remove('flex');
+        }
+
         // Tags cliquables
         const tagsBox = document.getElementById('modal-event-tags');
         if (event.tags && event.tags.length > 0) {
@@ -171,6 +201,28 @@ export class ModalView {
         // Accessibilité clavier : mémorise l'élément d'origine et déplace le focus dans la modale.
         this._lastFocused = document.activeElement;
         document.getElementById('modal-close-btn').focus();
+    }
+
+    /** Applique le style actif/inactif aux 3 boutons RSVP selon la réponse enregistrée pour l'événement ouvert. */
+    static _applyRsvpButtonStyles() {
+        const current = RsvpService.get(this._currentEventId);
+        document.querySelectorAll('#modal-rsvp-container button[data-rsvp]').forEach(btn => {
+            const isActive = btn.dataset.rsvp === current;
+            btn.className = `flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all ${isActive ? RSVP_ACTIVE_CLASSES[btn.dataset.rsvp] : RSVP_IDLE_CLASS}`;
+        });
+    }
+
+    /** Affiche/masque un des boutons-lien optionnels de la modale (fiche/salon/sondage). */
+    static _toggleModalLink(elementId, url) {
+        const el = document.getElementById(elementId);
+        if (url) {
+            el.href = url;
+            el.classList.remove('hidden');
+            el.classList.add('flex');
+        } else {
+            el.classList.add('hidden');
+            el.classList.remove('flex');
+        }
     }
 
     static hide() {

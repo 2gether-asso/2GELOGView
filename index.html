@@ -87,6 +87,15 @@
             .fc .fc-toolbar-title { font-size: 1rem; }
             .fc .fc-button-primary { font-size: 0.7rem; padding: 4px 8px; }
         }
+
+        /* Mode Kiosque : masque l'en-tête et la barre de filtres pour un affichage plein écran
+           sans interaction, pensé pour un écran dédié (partagé dans un salon vocal par exemple). */
+        body.kiosk-mode header,
+        body.kiosk-mode #filters-bar,
+        body.kiosk-mode #btn-toggle-sidebar,
+        body.kiosk-mode #btn-reopen-sidebar {
+            display: none !important;
+        }
     </style>
 </head>
 <body class="h-dvh w-screen flex flex-col antialiased">
@@ -106,6 +115,15 @@
             <button id="btn-export-ics" title="Exporter le planning affiché en .ics" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 📅 .ics
             </button>
+            <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                💬 Discord
+            </button>
+            <button id="btn-toggle-notifications" title="Activer un rappel navigateur 15 min avant chaque session" aria-pressed="false" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🔕 Rappels
+            </button>
+            <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🖥️ Kiosque
+            </button>
             <button id="btn-admin-view" class="hidden text-[11px] font-bold text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
                 📊 Rétrospective
             </button>
@@ -121,7 +139,11 @@
         </div>
     </header>
 
-    <div class="border-b border-white/5 bg-[#161b22]/20 backdrop-blur-md shrink-0 text-xs text-slate-400">
+    <button id="btn-exit-kiosk" title="Quitter le mode Kiosque" class="hidden fixed top-3 right-3 z-[80] text-xs font-bold text-white bg-black/60 hover:bg-black/80 px-3 py-2 rounded-lg border border-white/10 backdrop-blur-md transition-all">
+        ✕ Quitter le Kiosque
+    </button>
+
+    <div id="filters-bar" class="border-b border-white/5 bg-[#161b22]/20 backdrop-blur-md shrink-0 text-xs text-slate-400">
         <button id="btn-toggle-filters" class="w-full flex items-center justify-between px-3 sm:px-6 py-1.5 hover:bg-white/5 transition-all" aria-expanded="true" aria-controls="filters-bar-content">
             <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500">🔧 Filtres (catégories, tags, types)</span>
             <span id="filters-chevron" class="text-slate-500 text-[10px]" aria-hidden="true">▾</span>
@@ -141,6 +163,13 @@
             <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
                 <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500 shrink-0">Types :</span>
                 <div id="filter-types-container" class="flex gap-1.5 flex-wrap"></div>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap gap-y-1.5">
+                <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500 shrink-0">Période :</span>
+                <input type="date" id="filter-date-from" aria-label="Du" class="bg-black/40 border border-white/5 rounded-lg px-2 py-1 text-[11px] text-slate-300 focus:outline-none focus:border-indigo-500 [color-scheme:dark]">
+                <span class="text-slate-600 text-[11px]" aria-hidden="true">→</span>
+                <input type="date" id="filter-date-to" aria-label="Au" class="bg-black/40 border border-white/5 rounded-lg px-2 py-1 text-[11px] text-slate-300 focus:outline-none focus:border-indigo-500 [color-scheme:dark]">
+                <button id="btn-clear-date-range" title="Réinitialiser la période" aria-label="Réinitialiser la période" class="hidden text-slate-500 hover:text-white text-xs px-1">✕</button>
             </div>
         </div>
     </div>
@@ -167,6 +196,10 @@
                 </div>
                 <div id="stats-content" class="space-y-2">
                     <div id="stat-categories-container" class="grid grid-cols-2 gap-2"></div>
+                    <div class="glass-panel rounded-xl p-2.5 shadow-sm">
+                        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">👤 Top Organisateurs</div>
+                        <div id="stat-hosts-container" class="flex flex-col gap-1"></div>
+                    </div>
                     <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-[11px] text-slate-400 shadow-sm">
                         <span>🚫 Annulations & Reports</span>
                         <span id="stat-canceled-count" class="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">0</span>
@@ -249,13 +282,24 @@
                 <p id="modal-event-notes" class="text-slate-300 italic text-xs leading-relaxed whitespace-pre-line">Aucune description disponible.</p>
             </div>
 
+            <div id="modal-rsvp-container" class="hidden flex-col space-y-1.5">
+                <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">🙋 Vous y allez ? <span class="normal-case font-medium opacity-60">(pense-bête visible sur cet appareil uniquement)</span></div>
+                <div class="flex gap-1.5">
+                    <button data-rsvp="yes" class="flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all">✅ Je viens</button>
+                    <button data-rsvp="maybe" class="flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all">🤔 Peut-être</button>
+                    <button data-rsvp="no" class="flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all">❌ Non</button>
+                </div>
+            </div>
+
             <div class="flex flex-col space-y-1.5">
                 <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">🏷️ Tags indexés (Cliquables)</div>
                 <div id="modal-event-tags" class="flex flex-wrap gap-1.5"></div>
             </div>
 
-            <div id="modal-link-container" class="hidden">
-                <a id="modal-event-link" href="#" target="_blank" rel="noopener noreferrer" class="flex items-center justify-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">🔗 Voir la fiche</a>
+            <div class="flex flex-col gap-2">
+                <a id="modal-event-link" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">🔗 Voir la fiche</a>
+                <a id="modal-event-salon" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-[#5865F2] hover:bg-[#4752C4] px-4 py-2.5 rounded-xl transition-all">💬 Rejoindre le salon</a>
+                <a id="modal-event-sondage" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 px-4 py-2.5 rounded-xl transition-all">🗳️ Voter / Sondage</a>
             </div>
         </div>
     </div>
@@ -300,6 +344,11 @@
                         <div>🆕 <b>Nouveau</b> — événement ajouté au tableur depuis votre dernière visite.</div>
                         <div>🔗 Bouton dans la modale d'un événement — copie un lien direct vers celui-ci.</div>
                         <div>📅 .ics — télécharge le planning actuellement affiché pour l'importer dans votre agenda (Google/Outlook/Apple). C'est un export ponctuel, pas un abonnement synchronisé automatiquement.</div>
+                        <div>💬 Discord — copie un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.</div>
+                        <div>🔕/🔔 Rappels — active des notifications navigateur 15 minutes avant chaque session (nécessite votre autorisation, et l'onglet doit rester ouvert).</div>
+                        <div>🙋 RSVP — dans la modale d'un événement, "Je viens / Peut-être / Non" est un pense-bête personnel, visible uniquement sur votre appareil.</div>
+                        <div>📆 Période (Du/Au) — filtre le calendrier sur une plage de dates ; le lien <code>?today=1</code> n'affiche que les sessions du jour.</div>
+                        <div>🖥️ Kiosque — affichage plein écran sans interaction (rotation automatique Aujourd'hui/Cette semaine), idéal sur un écran dédié.</div>
                     </div>
                 </div>
             </div>

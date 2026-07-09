@@ -86,6 +86,8 @@ Clés reconnues actuellement :
 | `@episode` ou `@diffusion` | Affiché en priorité sur la tuile et dans la modale ("📌 Episode(s)") — **prime toujours** sur la numérotation automatique des séries et sur le texte des lignes datées (§ 5) |
 | `@image` | URL d'une affiche/jaquette (film, série, jeu) : affichée en fond translucide sur la tuile et en grand dans la modale. Doit commencer par `http://` ou `https://`, sinon ignorée. |
 | `@url` (ou `@lien`/`@link`) | URL externe (IMDB, Steam, page officielle...) : affichée comme bouton cliquable dans la modale, ouvert dans un nouvel onglet. Les trois orthographes sont équivalentes. |
+| `@salon` (ou `@discord`) | Lien direct vers le salon Discord (vocal ou textuel) de l'événement : affiché comme bouton "💬 Rejoindre le salon" dans la modale. |
+| `@sondage` (ou `@vote`) | Lien vers un sondage externe (Google Form, sondage Discord...) : affiché comme bouton "🗳️ Voter / Sondage" dans la modale — pratique pour un événement "à définir" (vote du prochain film/jeu). |
 
 > Le champ "lieu" (📍) n'est donc jamais vide : toutes les sessions sont considérées comme
 > se déroulant sur le Discord "2GETHER" sauf précision contraire via `@location` ou l'ancien
