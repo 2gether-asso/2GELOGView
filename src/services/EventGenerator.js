@@ -3,6 +3,12 @@ import { MetadataParser } from '../parsers/MetadataParser.js';
 import { CONFIG } from '../config.js';
 import { SearchEngine } from './SearchEngine.js';
 
+// Repli utilisé pour estimer la fin d'un épisode quand sa ligne n'a aucune "Durée Réelle"
+// renseignée (ex: dates ajoutées avant d'avoir le chrono exact) : une fois la vraie durée
+// notée dans le tableur, elle reprend automatiquement le dessus (voir Priorités 1 et 2 de
+// generate()) — ce n'est qu'un repère visuel temporaire, jamais utilisé pour les statistiques.
+const DEFAULT_EPISODE_DURATION_MINUTES = 40;
+
 export class EventGenerator {
     /**
      * Génère une liste d'instances d'événements calibrées à partir d'une ligne brute du CSV.
@@ -44,7 +50,8 @@ export class EventGenerator {
                     start: datePrevue.toISOString().split('T')[0],
                     isPlanned: true,
                     progressStatus: "Prévu",
-                    title: `[PRÉVU] ${title}`
+                    title: `[PRÉVU] ${title}`,
+                    allDay: true
                 }));
             }
             return instances;
@@ -150,11 +157,20 @@ export class EventGenerator {
                 episodeCounter += count;
                 const label = count > 1 ? `Épisodes ${startNum}-${episodeCounter}` : `Épisode ${episodeCounter}`;
                 const heureInst = explicit?.heure || heureGlobale;
+                // Durée moyenne de cet épisode (pas de "Date de fin" par occurrence pour une
+                // série hebdo : celle du tableur ne concerne que la fin de la série entière).
+                // Sans "Durée Réelle" du tout, on part d'un repère par défaut par épisode
+                // (voir DEFAULT_EPISODE_DURATION_MINUTES) en attendant la vraie donnée.
+                const effectiveDuration = avgDuration > 0 ? avgDuration : count * DEFAULT_EPISODE_DURATION_MINUTES;
+                const durationEnd = this.computeDurationEnd(iso, heureInst, effectiveDuration);
 
                 instances.push(this._createBaseInstance(title, parsedNotes, type, theme, row, {
                     ...baseConfig,
                     start: iso + 'T' + (heureInst || '12:00') + ':00',
                     heure: heureInst,
+                    allDay: !heureInst,
+                    end: durationEnd?.endValue || null,
+                    isMultiDay: durationEnd?.isMultiDay || false,
                     sub: explicit ? explicit.text : null,
                     episode: isSeries ? label : null,
                     dur: avgDuration
@@ -170,10 +186,18 @@ export class EventGenerator {
             validEpisodes.forEach(ep => {
                 episodeCounter++;
                 const heureInst = ep.heure || heureGlobale;
+                // Une ligne "Episode 4 à 6" couvre 3 épisodes : sans "Durée Réelle", le repère
+                // par défaut (voir DEFAULT_EPISODE_DURATION_MINUTES) est multiplié d'autant.
+                const count = this._countEpisodesInText(ep.text);
+                const effectiveDuration = avgDuration > 0 ? avgDuration : count * DEFAULT_EPISODE_DURATION_MINUTES;
+                const durationEnd = this.computeDurationEnd(ep.date, heureInst, effectiveDuration);
                 instances.push(this._createBaseInstance(title, parsedNotes, type, theme, row, {
                     ...baseConfig,
                     start: ep.date + 'T' + (heureInst || '12:00') + ':00',
                     heure: heureInst,
+                    allDay: !heureInst,
+                    end: durationEnd?.endValue || null,
+                    isMultiDay: durationEnd?.isMultiDay || false,
                     sub: ep.text,
                     episode: isSeries ? `Épisode ${episodeCounter}` : null,
                     dur: avgDuration
@@ -208,18 +232,70 @@ export class EventGenerator {
                 ...baseConfig,
                 start: startIso + 'T' + (baseConfig.heure || '12:00') + ':00',
                 end: endValue,
-                isMultiDay
+                isMultiDay,
+                // Un bandeau étalé sur plusieurs jours (IRL) se lit mieux en tout-la-journée ;
+                // un événement d'une seule journée reste ponctuel s'il a une heure connue.
+                allDay: isMultiDay || !baseConfig.heure
             }));
         }
         // Cas standard unitaire
         else {
+            const startIso = start.toISOString().split('T')[0];
+            let endValue = null;
+            let isMultiDayStandard = false;
+
+            if (end && end.toISOString().split('T')[0] !== startIso) {
+                // "Date de fin" pointe explicitement vers un autre jour : chevauchement de
+                // minuit noté factuellement (ex: soirée de 23h30 à 01h10 le lendemain) —
+                // signal explicite, prioritaire sur tout calcul.
+                isMultiDayStandard = true;
+                endValue = end.toISOString().split('T')[0] + 'T' + (heureFinGlobale || '23:59') + ':00';
+            } else {
+                // Pas de "Date de fin" utile (absente, ou juste une convention de saisie
+                // "même jour" qui ne reflète pas la durée réelle) : on calcule automatiquement
+                // la fin depuis "Durée Réelle", ce qui détecte aussi un chevauchement de
+                // minuit (ex: début 23h30 + 2h de durée réelle).
+                const durationEnd = this.computeDurationEnd(startIso, baseConfig.heure, totalDuration);
+                if (durationEnd) {
+                    endValue = durationEnd.endValue;
+                    isMultiDayStandard = durationEnd.isMultiDay;
+                }
+            }
+
             instances.push(this._createBaseInstance(title, parsedNotes, type, theme, row, {
                 ...baseConfig,
-                start: start.toISOString().split('T')[0] + 'T' + (baseConfig.heure || '12:00') + ':00'
+                start: startIso + 'T' + (baseConfig.heure || '12:00') + ':00',
+                end: endValue,
+                isMultiDay: isMultiDayStandard,
+                // Ce cas reste un événement ponctuel avec heure précise (même s'il chevauche
+                // minuit) : contrairement au bandeau Meet Up, il ne doit pas passer en tout-la-journée.
+                allDay: !baseConfig.heure
             }));
         }
 
         return instances;
+    }
+
+    /**
+     * Calcule automatiquement l'heure de fin d'une occurrence à partir d'une durée en
+     * minutes (durée réelle notée, durée moyenne calculée pour une série/hebdo, ou durée
+     * moyenne globale de repli — voir appelants dans ce fichier et dans main.js),
+     * appliquée depuis son heure de début réelle. Détecte au passage un chevauchement de
+     * minuit (ex: début 23h30 + 1h30 de durée -> fin 01h00 le lendemain), sans dépendre
+     * d'une "Date de fin" explicite par occurrence (qui n'a de sens qu'au niveau de la
+     * ligne entière pour une série hebdomadaire). Public (pas de préfixe `_`) : réutilisé
+     * par main.js pour estimer la fin des épisodes dont la ligne n'a aucune durée notée.
+     * @param {string} startIso - "YYYY-MM-DD" de l'occurrence
+     * @param {string|null} heure - Heure de début "HH:MM" (minuit si absente)
+     * @param {number} durationMinutes
+     * @returns {{ endValue: string, isMultiDay: boolean } | null} null si durée inconnue/nulle
+     */
+    static computeDurationEnd(startIso, heure, durationMinutes) {
+        if (!durationMinutes || durationMinutes <= 0) return null;
+        const startDate = new Date(`${startIso}T${heure || '00:00'}:00`);
+        const endDate = new Date(startDate.getTime() + durationMinutes * 60000);
+        const endValue = DateUtils.toLocalIso(endDate);
+        return { endValue, isMultiDay: endValue.split('T')[0] !== startIso };
     }
 
     static _isPaused(dateIso, pause, reprise) {
@@ -269,6 +345,7 @@ export class EventGenerator {
             isPlanned: false,
             end: null,
             isMultiDay: false,
+            allDay: false,
             progressStatus: "En Cours",
             // Lieu par défaut si ni "Loc :", ni @loc/@location n'est renseigné dans les Notes.
             location: parsedNotes.meta.loc || parsedNotes.meta.location || CONFIG.DEFAULT_LOCATION,
@@ -278,6 +355,14 @@ export class EventGenerator {
             url: parsedNotes.meta.url || parsedNotes.meta.lien || parsedNotes.meta.link || theme.url || null,
             ...restOverrides
         };
+
+        // Identifiant stable (pour la durée d'un chargement) utilisé par le lien
+        // partageable (?event=...) et le suivi des "nouveaux" événements : la combinaison
+        // titre + date de début est unique en pratique (deux occurrences distinctes ne
+        // démarrent jamais à la même seconde avec le même titre). Pas d'encodage manuel ici :
+        // URLSearchParams s'en charge déjà à la volée côté ModalView (encoder deux fois
+        // produirait une URL doublement échappée, moche mais toujours fonctionnelle).
+        instance.id = `${instance.start}__${instance.title}`;
 
         // Compilation de l'index de recherche
         instance.searchIndex = SearchEngine.createIndex(instance);

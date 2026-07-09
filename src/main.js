@@ -9,6 +9,8 @@ import { renderSearchResults } from './ui/SearchResultsView.js';
 import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
 import { SearchEngine } from './services/SearchEngine.js';
+import { IcsExporter } from './services/IcsExporter.js';
+import { renderActivityHeatmap } from './ui/ActivityHeatmap.js';
 import { escapeHtml } from './utils/Html.js';
 import { formatMinutes } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
@@ -26,9 +28,26 @@ let dataAnomalies = [];
 // les événements affichés pour retrouver l'objet complet lors d'un clic (délégation).
 let upcomingEventsCache = [];
 let searchResultsCache = [];
+// Dernier ensemble filtré affiché (calendrier ou recherche) : utilisé par l'export .ics
+// pour exporter "ce que l'utilisateur voit" plutôt que tout le dépôt.
+let lastFilteredEvents = [];
+// Événement à ouvrir si l'utilisateur clique sur le bandeau "Prochain événement".
+let nextEventForBanner = null;
+
+const FILTERS_STORAGE_KEY = 'ui:activeFilters';
+const SEEN_EVENTS_KEY = 'seen:upcomingEventIds';
 
 const CATEGORY_BTN_ACTIVE = "px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold shadow-[0_0_15px_rgba(99,102,241,0.4)]";
 const CATEGORY_BTN_INACTIVE = "px-3 py-1 rounded-lg bg-white/5 border border-white/5 text-slate-400 hover:text-slate-200 transition-all";
+
+// Libellés lisibles pour quelques catégories courtes (config.js THEMES[...].cat) qui ne se
+// prêtent pas bien à une simple capitalisation ("irl" -> "IRL" plutôt que "Irl").
+const CATEGORY_LABEL_OVERRIDES = { irl: "IRL", jdr: "JDR" };
+
+function formatCategoryLabel(cat) {
+    if (CATEGORY_LABEL_OVERRIDES[cat]) return CATEGORY_LABEL_OVERRIDES[cat];
+    return cat.replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function setActiveCategoryButton(selectedBtn) {
     document.querySelectorAll('#filter-categories-container button').forEach(b => {
@@ -36,12 +55,44 @@ function setActiveCategoryButton(selectedBtn) {
     });
 }
 
+// Catégories générées dynamiquement depuis config.js THEMES[...].cat plutôt qu'une liste
+// binaire figée ("watch"/"game") : suit automatiquement la taxonomie définie dans la config.
+function renderCategoryFilterBar() {
+    const container = document.getElementById('filter-categories-container');
+    const categories = [...new Set(
+        Object.entries(CONFIG.THEMES).filter(([name]) => name !== 'default').map(([, theme]) => theme.cat)
+    )];
+
+    const allBtn = `<button data-cat="all" class="${!currentCategory || currentCategory === 'all' ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE}">Tous</button>`;
+    const catBtns = categories.map(cat =>
+        `<button data-cat="${escapeHtml(cat)}" class="${currentCategory === cat ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE}">${escapeHtml(formatCategoryLabel(cat))}</button>`
+    ).join('');
+
+    container.innerHTML = allBtn + catBtns;
+}
+
+// Le panneau "Statistiques" ne porte que sur l'année en cours (pas tout l'historique) :
+// un chiffre plus lisible et cohérent d'une rétrospective annuelle à l'autre. L'historique
+// complet reste consultable dans le mode Admin (rétrospectives année par année).
 function renderDashboardStats(events) {
-    const stats = StatsService.compute(events);
-    document.getElementById('stat-watch-sessions').innerText = stats.watch.n;
-    document.getElementById('stat-watch-time').innerText = formatMinutes(stats.watch.t);
-    document.getElementById('stat-game-sessions').innerText = stats.game.n;
-    document.getElementById('stat-game-time').innerText = formatMinutes(stats.game.t);
+    const currentYear = new Date().getFullYear();
+    document.getElementById('stats-year-label').textContent = currentYear;
+    const yearEvents = events.filter(e => new Date(e.start).getFullYear() === currentYear);
+
+    const stats = StatsService.compute(yearEvents);
+    const categoriesContainer = document.getElementById('stat-categories-container');
+    const sortedCategories = Object.entries(stats.byCategory).sort((a, b) => b[1].t - a[1].t);
+
+    categoriesContainer.innerHTML = sortedCategories.length === 0
+        ? `<span class="col-span-2 text-[11px] text-slate-600 italic">Aucune session</span>`
+        : sortedCategories.map(([cat, stat]) => `
+            <div class="glass-panel p-3 rounded-xl flex flex-col shadow-sm">
+                <span class="text-[10px] font-bold text-slate-400 truncate">${escapeHtml(formatCategoryLabel(cat))}</span>
+                <span class="text-base font-black text-slate-100 mt-0.5">${stat.n}</span>
+                <span class="text-[11px] text-indigo-400 font-bold mt-0.5 truncate">${formatMinutes(stat.t)}</span>
+            </div>
+        `).join('');
+
     document.getElementById('stat-canceled-count').innerText = stats.counters.annulations || 0;
 }
 
@@ -84,15 +135,25 @@ function renderTypeFilterBar() {
     container.innerHTML = allBtn + typeBtns;
 }
 
+// Regroupe la sidebar "Prochainement" par horizon temporel plutôt qu'une liste plate :
+// plus rapide à scanner pour repérer ce qui se passe aujourd'hui/demain d'un coup d'œil.
 function renderUpcomingSidebar(events) {
     const container = document.getElementById('upcoming-list');
     const countLabel = document.getElementById('upcoming-count');
-    const todayStr = new Date().toISOString().split('T')[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    const weekLimit = new Date(today);
+    weekLimit.setDate(weekLimit.getDate() + 7);
+    const weekLimitStr = weekLimit.toISOString().split('T')[0];
 
     const upcoming = events
         .filter(e => e.start.split('T')[0] >= todayStr && !e.isCanceled)
         .sort((a, b) => a.start.localeCompare(b.start))
-        .slice(0, 15);
+        .slice(0, 20);
 
     upcomingEventsCache = upcoming;
     countLabel.innerText = upcoming.length;
@@ -101,11 +162,124 @@ function renderUpcomingSidebar(events) {
         return;
     }
 
-    container.innerHTML = upcoming.map((e, idx) => {
-        const dateObj = new Date(e.start);
-        const readableDate = dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
-    }).join('');
+    const groups = { "Aujourd'hui": [], "Demain": [], "Cette semaine": [], "Plus tard": [] };
+    upcoming.forEach((e, idx) => {
+        const dayStr = e.start.split('T')[0];
+        const item = { e, idx };
+        if (dayStr === todayStr) groups["Aujourd'hui"].push(item);
+        else if (dayStr === tomorrowStr) groups["Demain"].push(item);
+        else if (dayStr < weekLimitStr) groups["Cette semaine"].push(item);
+        else groups["Plus tard"].push(item);
+    });
+
+    container.innerHTML = Object.entries(groups)
+        .filter(([, items]) => items.length > 0)
+        .map(([label, items]) => `
+            <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-0.5 pt-1 first:pt-0">${label}</div>
+            ${items.map(({ e, idx }) => {
+                const dateObj = new Date(e.start);
+                const readableDate = dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+                return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+            }).join('')}
+        `).join('');
+}
+
+function saveFiltersToStorage() {
+    localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify({
+        category: currentCategory,
+        type: currentTypeFilter,
+        tag: currentTagFilter
+    }));
+}
+
+// Restaure les filtres actifs de la dernière visite, pour ne pas perdre son contexte
+// de navigation à chaque rechargement de page.
+function restoreFiltersFromStorage() {
+    try {
+        const raw = localStorage.getItem(FILTERS_STORAGE_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        if (saved.category) currentCategory = saved.category;
+        if (saved.type) currentTypeFilter = saved.type;
+        if (saved.tag) currentTagFilter = saved.tag;
+    } catch {
+        // Valeur corrompue : on ignore silencieusement et repart sur les filtres par défaut.
+    }
+}
+
+// Marque `isNew` sur les événements à venir absents de l'ensemble mémorisé lors de la
+// dernière visite (badge "🆕 Nouveau"). Ne mémorise que les événements non terminés,
+// pour ne pas faire grossir indéfiniment le localStorage avec tout l'historique passé.
+function computeAndMarkNewEvents(allEvents) {
+    const upcoming = allEvents.filter(e => e.progressStatus !== "Terminé" && !e.isCanceled);
+
+    let stored = null;
+    try {
+        const raw = localStorage.getItem(SEEN_EVENTS_KEY);
+        stored = raw ? JSON.parse(raw) : null;
+    } catch {
+        stored = null;
+    }
+
+    if (Array.isArray(stored)) {
+        const storedSet = new Set(stored);
+        upcoming.forEach(e => { if (!storedSet.has(e.id)) e.isNew = true; });
+    }
+
+    localStorage.setItem(SEEN_EVENTS_KEY, JSON.stringify(upcoming.map(e => e.id)));
+}
+
+function formatCountdown(targetDate) {
+    const diffMs = targetDate - new Date();
+    if (diffMs <= 0) return "maintenant";
+    const mins = Math.floor(diffMs / 60000);
+    const days = Math.floor(mins / 1440);
+    const hours = Math.floor((mins % 1440) / 60);
+    const remMins = mins % 60;
+    if (days > 0) return `dans ${days}j ${hours}h`;
+    if (hours > 0) return `dans ${hours}h${remMins > 0 ? remMins + 'min' : ''}`;
+    return `dans ${remMins} min`;
+}
+
+// Le prochain événement pertinent : celui actuellement "En Cours" en priorité (le plus
+// utile à savoir immédiatement), sinon le prochain "Prévu" le plus proche. Calculé sur
+// TOUT le dépôt (pas les filtres actifs) : c'est une info globale, pas liée au filtrage.
+function computeNextEvent() {
+    const all = repo.getAll().filter(e => !e.isCanceled && !e.isPlanned);
+    const live = all.find(e => e.progressStatus === "En Cours");
+    if (live) return { event: live, isLive: true };
+
+    const now = new Date();
+    const future = all
+        .filter(e => e.progressStatus === "Prévu" && new Date(e.start) > now)
+        .sort((a, b) => a.start.localeCompare(b.start));
+    return future.length > 0 ? { event: future[0], isLive: false } : null;
+}
+
+function updateNextEventBanner() {
+    const banner = document.getElementById('next-event-banner');
+    const icon = document.getElementById('next-event-icon');
+    const text = document.getElementById('next-event-text');
+    const result = computeNextEvent();
+
+    if (!result) {
+        banner.classList.add('hidden');
+        banner.classList.remove('flex');
+        nextEventForBanner = null;
+        return;
+    }
+
+    nextEventForBanner = result.event;
+    banner.classList.remove('hidden');
+    banner.classList.add('flex');
+
+    if (result.isLive) {
+        icon.textContent = '🔴';
+        text.innerHTML = `<b>En direct :</b> ${escapeHtml(result.event.title)}${result.event.heure ? ' · depuis ' + escapeHtml(result.event.heure) : ''}`;
+    } else {
+        icon.textContent = '⏳';
+        text.innerHTML = `<b>Prochain :</b> ${escapeHtml(result.event.title)} — ${formatCountdown(new Date(result.event.start))}`;
+    }
 }
 
 function updateUIState() {
@@ -141,6 +315,7 @@ function updateUIState() {
 
     renderDashboardStats(filtered);
     renderUpcomingSidebar(filtered);
+    lastFilteredEvents = filtered;
 
     const clearBtn = document.getElementById('btn-clear-filters');
     if (currentCategory !== "all" || currentTypeFilter || currentTagFilter || isSearching) {
@@ -192,6 +367,25 @@ function setupSidebarToggle() {
     btnReopen.addEventListener('click', () => { panelCtrl.expand(); refreshCalendarSize(); });
 }
 
+// Panneau "Statistiques" repliable : une fois replié, le panneau latéral se réduit à
+// l'essentiel (heatmap d'activité + Prochainement), sans les cartes de stats qui prennent
+// le plus de hauteur.
+function setupStatsToggle() {
+    const content = document.getElementById('stats-content');
+    const btnToggle = document.getElementById('btn-toggle-stats');
+    const chevron = document.getElementById('stats-chevron');
+
+    const panelCtrl = createCollapsiblePanel('ui:statsCollapsed', (collapsed) => {
+        content.classList.toggle('hidden', collapsed);
+        chevron.textContent = collapsed ? '▸' : '▾';
+        btnToggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+
+    btnToggle.addEventListener('click', () => {
+        panelCtrl.toggle(content.classList.contains('hidden'));
+    });
+}
+
 // Barre "Catégories / Tags / Types" repliable : évite d'occuper en permanence
 // une bande d'écran quand on ne s'en sert pas.
 function setupFiltersToggle() {
@@ -215,23 +409,25 @@ function setupFiltersToggle() {
 // Contenu des notes de version : à éditer librement à chaque mise à jour notable.
 // Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
 const PATCH_NOTES = {
-    version: "2026-07-06",
+    version: "2026-07-09",
     sections: [
         {
             title: "🚀 Nouveautés",
             items: [
-                "Recherche améliorée : les soirées répétées (saisons, soirées hebdo) sont regroupées en une seule ligne avec le détail de chaque date et la durée cumulée.",
-                "Statut 🔵 Prévu / 🟢 En Cours / ⚪ Terminé affiché directement sur chaque tuile du calendrier.",
-                "Mode Admin (rétrospectives annuelles + détection d'anomalies dans le tableur), protégé par mot de passe.",
-                "Barre de filtres et panneau de statistiques désormais repliables, pour un calendrier plus dégagé.",
-                "Meilleure prise en charge sur mobile."
+                "Affichage corrigé des événements qui chevauchent minuit (ex: 23h30 → 01h10) : l'heure de fin s'affiche désormais clairement sur la tuile.",
+                "Lien direct partageable vers un événement (bouton 🔗 dans la modale) et export .ics du planning affiché (bouton 📅 .ics en haut).",
+                "Bandeau \"Prochain événement\" avec compte à rebours, et bouton ❓ Aide/légende.",
+                "Catégories entièrement dynamiques (filtres + statistiques), suivent automatiquement la configuration.",
+                "Sidebar \"Prochainement\" regroupée par Aujourd'hui/Demain/Cette semaine, mini heatmap d'activité, badge 🆕 sur les événements nouvellement ajoutés.",
+                "La vue du calendrier (Mois/Semaine/Planning) et les filtres actifs sont désormais mémorisés d'une visite à l'autre."
             ]
         },
         {
             title: "ℹ️ À savoir",
             items: [
                 "Le lieu par défaut des événements est désormais « Discord 2GETHER » sauf indication contraire, et certains horaires par défaut ont été corrigés dans le tableur.",
-                "Un événement peut toujours être annulé ou reporté à la dernière minute : pensez à vérifier le calendrier avant chaque session."
+                "Un événement peut toujours être annulé ou reporté à la dernière minute : pensez à vérifier le calendrier avant chaque session.",
+                "L'export .ics est un instantané ponctuel à réimporter manuellement, pas un abonnement synchronisé automatiquement (le site est 100% statique, sans serveur)."
             ]
         }
     ]
@@ -309,6 +505,15 @@ function setupAdminMode() {
     });
 }
 
+// Lien partageable direct (?event=<id>, voir ModalView) : rouvre la modale de
+// l'événement visé si l'id est encore présent dans le dépôt fraîchement chargé.
+function openEventFromUrl() {
+    const id = new URLSearchParams(window.location.search).get('event');
+    if (!id) return;
+    const ev = repo.getAll().find(e => e.id === id);
+    if (ev) ModalView.open(ev);
+}
+
 // Récupère le CSV, régénère le dépôt et rafraîchit l'UI. Isolée d'initApp() pour
 // pouvoir être rejouée par le bouton "Réessayer" sans dupliquer les écouteurs.
 async function loadData() {
@@ -326,10 +531,15 @@ async function loadData() {
             const instances = EventGenerator.generate(row);
             instances.forEach(inst => repo.add(inst));
         });
+        computeAndMarkNewEvents(repo.getAll());
 
         updateTagsFilterBar(repo.getAll());
         renderTypeFilterBar();
+        renderCategoryFilterBar();
         updateUIState();
+        updateNextEventBanner();
+        renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
+        openEventFromUrl();
         loadingEl.classList.add('hidden');
     } catch (error) {
         console.error("❌ Erreur de chargement du planning :", error);
@@ -338,9 +548,24 @@ async function loadData() {
     }
 }
 
+// Bouton d'aide/légende (statuts, catégories, tags...) pour les nouveaux arrivants.
+function setupHelpOverlay() {
+    const overlay = document.getElementById('help-overlay');
+    const open = () => { overlay.classList.remove('hidden'); overlay.classList.add('flex'); };
+    const close = () => { overlay.classList.add('hidden'); overlay.classList.remove('flex'); };
+
+    document.getElementById('btn-help').addEventListener('click', open);
+    document.getElementById('btn-close-help').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
 async function initApp() {
     try {
         console.log("🚀 Lancement final en Production...");
+
+        // Restaure les filtres de la dernière visite avant le premier rendu, pour que
+        // les barres de filtres et le calendrier reflètent directement le bon état.
+        restoreFiltersFromStorage();
 
         // ModalView pilote la modale existante ; le clic sur un tag relance une recherche.
         ModalView.init((tag) => {
@@ -367,11 +592,24 @@ async function initApp() {
         });
 
         setupSidebarToggle();
+        setupStatsToggle();
         setupFiltersToggle();
         setupAdminMode();
         setupPatchNotes();
+        setupHelpOverlay();
 
         document.getElementById('btn-retry-load').addEventListener('click', () => loadData());
+
+        document.getElementById('next-event-banner').addEventListener('click', () => {
+            if (nextEventForBanner) ModalView.open(nextEventForBanner);
+        });
+        // Rafraîchit le compte à rebours régulièrement sans dépendre d'un rechargement des données.
+        setInterval(updateNextEventBanner, 30000);
+
+        document.getElementById('btn-export-ics').addEventListener('click', () => {
+            const filename = `planning-2gelog-${new Date().toISOString().split('T')[0]}.ics`;
+            IcsExporter.download(lastFilteredEvents, filename);
+        });
 
         // CalendarView pilote entièrement l'instance FullCalendar (rendu + clic).
         calendarInstance = CalendarView.create('calendar', (ev) => ModalView.open(ev));
@@ -387,6 +625,7 @@ async function initApp() {
             if (!btn) return;
             setActiveCategoryButton(btn);
             currentCategory = btn.dataset.cat;
+            saveFiltersToStorage();
             updateUIState();
         });
 
@@ -396,6 +635,7 @@ async function initApp() {
             const type = btn.dataset.type;
             currentTypeFilter = (currentTypeFilter === type || type === "") ? null : type;
             renderTypeFilterBar();
+            saveFiltersToStorage();
             updateUIState();
         });
 
@@ -405,6 +645,7 @@ async function initApp() {
             const tag = btn.dataset.tag;
             currentTagFilter = (currentTagFilter === tag) ? null : tag;
             updateTagsFilterBar(repo.getAll());
+            saveFiltersToStorage();
             updateUIState();
         });
 
@@ -417,6 +658,7 @@ async function initApp() {
             setActiveCategoryButton(document.querySelector('#filter-categories-container button[data-cat="all"]'));
             renderTypeFilterBar();
             updateTagsFilterBar(repo.getAll());
+            saveFiltersToStorage();
             updateUIState();
         });
 

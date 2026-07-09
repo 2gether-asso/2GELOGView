@@ -6,8 +6,7 @@ export class StatsService {
      */
     static compute(events) {
         const stats = {
-            watch: { n: 0, t: 0 },
-            game: { n: 0, t: 0 },
+            byCategory: {},
             byTag: {},
             byType: {},
             byPlatform: {},
@@ -36,13 +35,13 @@ export class StatsService {
             const duration = event.dur || 0;
             const type = (event.type || "Inconnu").toLowerCase(); // Normalisation
 
-            if (event.category === "watch") {
-                stats.watch.n++;
-                stats.watch.t += duration;
-            } else if (event.category === "game") {
-                stats.game.n++;
-                stats.game.t += duration;
-            }
+            // Regroupement générique par catégorie (config.js THEMES[...].cat) : n'importe
+            // quelle catégorie définie dans la config est automatiquement prise en compte,
+            // sans liste figée à maintenir en parallèle ici.
+            const category = event.category || "Autre";
+            if (!stats.byCategory[category]) stats.byCategory[category] = { n: 0, t: 0 };
+            stats.byCategory[category].n++;
+            stats.byCategory[category].t += duration;
 
             if (!stats.byType[type]) stats.byType[type] = 0;
             stats.byType[type] += duration;

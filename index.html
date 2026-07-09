@@ -70,7 +70,7 @@
         }
     </style>
 </head>
-<body class="h-screen w-screen flex flex-col antialiased">
+<body class="h-dvh w-screen flex flex-col antialiased">
 
     <header class="shrink-0 border-b border-white/5 bg-[#161b22]/40 backdrop-blur-xl flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-40">
         <div class="flex items-center space-x-4">
@@ -81,6 +81,12 @@
         </div>
 
         <div class="flex items-center gap-2 sm:space-x-3 flex-wrap w-full sm:w-auto order-3 sm:order-none">
+            <button id="btn-help" title="Aide et légende" aria-label="Aide et légende" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                ❓
+            </button>
+            <button id="btn-export-ics" title="Exporter le planning affiché en .ics" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                📅 .ics
+            </button>
             <button id="btn-admin-view" class="hidden text-[11px] font-bold text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
                 📊 Rétrospective
             </button>
@@ -104,11 +110,7 @@
             <div class="flex flex-wrap items-center gap-4">
                 <div class="flex items-center space-x-2">
                     <span class="font-bold text-[10px] uppercase tracking-wider text-slate-500">Catégories :</span>
-                    <div class="flex gap-1.5" id="filter-categories-container">
-                        <button data-cat="all" class="px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold shadow-[0_0_15px_rgba(99,102,241,0.4)]">Tous</button>
-                        <button data-cat="watch" class="px-3 py-1 rounded-lg bg-white/5 border border-white/5 hover:border-white/10 hover:bg-white/10 transition-all">🎬 Visionnage</button>
-                        <button data-cat="game" class="px-3 py-1 rounded-lg bg-white/5 border border-white/5 hover:border-white/10 hover:bg-white/10 transition-all">🎮 Gaming</button>
-                    </div>
+                    <div class="flex gap-1.5 flex-wrap" id="filter-categories-container"></div>
                 </div>
                 <div class="h-4 w-px bg-white/10"></div>
                 <div class="flex items-center space-x-2 flex-1 min-w-0">
@@ -123,6 +125,11 @@
         </div>
     </div>
 
+    <div id="next-event-banner" class="hidden shrink-0 border-b border-indigo-500/20 bg-indigo-500/[0.06] px-3 sm:px-6 py-2 text-xs items-center gap-2 cursor-pointer hover:bg-indigo-500/10 transition-all">
+        <span id="next-event-icon" class="shrink-0">⏳</span>
+        <span id="next-event-text" class="text-slate-300 truncate flex-1 min-w-0"></span>
+    </div>
+
     <main class="flex-1 flex overflow-hidden w-full relative">
         <section class="flex-1 p-4 h-full relative overflow-y-auto overflow-x-hidden custom-scroll bg-black/[0.05]">
             <div id="calendar" class="w-full h-full"></div>
@@ -132,24 +139,22 @@
         <section id="sidebar-panel" class="w-full sm:w-80 absolute sm:relative inset-y-0 right-0 z-20 sm:z-auto border-l border-white/5 bg-[#0d1117] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden p-4 space-y-4 backdrop-blur-sm transition-all shadow-2xl sm:shadow-none">
             <div class="space-y-2 shrink-0">
                 <div class="flex items-center justify-between px-1">
-                    <h2 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Statistiques globales</h2>
+                    <button id="btn-toggle-stats" class="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 hover:text-slate-300 uppercase tracking-widest transition-all" aria-expanded="true" aria-controls="stats-content">
+                        <span id="stats-chevron" aria-hidden="true">▾</span>
+                        <span>Statistiques <span id="stats-year-label"></span></span>
+                    </button>
                     <button id="btn-toggle-sidebar" title="Masquer le panneau" aria-label="Masquer le panneau de statistiques" class="text-slate-500 hover:text-white text-xs p-1 rounded-md hover:bg-white/5 transition-all">✕</button>
                 </div>
-                <div class="grid grid-cols-2 gap-2">
-                    <div class="glass-panel p-3 rounded-xl flex flex-col shadow-sm">
-                        <span class="text-[10px] font-bold text-slate-400">🎬 Visionnage</span>
-                        <span id="stat-watch-sessions" class="text-base font-black text-slate-100 mt-0.5">0</span>
-                        <span id="stat-watch-time" class="text-[11px] text-indigo-400 font-bold mt-0.5 truncate">0 min</span>
-                    </div>
-                    <div class="glass-panel p-3 rounded-xl flex flex-col shadow-sm">
-                        <span class="text-[10px] font-bold text-slate-400">🎮 Gaming</span>
-                        <span id="stat-game-sessions" class="text-base font-black text-slate-100 mt-0.5">0</span>
-                        <span id="stat-game-time" class="text-[11px] text-emerald-400 font-bold mt-0.5 truncate">0 min</span>
+                <div id="stats-content" class="space-y-2">
+                    <div id="stat-categories-container" class="grid grid-cols-2 gap-2"></div>
+                    <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-[11px] text-slate-400 shadow-sm">
+                        <span>🚫 Annulations & Reports</span>
+                        <span id="stat-canceled-count" class="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">0</span>
                     </div>
                 </div>
-                <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-[11px] text-slate-400 shadow-sm">
-                    <span>🚫 Annulations & Reports</span>
-                    <span id="stat-canceled-count" class="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">0</span>
+                <div class="glass-panel rounded-xl p-2.5 shadow-sm">
+                    <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">📈 Activité (13 sem.)</div>
+                    <div id="activity-heatmap"></div>
                 </div>
             </div>
 
@@ -180,7 +185,10 @@
                         <h3 id="modal-event-title" class="text-base font-extrabold text-white leading-snug mt-1">Titre de l'événement</h3>
                     </div>
                 </div>
-                <button id="modal-close-btn" aria-label="Fermer" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all font-bold text-sm">✕</button>
+                <div class="flex items-center gap-1 shrink-0">
+                    <button id="modal-copy-link-btn" title="Copier le lien de cet événement" aria-label="Copier le lien de cet événement" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all font-bold text-sm">🔗</button>
+                    <button id="modal-close-btn" aria-label="Fermer" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all font-bold text-sm">✕</button>
+                </div>
             </div>
 
             <div class="border-t border-white/5 my-1"></div>
@@ -240,6 +248,41 @@
             </div>
             <div id="patchnotes-content" class="space-y-4 text-sm text-slate-300"></div>
             <button id="btn-dismiss-patchnotes" class="mt-5 w-full text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">J'ai compris</button>
+        </div>
+    </div>
+
+    <div id="help-overlay" class="hidden fixed inset-0 z-[65] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+        <div class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="help-title">
+            <div class="flex items-start justify-between mb-3">
+                <h2 id="help-title" class="text-lg font-black text-white">❓ Aide & légende</h2>
+                <button id="btn-close-help" aria-label="Fermer" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all font-bold text-sm">✕</button>
+            </div>
+            <div class="space-y-4 text-sm text-slate-300">
+                <div>
+                    <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Statuts</div>
+                    <div class="space-y-1 text-xs">
+                        <div>🔵 <b>Prévu</b> — l'événement n'a pas encore commencé.</div>
+                        <div>🟢 <b>En Cours</b> — en train de se dérouler (pastille animée sur les tuiles).</div>
+                        <div>⚪ <b>Terminé</b> — déjà passé.</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Catégories & Types</div>
+                    <p class="text-xs leading-relaxed">Les <b>Catégories</b> regroupent les types d'événements définis dans la configuration (Jeux, Visionnage, IRL...). Les <b>Types</b> sont plus précis (Soirée Série, Meet Up, JDR...). Cliquez sur un bouton pour filtrer, sur "Annuler les filtres" pour tout réafficher.</p>
+                </div>
+                <div>
+                    <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Tags & Recherche</div>
+                    <p class="text-xs leading-relaxed">La barre de recherche filtre par titre, tag (#), organisateur ou plateforme. Les événements répétés (saisons, soirées hebdo) sont regroupés en une seule ligne dépliable dans les résultats.</p>
+                </div>
+                <div>
+                    <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Autres fonctions</div>
+                    <div class="space-y-1 text-xs">
+                        <div>🆕 <b>Nouveau</b> — événement ajouté au tableur depuis votre dernière visite.</div>
+                        <div>🔗 Bouton dans la modale d'un événement — copie un lien direct vers celui-ci.</div>
+                        <div>📅 .ics — télécharge le planning actuellement affiché pour l'importer dans votre agenda (Google/Outlook/Apple). C'est un export ponctuel, pas un abonnement synchronisé automatiquement.</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

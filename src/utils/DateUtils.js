@@ -11,6 +11,15 @@ export class DateUtils {
         return (parseInt(h) || 0) * 60 + (parseInt(m) || 0); 
     }
 
+    /**
+     * Formate un Date en chaîne locale "YYYY-MM-DDTHH:MM:SS" (sans passer par
+     * toISOString(), qui convertit en UTC et décalerait l'heure affichée).
+     */
+    static toLocalIso(date) {
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
     static formatHeure(h) {
         if (!h) return null;
         let parts = h.split(':').slice(0, 2);

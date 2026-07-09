@@ -18,13 +18,24 @@ function rankedRow(label, minutes) {
     `;
 }
 
+/** Comme rankedRow, mais avec le nombre de sessions en plus du temps cumulé (catégories). */
+function categoryRow(label, stat) {
+    return `
+        <div class="flex items-center justify-between gap-2 bg-white/5 rounded px-2 py-1">
+            <span class="text-slate-300 truncate capitalize">${escapeHtml(label)}</span>
+            <span class="text-slate-500 font-bold shrink-0">${stat.n} · ${formatMinutes(stat.t)}</span>
+        </div>
+    `;
+}
+
 function emptyRow() {
     return `<div class="text-slate-600 italic text-xs">Aucune donnée</div>`;
 }
 
 function renderYearCard(year, s) {
-    const totalSessions = s.watch.n + s.game.n;
-    const totalTime = s.watch.t + s.game.t;
+    const categories = Object.entries(s.byCategory).sort((a, b) => b[1].t - a[1].t);
+    const totalSessions = categories.reduce((sum, [, v]) => sum + v.n, 0);
+    const totalTime = categories.reduce((sum, [, v]) => sum + v.t, 0);
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-4">
@@ -33,17 +44,7 @@ function renderYearCard(year, s) {
                 <span class="text-xs text-slate-400">${totalSessions} sessions · ${formatMinutes(totalTime)} au total</span>
             </div>
 
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div class="bg-black/20 p-3 rounded-xl border border-white/5">
-                    <div class="text-[10px] text-slate-500 uppercase font-bold">🎬 Visionnage</div>
-                    <div class="text-lg font-black text-white">${s.watch.n}</div>
-                    <div class="text-[11px] text-indigo-400 font-bold">${formatMinutes(s.watch.t)}</div>
-                </div>
-                <div class="bg-black/20 p-3 rounded-xl border border-white/5">
-                    <div class="text-[10px] text-slate-500 uppercase font-bold">🎮 Gaming</div>
-                    <div class="text-lg font-black text-white">${s.game.n}</div>
-                    <div class="text-[11px] text-emerald-400 font-bold">${formatMinutes(s.game.t)}</div>
-                </div>
+            <div class="grid grid-cols-2 gap-3">
                 <div class="bg-black/20 p-3 rounded-xl border border-white/5">
                     <div class="text-[10px] text-slate-500 uppercase font-bold">🚫 Annulés / Reportés</div>
                     <div class="text-lg font-black text-rose-400">${s.counters.annulations}</div>
@@ -57,6 +58,10 @@ function renderYearCard(year, s) {
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div>
+                    <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">📊 Par catégorie</div>
+                    <div class="space-y-1">${categories.map(([k, v]) => categoryRow(k, v)).join('') || emptyRow()}</div>
+                </div>
+                <div>
                     <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">🏷️ Top Tags</div>
                     <div class="space-y-1">${topN(s.byTag).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}</div>
                 </div>
@@ -64,16 +69,18 @@ function renderYearCard(year, s) {
                     <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">👤 Top Organisateurs</div>
                     <div class="space-y-1">${topN(s.byHost).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}</div>
                 </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div>
                     <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">📺 Top Plateformes</div>
                     <div class="space-y-1">${topN(s.byPlatform).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}</div>
                 </div>
-            </div>
-
-            <div>
-                <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">🎭 Répartition par type</div>
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-                    ${topN(s.byType, 12).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}
+                <div class="sm:col-span-2">
+                    <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">🎭 Répartition par type</div>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                        ${topN(s.byType, 12).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}
+                    </div>
                 </div>
             </div>
         </div>

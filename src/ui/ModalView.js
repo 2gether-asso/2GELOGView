@@ -1,5 +1,5 @@
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
-import { renderStatusBadge } from './EventCardTemplate.js';
+import { renderStatusBadge, getOvernightSuffix } from './EventCardTemplate.js';
 
 // Lieu par défaut (voir EventGenerator) : la carte "Lieu" est masquée quand elle ne
 // contient rien de plus informatif que cette valeur par défaut.
@@ -37,6 +37,23 @@ export class ModalView {
             this.hide();
             if (this._onTagClick) this._onTagClick(tag);
         });
+
+        // Lien partageable direct vers l'événement ouvert (?event=<id>).
+        document.getElementById('modal-copy-link-btn').addEventListener('click', async (e) => {
+            if (!this._currentEventId) return;
+            const url = new URL(window.location.href);
+            url.search = '';
+            url.searchParams.set('event', this._currentEventId);
+            const btn = e.currentTarget;
+            try {
+                await navigator.clipboard.writeText(url.href);
+                const original = btn.textContent;
+                btn.textContent = '✅';
+                setTimeout(() => { btn.textContent = original; }, 1500);
+            } catch {
+                window.prompt("Copiez ce lien :", url.href);
+            }
+        });
     }
 
     /**
@@ -47,11 +64,20 @@ export class ModalView {
         this.init();
         if (!event) return;
 
+        this._currentEventId = event.id || null;
+        // Rend l'URL partageable (?event=<id>) sans recharger la page ni polluer
+        // l'historique de navigation (remplace l'entrée courante plutôt que d'en empiler une).
+        if (event.id) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('event', event.id);
+            window.history.replaceState(null, '', url);
+        }
+
         document.getElementById('modal-event-type').innerText = event.type || "ÉVÉNEMENT";
         document.getElementById('modal-event-status').innerHTML = renderStatusBadge(event.progressStatus);
         document.getElementById('modal-event-title').innerText = event.title;
         document.getElementById('modal-event-time').innerText =
-            `Le ${new Date(event.start).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} ${event.heure ? 'à ' + event.heure : ''}`;
+            `Le ${new Date(event.start).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} ${event.heure ? 'à ' + event.heure + getOvernightSuffix(event) : ''}`;
 
         // event.location est toujours renseigné par EventGenerator (avec "Discord 2GETHER" par défaut) ;
         // on masque la carte quand elle ne dit rien de plus que cette valeur par défaut.
@@ -156,6 +182,13 @@ export class ModalView {
         const modalBox = document.getElementById('custom-modal-box');
         modalContainer.classList.add('opacity-0', 'pointer-events-none');
         modalBox.classList.add('scale-95');
+
+        if (this._currentEventId) {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('event');
+            window.history.replaceState(null, '', url);
+        }
+        this._currentEventId = null;
 
         // Restaure le focus sur l'élément qui avait ouvert la modale.
         if (this._lastFocused && typeof this._lastFocused.focus === 'function') {

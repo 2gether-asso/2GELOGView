@@ -1,6 +1,6 @@
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
-import { renderStatusBadge, getEpisodeLabel, getIconSrc } from './EventCardTemplate.js';
+import { renderStatusBadge, getEpisodeLabel, getIconSrc, getOvernightSuffix } from './EventCardTemplate.js';
 import { formatMinutes } from '../utils/Format.js';
 
 function shortDate(iso) {
@@ -34,12 +34,13 @@ function renderRow(e, idx) {
             <img src="${iconSrc}" alt="" class="relative z-10 w-14 aspect-[8/9] rounded-lg object-cover shrink-0" onerror="this.style.display='none'">
             <div class="relative z-10 flex-1 min-w-0 space-y-1.5">
                 <div class="flex items-start justify-between gap-2 flex-wrap">
-                    <div class="text-sm font-bold text-slate-100 ${e.isCanceled ? 'line-through opacity-50' : ''}">${title}</div>
-                    <div class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${readableDate}${e.heure ? ' · ' + e.heure : ''}</div>
+                    <div class="text-sm font-bold text-slate-100 ${e.isCanceled ? 'line-through opacity-50' : ''}" title="${title}">${title}</div>
+                    <div class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${readableDate}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</div>
                 </div>
                 <div class="flex flex-wrap gap-1.5 text-[11px]">
                     <span class="font-semibold px-1.5 py-0.5 rounded border" style="color: ${e.col}; border-color: ${e.col}40; background: ${e.col}1a;">${type}</span>
                     ${renderStatusBadge(e.progressStatus)}
+                    ${e.isNew ? `<span class="text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🆕 Nouveau</span>` : ''}
                     ${episode ? `<span class="text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">📺 ${episode}</span>` : ''}
                     ${location ? `<span class="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">📍 ${location}</span>` : ''}
                     ${host ? `<span class="text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">👤 ${host}</span>` : ''}
@@ -77,6 +78,7 @@ function renderGroupRow(group, indexOf) {
     const iconSrc = getIconSrc(first);
     const totalDuration = group.reduce((sum, e) => sum + (e.dur || 0), 0);
     const canceledCount = group.filter(e => e.isCanceled).length;
+    const newCount = group.filter(e => e.isNew).length;
 
     const tagsSet = new Set();
     group.forEach(e => (e.tags || []).forEach(t => tagsSet.add(t)));
@@ -100,7 +102,7 @@ function renderGroupRow(group, indexOf) {
         return `
             <div class="px-3 py-2 hover:bg-white/5 cursor-pointer text-[13px]" data-idx="${idx}">
                 <div class="flex items-center justify-between gap-2">
-                    <span class="text-slate-300 ${e.isCanceled ? 'line-through opacity-50' : ''}">${dateStr}${e.heure ? ' · ' + e.heure : ''}</span>
+                    <span class="text-slate-300 ${e.isCanceled ? 'line-through opacity-50' : ''}">${dateStr}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</span>
                     <span class="flex items-center gap-2 min-w-0">
                         ${renderStatusBadge(e.progressStatus)}
                         ${episode ? `<span class="text-amber-400 truncate max-w-[140px]">${episode}</span>` : ''}
@@ -129,13 +131,14 @@ function renderGroupRow(group, indexOf) {
                 <img src="${iconSrc}" alt="" class="relative z-10 w-14 aspect-[8/9] rounded-lg object-cover shrink-0" onerror="this.style.display='none'">
                 <div class="relative z-10 flex-1 min-w-0 space-y-1.5">
                     <div class="flex items-start justify-between gap-2 flex-wrap">
-                        <div class="text-sm font-bold text-slate-100">${title}</div>
+                        <div class="text-sm font-bold text-slate-100" title="${title}">${title}</div>
                         <div class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${shortDate(sorted[0].start)} → ${shortDate(sorted[sorted.length - 1].start)}</div>
                     </div>
                     <div class="flex flex-wrap gap-1.5 text-[11px]">
                         <span class="font-semibold px-1.5 py-0.5 rounded border" style="color: ${first.col}; border-color: ${first.col}40; background: ${first.col}1a;">${type}</span>
                         <span class="text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">🔁 ${group.length} occurrences</span>
                         <span class="text-slate-400 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">⏱️ ${formatMinutes(totalDuration)} cumulées</span>
+                        ${newCount ? `<span class="text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🆕 ${newCount} nouvelle(s)</span>` : ''}
                         ${canceledCount ? `<span class="text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">🚫 ${canceledCount} annulée(s)</span>` : ''}
                         ${location ? `<span class="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">📍 ${location}</span>` : ''}
                         ${host ? `<span class="text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">👤 ${host}</span>` : ''}

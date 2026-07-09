@@ -1,4 +1,4 @@
-import { renderEventCard, renderCompactEventChip } from './EventCardTemplate.js';
+import { renderEventCard, renderCompactEventChip, renderContinuationChip } from './EventCardTemplate.js';
 
 export class CalendarView {
     /**
@@ -19,8 +19,14 @@ export class CalendarView {
         // permettraient de basculer vers les autres vues.
         const isMobile = window.matchMedia('(max-width: 639px)').matches;
 
+        // Sur desktop, on rouvre l'app sur la dernière vue utilisée plutôt que de
+        // toujours retomber sur "Mois" (non applicable sur mobile, verrouillé sur Planning).
+        const savedView = !isMobile && localStorage.getItem('ui:calendarView');
+        const validViews = ['dayGridMonth', 'timeGridWeek', 'listMonth'];
+        const initialView = isMobile ? 'listMonth' : (validViews.includes(savedView) ? savedView : 'dayGridMonth');
+
         const calendar = new FullCalendar.Calendar(calendarEl, {
-            initialView: isMobile ? 'listMonth' : 'dayGridMonth',
+            initialView,
             locale: 'fr',
             firstDay: 1, // Lundi
             headerToolbar: {
@@ -58,7 +64,16 @@ export class CalendarView {
                 const isTimeGrid = arg.view.type === 'timeGridWeek' || arg.view.type === 'timeGridDay';
                 const wrapper = document.createElement('div');
                 wrapper.className = "w-full h-full cursor-pointer";
-                wrapper.innerHTML = isTimeGrid ? renderCompactEventChip(originalData) : renderEventCard(originalData);
+
+                // Un événement multi-jours (chevauchement de minuit, ou bandeau Meet Up
+                // étalé) est découpé par FullCalendar en un segment par jour traversé.
+                // Seul le premier segment affiche la carte complète ; les suivants
+                // n'auraient qu'un fragment tronqué et redondant du même contenu.
+                if (originalData.isMultiDay && !arg.isStart) {
+                    wrapper.innerHTML = renderContinuationChip(originalData, arg.isEnd);
+                } else {
+                    wrapper.innerHTML = isTimeGrid ? renderCompactEventChip(originalData) : renderEventCard(originalData);
+                }
                 return { domNodes: [wrapper] };
             },
 
@@ -67,6 +82,11 @@ export class CalendarView {
                 if (originalData && typeof onEventClick === 'function') {
                     onEventClick(originalData);
                 }
+            },
+
+            // Mémorise la vue active (desktop uniquement, mobile reste verrouillé sur Planning).
+            datesSet: function(info) {
+                if (!isMobile) localStorage.setItem('ui:calendarView', info.view.type);
             }
         });
 
@@ -82,15 +102,27 @@ export class CalendarView {
         calendarInstance.removeAllEvents();
 
         const fullCalendarEvents = customEvents.map(evt => {
-            // Un événement multi-jours (Meet Up étalé) est traité en allDay pour s'afficher
-            // comme un bandeau continu ; sinon allDay seulement s'il n'a pas d'heure définie.
-            const isAllDay = evt.isMultiDay ? true : !evt.heure;
+            // Un événement ponctuel qui chevauche minuit (ex: 23h30 → 01h10, voir isMultiDay
+            // dans EventGenerator) garde sa vraie heure de fin pour l'indice visuel affiché sur
+            // la tuile (getOvernightSuffix, lu depuis originalData ci-dessous), mais on borne la
+            // fin transmise à FullCalendar à la fin de la journée de départ : sinon FullCalendar
+            // le découpe en un second segment sur le jour suivant, ce qui provoque un débordement
+            // visuel et une hauteur de ligne du calendrier incohérente (recalculée différemment
+            // selon les jours, y compris au clic sur une tuile). Les vrais bandeaux multi-jours
+            // (Meet Up/Partenaire/Sanctuaire, allDay) continuent eux à s'étaler normalement.
+            let fcEnd = evt.end || undefined;
+            if (evt.isMultiDay && !evt.allDay && fcEnd && fcEnd.split('T')[0] !== evt.start.split('T')[0]) {
+                fcEnd = evt.start.split('T')[0] + 'T23:59:59';
+            }
 
             return {
                 title: evt.title,
                 start: evt.start, // La chaîne ISO complète positionnera l'événement à la bonne heure
-                end: evt.end || undefined,
-                allDay: isAllDay,
+                end: fcEnd,
+                // Calculé par EventGenerator : tout-la-journée pour les bandeaux IRL multi-jours
+                // ou les événements sans heure connue, ponctuel (avec heure précise) sinon —
+                // y compris pour un événement ponctuel qui chevauche minuit (voir isMultiDay).
+                allDay: evt.allDay,
                 backgroundColor: evt.col || '#6366f1',
                 borderColor: 'transparent',
                 extendedProps: {

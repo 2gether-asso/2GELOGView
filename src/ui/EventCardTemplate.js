@@ -38,6 +38,37 @@ export function getIconSrc(e) {
     return e.img ? `./assets/img/${e.img}` : './assets/img/hors-prog.png';
 }
 
+/**
+ * Heure de fin d'un événement ponctuel qui chevauche minuit (ex: 23h30 → 01h10 le
+ * lendemain). FullCalendar ne scinde pas toujours ce genre de bandeau court en deux
+ * segments visuels selon la vue ; on le rend donc explicite directement sur la carte,
+ * quelle que soit la vue, plutôt que de dépendre de ce découpage.
+ * @param {Object} e
+ * @returns {string} " → 01:10 (+1j)" ou "" si non applicable
+ */
+export function getOvernightSuffix(e) {
+    if (!e.isMultiDay || e.allDay || !e.end || !e.end.includes('T')) return "";
+    const endHeure = e.end.split('T')[1].slice(0, 5);
+    return ` → ${endHeure} (+1j)`;
+}
+
+/** Petite pastille animée pour les événements "En Cours", en plus du badge de statut texte. */
+function renderLiveDot(e) {
+    if (e.progressStatus !== "En Cours" || e.isCanceled) return '';
+    return `
+        <span class="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        </span>
+    `;
+}
+
+/** Badge "🆕 Nouveau" pour un événement ajouté au tableur depuis la dernière visite (voir main.js). */
+function renderNewBadge(e) {
+    if (!e.isNew) return '';
+    return `<span class="text-[11px] font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🆕 Nouveau</span>`;
+}
+
 export function renderEventCard(e, readableDate = null) {
     const detailsEpisode = escapeHtml(getEpisodeLabel(e));
     // e.location est toujours renseigné par EventGenerator (avec un lieu par défaut).
@@ -70,10 +101,13 @@ export function renderEventCard(e, readableDate = null) {
                     <div class="flex items-start space-x-2 min-w-0">
                         <img src="${iconSrc}" alt="" class="w-9 ${ICON_ASPECT_CLASS} rounded-lg object-cover mt-0.5 shrink-0" onerror="this.style.display='none'">
                         <div class="min-w-0">
-                            <div class="text-sm font-bold text-slate-100 truncate tracking-tight">${title}</div>
+                            <div class="flex items-center gap-1.5 min-w-0">
+                                ${renderLiveDot(e)}
+                                <div class="text-sm font-bold text-slate-100 truncate tracking-tight" title="${title}">${title}</div>
+                            </div>
                             <div class="text-[11px] font-bold text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
                                 <span class="text-[11px] tracking-wide text-indigo-400 bg-indigo-500/5 border border-indigo-500/10 px-1.5 py-0.5 rounded-md" style="color: ${e.col}">${type}</span>
-                                ${e.heure ? `<span class="text-indigo-400 font-extrabold">🕒 ${e.heure}</span>` : ''}
+                                ${e.heure ? `<span class="text-indigo-400 font-extrabold">🕒 ${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
                             </div>
                         </div>
                     </div>
@@ -82,12 +116,35 @@ export function renderEventCard(e, readableDate = null) {
 
                 <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
                     ${renderStatusBadge(e.progressStatus)}
+                    ${renderNewBadge(e)}
                     ${detailsEpisode ? `<span class="text-[11px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">📺 ${detailsEpisode}</span>` : ''}
                     ${location ? `<span class="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">📍 ${location}</span>` : ''}
                 </div>
 
                 ${tagsRender}
             </div>
+        </div>
+    `;
+}
+
+/**
+ * Rendu du/des segment(s) de continuation d'un événement multi-jours (chevauche minuit,
+ * ou bandeau Meet Up/Partenaire/Sanctuaire étalé sur plusieurs jours). FullCalendar découpe
+ * ces événements en un segment par jour traversé et appelle `eventContent` pour chacun : sans
+ * ce rendu dédié, la carte complète (icône, titre, badges) se répéterait telle quelle sur
+ * chaque jour, ce qui est à la fois redondant et illisible sur un segment souvent très étroit.
+ * @param {Object} e
+ * @param {boolean} isLastSegment - Vrai sur le dernier jour couvert (arg.isEnd)
+ */
+export function renderContinuationChip(e, isLastSegment) {
+    const color = e.col || '#6366f1';
+    const title = escapeHtml(e.title);
+    const endHeure = e.end && e.end.includes('T') ? e.end.split('T')[1].slice(0, 5) : null;
+    const suffix = isLastSegment && endHeure ? ` · jusqu'à ${escapeHtml(endHeure)}` : ' (suite)';
+    return `
+        <div class="flex items-center gap-1 w-full h-full px-1.5 py-0.5 overflow-hidden rounded-md border-l-2 opacity-80 ${e.isCanceled ? 'line-through' : ''}" style="background: ${color}1a; border-color: ${color};">
+            <span class="text-[11px] text-white/60 shrink-0">↳</span>
+            <span class="text-[11px] text-white/70 truncate">${title}${suffix}</span>
         </div>
     `;
 }
@@ -109,8 +166,11 @@ export function renderCompactEventChip(e) {
         <div class="flex items-center gap-1.5 w-full h-full px-1.5 py-1 overflow-hidden rounded-md border-l-2 ${e.isCanceled ? 'opacity-40 line-through' : ''}" style="background: ${color}26; border-color: ${color};">
             <img src="${iconSrc}" alt="" class="w-6 ${ICON_ASPECT_CLASS} rounded object-cover shrink-0" onerror="this.style.display='none'">
             <div class="min-w-0 flex-1 leading-tight">
-                <div class="text-[13px] font-bold text-white truncate">${title}</div>
-                <div class="text-[11px] text-white/70 truncate">${e.heure ? e.heure : ''}${detailsEpisode ? ' · ' + detailsEpisode : ''}</div>
+                <div class="flex items-center gap-1 min-w-0">
+                    ${renderLiveDot(e)}
+                    <div class="text-[13px] font-bold text-white truncate" title="${title}">${title}</div>
+                </div>
+                <div class="text-[11px] text-white/70 truncate">${e.heure ? e.heure + getOvernightSuffix(e) : ''}${detailsEpisode ? ' · ' + detailsEpisode : ''}</div>
             </div>
         </div>
     `;
