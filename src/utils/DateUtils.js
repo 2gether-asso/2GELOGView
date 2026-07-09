@@ -20,6 +20,17 @@ export class DateUtils {
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
     }
 
+    /**
+     * Formate un Date en chaîne locale "YYYY-MM-DD" — jamais via toISOString(), qui convertit
+     * en UTC et décale la date d'un jour pour les fuseaux positifs (France : minuit local
+     * devient la veille 22h/23h UTC). À utiliser pour toute comparaison "aujourd'hui" /
+     * regroupement par jour (sinon "aujourd'hui" est en réalité calculé comme hier).
+     */
+    static toLocalDateStr(date) {
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+
     static formatHeure(h) {
         if (!h) return null;
         let parts = h.split(':').slice(0, 2);

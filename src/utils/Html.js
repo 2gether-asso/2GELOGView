@@ -17,17 +17,20 @@ export function escapeHtml(value) {
 }
 
 /**
- * Valide qu'une valeur fournie par le tableur (@image, @lien) est bien une URL
- * http(s) avant de l'utiliser dans un `src`, un `href` ou un `background-image` :
- * ni `javascript:`, ni `data:`, ni tout autre schéma ne doit pouvoir s'y glisser.
+ * Valide qu'une valeur (URL @image/@lien du tableur, ou chemin local d'une bannière par
+ * défaut dans config.js) est bien utilisable dans un `src`, un `href` ou un
+ * `background-image` : ni `javascript:`, ni `data:`, ni tout autre schéma ne doit pouvoir
+ * s'y glisser. Le chemin est résolu par rapport à la page courante (base) pour accepter
+ * aussi bien une URL absolue (http/https) qu'un chemin relatif local (ex:
+ * "./assets/img/default/Movie Banner.png").
  * @param {*} value
- * @returns {string} L'URL si valide, sinon une chaîne vide.
+ * @returns {string} L'URL (absolue, espaces/accents encodés) si valide, sinon une chaîne vide.
  */
 export function sanitizeUrl(value) {
     if (!value) return "";
     const trimmed = String(value).trim();
     try {
-        const url = new URL(trimmed);
+        const url = new URL(trimmed, window.location.href);
         if (url.protocol !== "http:" && url.protocol !== "https:") return "";
         return url.href;
     } catch {

@@ -23,7 +23,12 @@ export class EventGenerator {
         // Validation renforcée issue du plan
         if (!title) return instances;
 
-        const rawNotes = row["Notes"] || "";
+        // Colonne "Tags" (migration en cours dans le tableur, cf. GUIDE_METADONNEES.md) :
+        // à terme, tous les #tag/@clé:valeur/mots-clés spéciaux y vivront, et "Notes" ne
+        // servira plus qu'au commentaire libre. En attendant, les deux colonnes sont fusionnées
+        // ici et lues indifféremment, pour que la migration puisse se faire ligne par ligne
+        // sans rien casser (une ligne peut avoir ses tags dans l'une, l'autre, ou les deux).
+        const rawNotes = [row["Tags"], row["Notes"]].filter(Boolean).join("\n");
         const parsedNotes = MetadataParser.parse(rawNotes);
         let type = row["Type d'event"];
 
@@ -60,53 +65,31 @@ export class EventGenerator {
         const heureGlobale = startRaw?.includes(' ') ? DateUtils.formatHeure(startRaw.split(' ')[1]) : null;
         const isContre = rawNotes.toLowerCase().includes("remplacé");
         const today = new Date(); today.setHours(0,0,0,0);
-        const now = new Date(); // Heure réelle actuelle (contrairement à `today`, tronqué à minuit)
-
-        // Statut affiché sur la tuile, basé sur l'heure réelle et pas seulement la date :
-        // DateUtils.parseDate ignore toujours l'heure et fixe la date à midi, donc un
-        // événement qui se termine aujourd'hui restait auparavant "En Cours" jusqu'à
-        // minuit même si son heure de fin réelle était déjà passée. On reconstruit ici
-        // l'heure de début/fin réelle à partir des chaînes brutes du tableur.
-        const startWithTime = new Date(start);
-        if (heureGlobale) {
-            const [sh, sm] = heureGlobale.split(':').map(Number);
-            startWithTime.setHours(sh, sm, 0, 0);
-        } else {
-            startWithTime.setHours(0, 0, 0, 0);
-        }
 
         const endRawGlobal = row["Date de fin"];
         const heureFinGlobale = endRawGlobal?.includes(' ') ? DateUtils.formatHeure(endRawGlobal.split(' ')[1]) : null;
-        let endWithTime = null;
-        if (end) {
-            endWithTime = new Date(end);
-            if (heureFinGlobale) {
-                const [eh, em] = heureFinGlobale.split(':').map(Number);
-                endWithTime.setHours(eh, em, 0, 0);
-            } else {
-                endWithTime.setHours(23, 59, 59, 999); // Pas d'heure de fin précisée : fin de journée
-            }
-        }
 
-        // "Prévu" tant que l'heure de début n'est pas arrivée, "Terminé" seulement si une
-        // date de fin existe et son heure est dépassée (sans date de fin, un événement
-        // démarré reste "En Cours" indéfiniment).
-        let progressStatus;
-        if (startWithTime > now) {
-            progressStatus = "Prévu";
-        } else if (endWithTime && endWithTime < now) {
-            progressStatus = "Terminé";
-        } else {
-            progressStatus = "En Cours";
-        }
-
-        // Objet de base commun à toutes les déclinaisons de cette ligne
+        // Objet de base commun à toutes les déclinaisons de cette ligne. `progressStatus`
+        // n'y figure plus : une série hebdo/à épisodes génère plusieurs dates distinctes à
+        // partir d'une seule ligne, et chacune doit avoir SON PROPRE statut (Prévu/En Cours/
+        // Terminé) selon SES propres début/fin — pas celui, unique, calculé une fois pour
+        // toute la ligne (qui faisait qu'un épisode diffusé la semaine dernière restait "En
+        // Cours" indéfiniment dès lors que la ligne elle-même n'avait pas de "Date de fin").
+        // Voir _computeProgressStatus(), appelé par occurrence dans _createBaseInstance().
         const baseConfig = {
             heure: heureGlobale,
             isContre,
-            isCanceled: isCanceledBase,
-            progressStatus
+            isCanceled: isCanceledBase
         };
+
+        // La cellule "Durée Réelle" a-t-elle été renseignée, même à 0 (ex: une Gazette, qui
+        // n'a pas de session à proprement parler) ? Distinct de `totalDuration > 0` plus bas,
+        // qui vaut 0 aussi bien pour "case vide" que pour "0:00" explicite. Sert uniquement au
+        // cas standard (Priorité 4) pour décider si une durée à 0 est un signal réel
+        // ("événement instantané", ex: publication d'une Gazette -> Terminé juste après le
+        // début) ou une absence de donnée (Durée Réelle pas encore chronométrée -> pas de fin
+        // fiable, voir `endIsEstimate` sur les instances).
+        const hasDurationData = Boolean(row["Durée Réelle"] && String(row["Durée Réelle"]).trim());
 
         // Extraction des pauses / reprises
         const pauseDate = DateUtils.extractSpecificDate(rawNotes, "pause");
@@ -171,6 +154,10 @@ export class EventGenerator {
                     allDay: !heureInst,
                     end: durationEnd?.endValue || null,
                     isMultiDay: durationEnd?.isMultiDay || false,
+                    // Fin estimée (pas de vraie "Durée Réelle") : ne doit pas suffire à
+                    // conclure "Terminé" tant que la vraie donnée n'est pas connue (voir
+                    // _computeProgressStatus).
+                    endIsEstimate: avgDuration <= 0,
                     sub: explicit ? explicit.text : null,
                     episode: isSeries ? label : null,
                     dur: avgDuration
@@ -198,6 +185,7 @@ export class EventGenerator {
                     allDay: !heureInst,
                     end: durationEnd?.endValue || null,
                     isMultiDay: durationEnd?.isMultiDay || false,
+                    endIsEstimate: avgDuration <= 0,
                     sub: ep.text,
                     episode: isSeries ? `Épisode ${episodeCounter}` : null,
                     dur: avgDuration
@@ -250,7 +238,7 @@ export class EventGenerator {
                 // signal explicite, prioritaire sur tout calcul.
                 isMultiDayStandard = true;
                 endValue = end.toISOString().split('T')[0] + 'T' + (heureFinGlobale || '23:59') + ':00';
-            } else {
+            } else if (totalDuration > 0) {
                 // Pas de "Date de fin" utile (absente, ou juste une convention de saisie
                 // "même jour" qui ne reflète pas la durée réelle) : on calcule automatiquement
                 // la fin depuis "Durée Réelle", ce qui détecte aussi un chevauchement de
@@ -260,7 +248,15 @@ export class EventGenerator {
                     endValue = durationEnd.endValue;
                     isMultiDayStandard = durationEnd.isMultiDay;
                 }
+            } else if (hasDurationData) {
+                // "Durée Réelle" explicitement à 0 (ex: une Gazette : publiée, pas de session
+                // à proprement parler) : signal réel d'événement instantané, fin = début, donc
+                // "Terminé" juste après l'heure de publication plutôt que "En Cours" indéfiniment.
+                endValue = startIso + 'T' + (baseConfig.heure || '12:00') + ':00';
             }
+            // Sinon (aucune donnée de durée du tout) : `endValue` reste `null`, l'événement
+            // reste "En Cours" indéfiniment une fois démarré en attendant la vraie donnée
+            // (voir _computeProgressStatus) — plutôt que de deviner "Terminé" à tort.
 
             instances.push(this._createBaseInstance(title, parsedNotes, type, theme, row, {
                 ...baseConfig,
@@ -296,6 +292,31 @@ export class EventGenerator {
         const endDate = new Date(startDate.getTime() + durationMinutes * 60000);
         const endValue = DateUtils.toLocalIso(endDate);
         return { endValue, isMultiDay: endValue.split('T')[0] !== startIso };
+    }
+
+    /**
+     * Calcule "Prévu / En Cours / Terminé" à partir du début/fin RÉELS de CETTE occurrence
+     * (pas de la ligne entière du tableur) : voir le commentaire sur `baseConfig` dans
+     * generate() pour pourquoi ça doit être calculé par occurrence.
+     * @param {Object} instance - Doit déjà avoir `start`/`end`/`endIsEstimate` finalisés.
+     * @returns {"Prévu"|"En Cours"|"Terminé"}
+     */
+    static _computeProgressStatus(instance) {
+        const now = new Date();
+        const startWithTime = new Date(instance.start);
+        if (startWithTime > now) return "Prévu";
+        // Pas de fin connue, ou fin estimée (repli DEFAULT_EPISODE_DURATION_MINUTES faute de
+        // vraie "Durée Réelle") : pas assez fiable pour conclure "Terminé", on reste "En Cours"
+        // une fois démarré, en attendant la vraie donnée dans le tableur.
+        if (!instance.end || instance.endIsEstimate) return "En Cours";
+
+        // Une fin "date seule" (YYYY-MM-DD, borne exclusive d'un bandeau allDay) désigne le
+        // début du jour suivant la dernière journée réelle ; une fin complète (avec l'heure)
+        // se compare telle quelle.
+        const endWithTime = instance.end.includes('T')
+            ? new Date(instance.end)
+            : new Date(`${instance.end}T00:00:00`);
+        return endWithTime <= now ? "Terminé" : "En Cours";
     }
 
     static _isPaused(dateIso, pause, reprise) {
@@ -344,9 +365,9 @@ export class EventGenerator {
             isCanceled: false,
             isPlanned: false,
             end: null,
+            endIsEstimate: false,
             isMultiDay: false,
             allDay: false,
-            progressStatus: "En Cours",
             // Lieu par défaut si ni "Loc :", ni @loc/@location n'est renseigné dans les Notes.
             location: parsedNotes.meta.loc || parsedNotes.meta.location || CONFIG.DEFAULT_LOCATION,
             // @image/@url (ou @lien/@link) de l'événement priment sur l'affiche/lien par
@@ -355,6 +376,13 @@ export class EventGenerator {
             url: parsedNotes.meta.url || parsedNotes.meta.lien || parsedNotes.meta.link || theme.url || null,
             ...restOverrides
         };
+
+        // Calculé après coup (dépend de `start`/`end` déjà finalisés ci-dessus), sauf pour un
+        // événement "Prévu" (date connue approximativement dans les Notes, pas d'heure réelle
+        // à comparer) dont le statut est déjà fixé explicitement dans restOverrides.
+        if (!instance.isPlanned) {
+            instance.progressStatus = this._computeProgressStatus(instance);
+        }
 
         // Identifiant stable (pour la durée d'un chargement) utilisé par le lien
         // partageable (?event=...) et le suivi des "nouveaux" événements : la combinaison

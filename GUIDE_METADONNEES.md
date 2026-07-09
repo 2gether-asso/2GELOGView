@@ -1,6 +1,6 @@
 # Guide — Tags & métadonnées dans le tableur Google Sheet
 
-Ce guide explique comment remplir les colonnes du Google Sheet (en particulier **Notes**)
+Ce guide explique comment remplir les colonnes du Google Sheet (en particulier **Tags**)
 pour que le calendrier affiche automatiquement les bonnes informations (icône, couleur,
 épisode, lieu, tags cliquables, statistiques...).
 
@@ -9,13 +9,22 @@ pour que le calendrier affiche automatiquement les bonnes informations (icône, 
 | Colonne | Format attendu | Rôle |
 |---|---|---|
 | `Nom de l'event` | Texte libre | Titre affiché partout (tuile, modale, recherche) |
-| `Type d'event` | Une valeur de la liste ci-dessous | Détermine l'icône, la couleur et la catégorie (Visionnage/Gaming) |
+| `Type d'event` | Une valeur de la liste ci-dessous | Détermine l'icône, la couleur et la catégorie |
 | `Date de début` | `JJ/MM/AAAA` ou `JJ/MM/AAAA HH:MM` | Date (et heure si précisée) de l'événement |
 | `Date de fin` | `JJ/MM/AAAA` | Fin de la période (utile pour une série qui s'étale sur plusieurs semaines) |
 | `Durée Réelle` | `HH:MM` | Durée effective, utilisée pour les statistiques cumulées |
-| `Notes` | Texte multi-lignes | **Tout le reste se passe ici** : tags, métadonnées, épisodes, statut... (voir plus bas) |
+| `Tags` | Texte multi-lignes | **Tout se passe ici** : tags, métadonnées, épisodes, statut... (voir plus bas) |
+| `Notes` | Texte multi-lignes | Commentaire libre uniquement (contexte, casting...), affiché dans la modale |
 
 Une ligne sans `Nom de l'event` est ignorée.
+
+> **Colonnes `Tags` et `Notes`** : le calendrier lit les deux colonnes indifféremment et
+> les fusionne (une ligne peut avoir sa structure dans l'une, l'autre, ou les deux) — donc
+> rien ne casse si une ancienne ligne a encore tout dans `Notes`. Mais pour les **nouvelles**
+> lignes, mettez toute la partie structurée (`#tag`, `@clé:valeur`, épisodes datés, mots-clés
+> `hebdo`/`pause`/`partenaire`...) dans **`Tags`**, et gardez `Notes` pour du texte libre
+> uniquement (contexte, casting, explication d'une annulation...). Ça sépare clairement
+> "ce que la moulinette exploite" de "ce qui n'est que du commentaire humain".
 
 ## 2. `Type d'event` : les valeurs reconnues
 
@@ -39,9 +48,10 @@ Il n'est **pas nécessaire** d'écrire "Annulé / Reporté", "Partenaire" ou "Sa
 `Type d'event` : ces statuts sont détectés automatiquement via des mots-clés dans `Notes`
 (voir § 4) et remplacent le type affiché.
 
-## 3. La colonne `Notes` : tags et métadonnées
+## 3. La colonne `Tags` : tags et métadonnées
 
-Chaque ligne de `Notes` est interprétée séparément. Une ligne peut être :
+Chaque ligne de `Tags` (ou de `Notes`, fusionnées) est interprétée séparément. Une ligne
+peut être :
 
 ### a. Un tag : `#motclé`
 
@@ -70,7 +80,7 @@ Clés reconnues actuellement :
 
 | Clé | Effet |
 |---|---|
-| `@host` ou `@orga` | Affiché comme "👤 Organisé par" dans la modale, agrégé dans les stats/rétrospective admin (les deux orthographes sont équivalentes) |
+| `@host` ou `@orga` | Affiché comme "👤 Organisé par" dans la modale, agrégé dans les stats/rétrospective admin (les deux orthographes sont équivalentes) — **"Helldwin" par défaut si absent** |
 | `@plateforme` | Affiché comme "📺 Plateforme", agrégé dans les stats |
 | `@location` | Lieu affiché sur la tuile et dans la modale — **si absent, la valeur par défaut "Discord 2GETHER" est affichée automatiquement** |
 | `@episode` ou `@diffusion` | Affiché en priorité sur la tuile et dans la modale ("📌 Episode(s)") — **prime toujours** sur la numérotation automatique des séries et sur le texte des lignes datées (§ 5) |
@@ -114,11 +124,14 @@ Loc : Chez Mati
 Toute ligne qui n'est ni un tag, ni une métadonnée `@...`, ni reconnue comme mot-clé
 spécial (§ 4) est conservée telle quelle comme **description**, affichée uniquement dans
 la modale (📝 Notes complémentaires) — jamais sur les tuiles du calendrier, pour les garder
-lisibles.
+lisibles. C'est ce type de contenu qui doit rester dans `Notes` (contexte, casting,
+explication d'une annulation...), même si techniquement une ligne de texte libre dans `Tags`
+fonctionnerait tout autant.
 
-## 4. Mots-clés spéciaux (détectés n'importe où dans `Notes`)
+## 4. Mots-clés spéciaux (détectés n'importe où dans `Tags`/`Notes`)
 
-Ces mots sont cherchés dans le texte complet de `Notes`, peu importe la ligne :
+Ces mots sont cherchés dans le texte complet de `Tags` + `Notes` fusionnés, peu importe
+la ligne ou la colonne :
 
 | Mot-clé | Effet |
 |---|---|
@@ -127,12 +140,12 @@ Ces mots sont cherchés dans le texte complet de `Notes`, peu importe la ligne :
 | `remplacé` | Le titre affiché devient automatiquement "Contre Soirée" |
 | `partenaire` | Le type affiché devient "Partenaire" |
 | `sanctuaire` | Le type affiché devient "Sanctuaire" |
-| `hebdo` | Force une expansion hebdomadaire (une occurrence chaque semaine entre `Date de début` et `Date de fin`, ou 90 jours par défaut si pas de fin) — inutile de le préciser pour un `Type d'event` = `Soirée Série`, c'est automatique |
+| `hebdo` | Force une expansion hebdomadaire (une occurrence chaque semaine entre `Date de début` et `Date de fin` ; sans `Date de fin`, seules les occurrences passées et celle de la semaine prochaine sont générées, pas de "Prévu" spéculatif sur des mois) — inutile de le préciser pour un `Type d'event` = `Soirée Série`, c'est automatique |
 
 ## 5. Épisodes datés explicites (pour détailler chaque diffusion)
 
 Pour une série qui ne suit pas un rythme hebdomadaire strict, ou pour préciser le contenu
-de chaque diffusion, ajoutez une ligne par date dans `Notes` au format :
+de chaque diffusion, ajoutez une ligne par date dans `Tags` au format :
 
 ```
 23/06/2026: Episode 1
@@ -164,7 +177,7 @@ exclue côté reprise).
 ## 7. Événement "Prévu" (sans date de début connue)
 
 Si `Date de début` est vide mais qu'une date `JJ/MM/AAAA` apparaît quelque part dans
-`Notes`, un événement `[PRÉVU] <titre>` est créé à cette date, marqué comme "planifié"
+`Tags`/`Notes`, un événement `[PRÉVU] <titre>` est créé à cette date, marqué comme "planifié"
 dans les statistiques.
 
 ## 8. Points de vigilance
@@ -182,10 +195,22 @@ dans les statistiques.
 
 ## 9. Exemple complet
 
-| Nom de l'event | Type d'event | Date de début | Date de fin | Durée Réelle | Notes |
-|---|---|---|---|---|---|
-| Sherlock | Soirée Série | 04/07/2026 20:30 | 25/07/2026 | 00:45 | `@host:Helldwin`<br>`@plateforme:Twitch`<br>`#detective`<br>`#bbc` |
+| Nom de l'event | Type d'event | Date de début | Date de fin | Durée Réelle | Tags | Notes |
+|---|---|---|---|---|---|---|
+| Sherlock | Soirée Série | 04/07/2026 20:30 | 25/07/2026 | 00:45 | `@host:Helldwin`<br>`@plateforme:Twitch`<br>`#detective`<br>`#bbc` | Rediffusion de la saison 1 |
 
 → Génère une occurrence chaque semaine du 04/07 au 25/07, avec numérotation automatique
 `Épisode 1`, `Épisode 2`, ... sur les tuiles, organisateur/plateforme dans la modale,
-et les tags `#detective`/`#bbc` cliquables partout.
+les tags `#detective`/`#bbc` cliquables partout, et "Rediffusion de la saison 1" affiché
+comme commentaire libre dans la modale.
+
+## 10. Migration Notes → Tags
+
+Un fichier `tableau_migre_tags.csv` a été généré à la racine du dépôt : c'est votre tableur
+actuel avec, pour chaque ligne, tout le contenu structuré (`#tag`, `@clé:valeur`, épisodes
+datés, mots-clés `hebdo`/`pause`/`reprise`/`partenaire`/`sanctuaire`/`loc :`) déplacé de
+`Notes` vers `Tags`, et uniquement le texte libre (contexte, casting, explications) laissé
+dans `Notes`. Vérifié ligne par ligne : le nombre d'occurrences générées est identique
+avant/après (aucun comportement ne change), seule la répartition entre les deux colonnes
+change. Pour l'appliquer : ouvrez ce fichier (Excel ou `Fichier > Importer` dans Google
+Sheets) et remplacez le contenu de votre feuille actuelle par son contenu.

@@ -43,7 +43,9 @@ export function validateRows(rows) {
 
         // Incohérence entre "Date de fin" et le dernier épisode daté noté dans les Notes
         // (ex: fin en septembre alors que le dernier épisode listé est en juin).
-        const rawNotes = row["Notes"] || "";
+        // Fusionne Tags+Notes comme EventGenerator : un épisode daté peut désormais être
+        // dans l'une ou l'autre colonne selon l'avancement de la migration de la ligne.
+        const rawNotes = [row["Tags"], row["Notes"]].filter(Boolean).join("\n");
         const episodes = DateUtils.extractEpisodes(rawNotes);
         if (episodes.length > 0 && end) {
             const lastEpisodeDate = episodes[episodes.length - 1].date; // format YYYY-MM-DD

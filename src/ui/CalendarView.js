@@ -47,8 +47,16 @@ export class CalendarView {
             height: 'auto',
             themeSystem: 'standard',
 
-            // Vues à créneaux horaires : plage resserrée + créneaux de 30min pour éviter
-            // les longues colonnes vides qui rendaient le planning illisible.
+            // Vues à créneaux horaires : plage resserrée à la fenêtre réellement utilisée
+            // (les sessions ont toujours lieu entre ~14h et ~2h du matin) plutôt que 00h-24h.
+            // Sans ça, un événement tardif (23h50 → 01h50) se retrouvait tout en bas d'une
+            // colonne de 24h à faire défiler, presque invisible sans défiler énormément — il
+            // ne "manquait" pas de place, mais fallait défiler bien plus que ce qui semblait
+            // nécessaire pour l'atteindre. `slotMaxTime` dépasse volontairement minuit (26h =
+            // 2h du matin) pour que ces événements de fin de soirée restent bien dans la
+            // colonne de leur jour de départ.
+            slotMinTime: '14:00:00',
+            slotMaxTime: '26:00:00',
             slotDuration: '00:30:00',
             slotLabelInterval: '01:00:00',
             scrollTime: '17:00:00',
@@ -84,9 +92,13 @@ export class CalendarView {
                 }
             },
 
-            // Mémorise la vue active (desktop uniquement, mobile reste verrouillé sur Planning).
+            // Mémorise la vue active (desktop uniquement, mobile reste verrouillé sur Planning),
+            // et reconstruit les événements FullCalendar : le bornage anti-débordement (voir
+            // _buildFcEvents) dépend de la vue affichée, donc change de vue seul (sans que les
+            // données filtrées elles-mêmes changent) doit aussi redéclencher ce calcul.
             datesSet: function(info) {
                 if (!isMobile) localStorage.setItem('ui:calendarView', info.view.type);
+                CalendarView._applyEvents(info.view.calendar, CalendarView._lastEvents);
             }
         });
 
@@ -98,20 +110,32 @@ export class CalendarView {
      */
     static sync(calendarInstance, customEvents) {
         if (!calendarInstance) return;
+        this._lastEvents = customEvents;
+        this._applyEvents(calendarInstance, customEvents);
+    }
 
+    /** Reconstruit et applique les événements FullCalendar pour la vue actuellement affichée. */
+    static _applyEvents(calendarInstance, customEvents) {
+        if (!calendarInstance) return;
         calendarInstance.removeAllEvents();
+
+        // Seule la vue Mois (dayGridMonth) a besoin d'un événement borné à une seule journée :
+        // chaque jour y est une case de hauteur variable, et un segment de continuation qui
+        // déborde sur le jour suivant y provoquait un débordement visuel et une hauteur de
+        // ligne incohérente (recalculée différemment selon les jours, y compris au clic sur une
+        // tuile). En Semaine/Jour (grille horaire), au contraire, garder la vraie fin est ce qui
+        // permet à l'événement de s'étaler sur toute sa durée réelle au lieu d'être écrasé sur
+        // quelques minutes visibles en fin de journée (ex: un événement démarrant à 23h50).
+        const isMonthView = calendarInstance.view.type === 'dayGridMonth';
 
         const fullCalendarEvents = customEvents.map(evt => {
             // Un événement ponctuel qui chevauche minuit (ex: 23h30 → 01h10, voir isMultiDay
-            // dans EventGenerator) garde sa vraie heure de fin pour l'indice visuel affiché sur
-            // la tuile (getOvernightSuffix, lu depuis originalData ci-dessous), mais on borne la
-            // fin transmise à FullCalendar à la fin de la journée de départ : sinon FullCalendar
-            // le découpe en un second segment sur le jour suivant, ce qui provoque un débordement
-            // visuel et une hauteur de ligne du calendrier incohérente (recalculée différemment
-            // selon les jours, y compris au clic sur une tuile). Les vrais bandeaux multi-jours
-            // (Meet Up/Partenaire/Sanctuaire, allDay) continuent eux à s'étaler normalement.
+            // dans EventGenerator) garde toujours sa vraie heure de fin pour l'indice visuel
+            // affiché sur la tuile (getOvernightSuffix, lu depuis originalData ci-dessous). Les
+            // vrais bandeaux multi-jours (Meet Up/Partenaire/Sanctuaire, allDay) s'étalent eux
+            // toujours normalement, quelle que soit la vue.
             let fcEnd = evt.end || undefined;
-            if (evt.isMultiDay && !evt.allDay && fcEnd && fcEnd.split('T')[0] !== evt.start.split('T')[0]) {
+            if (isMonthView && evt.isMultiDay && !evt.allDay && fcEnd && fcEnd.split('T')[0] !== evt.start.split('T')[0]) {
                 fcEnd = evt.start.split('T')[0] + 'T23:59:59';
             }
 
@@ -138,3 +162,5 @@ export class CalendarView {
         calendarInstance.addEventSource(fullCalendarEvents);
     }
 }
+
+CalendarView._lastEvents = [];

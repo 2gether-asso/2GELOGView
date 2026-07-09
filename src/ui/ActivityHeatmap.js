@@ -1,12 +1,9 @@
 import { escapeHtml } from '../utils/Html.js';
+import { DateUtils } from '../utils/DateUtils.js';
 
 const WEEKS = 13;
 const DAYS = WEEKS * 7;
 const LEVEL_BG = ['bg-white/5', 'bg-indigo-500/30', 'bg-indigo-500/55', 'bg-indigo-500/80', 'bg-indigo-400'];
-
-function isoDate(d) {
-    return d.toISOString().split('T')[0];
-}
 
 function levelFor(count, maxCount) {
     if (count === 0) return 0;
@@ -48,7 +45,7 @@ export function renderActivityHeatmap(container, events) {
     const cellsHtml = weeks.map(week => `
         <div class="flex flex-col gap-[3px]">
             ${week.map(d => {
-                const iso = isoDate(d);
+                const iso = DateUtils.toLocalDateStr(d);
                 const count = counts.get(iso) || 0;
                 const level = levelFor(count, maxCount);
                 const label = `${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} — ${count} session${count > 1 ? 's' : ''}`;

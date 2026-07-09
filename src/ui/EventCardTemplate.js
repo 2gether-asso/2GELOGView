@@ -33,9 +33,9 @@ export function getEpisodeLabel(e) {
     return e.meta?.episode || e.meta?.diffusion || e.sub || e.episode || "";
 }
 
-/** Chemin de l'icône de catégorie, avec repli sur l'icône générique "Hors Prog". */
+/** Chemin de l'icône de catégorie (assets/img/badges/), avec repli sur l'icône générique "Hors Prog". */
 export function getIconSrc(e) {
-    return e.img ? `./assets/img/${e.img}` : './assets/img/hors-prog.png';
+    return e.img ? `./assets/img/badges/${e.img}` : './assets/img/badges/hors-prog.png';
 }
 
 /**
@@ -52,9 +52,23 @@ export function getOvernightSuffix(e) {
     return ` → ${endHeure} (+1j)`;
 }
 
+/**
+ * Un "En Cours" est-il vraiment en train de se dérouler MAINTENANT, ou juste "pas confirmé
+ * terminé" (voir CONFIG.LIVE_GRACE_HOURS) ? Partagé par la pastille animée et le bandeau
+ * "Prochain événement" (main.js) pour qu'un même événement ne soit jamais annoncé "en direct"
+ * dans l'un et pas dans l'autre.
+ * @param {Object} e
+ * @returns {boolean}
+ */
+export function isGenuinelyLive(e) {
+    if (e.progressStatus !== "En Cours") return false;
+    if (e.end && !e.endIsEstimate) return true;
+    return (new Date() - new Date(e.start)) <= CONFIG.LIVE_GRACE_HOURS * 3600000;
+}
+
 /** Petite pastille animée pour les événements "En Cours", en plus du badge de statut texte. */
 function renderLiveDot(e) {
-    if (e.progressStatus !== "En Cours" || e.isCanceled) return '';
+    if (!isGenuinelyLive(e) || e.isCanceled) return '';
     return `
         <span class="relative flex h-2 w-2 shrink-0" aria-hidden="true">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>

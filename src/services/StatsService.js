@@ -1,3 +1,5 @@
+import { CONFIG } from '../config.js';
+
 export class StatsService {
     /**
      * Calcule l'ensemble des métriques de statistiques avancées à partir des événements filtrés.
@@ -46,8 +48,8 @@ export class StatsService {
             if (!stats.byType[type]) stats.byType[type] = 0;
             stats.byType[type] += duration;
 
-            // Normalisation .toLowerCase() pour l'organisateur (@host ou @orga)
-            const host = (event.meta?.host || event.meta?.orga || "Aucun").trim().toLowerCase();
+            // Normalisation .toLowerCase() pour l'organisateur (@host ou @orga), Helldwin par défaut
+            const host = (event.meta?.host || event.meta?.orga || CONFIG.DEFAULT_HOST).trim().toLowerCase();
             if (!stats.byHost[host]) stats.byHost[host] = 0;
             stats.byHost[host] += duration;
 

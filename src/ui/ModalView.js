@@ -1,9 +1,10 @@
+import { CONFIG } from '../config.js';
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { renderStatusBadge, getOvernightSuffix } from './EventCardTemplate.js';
 
 // Lieu par défaut (voir EventGenerator) : la carte "Lieu" est masquée quand elle ne
 // contient rien de plus informatif que cette valeur par défaut.
-const DEFAULT_LOCATION = "Discord 2GETHER";
+const DEFAULT_LOCATION = CONFIG.DEFAULT_LOCATION;
 
 export class ModalView {
     /**
@@ -94,7 +95,7 @@ export class ModalView {
 
         const iconEl = document.getElementById('modal-event-icon');
         if (event.img) {
-            iconEl.src = `./assets/img/${event.img}`;
+            iconEl.src = `./assets/img/badges/${event.img}`;
             iconEl.alt = event.type ? `Icône ${event.type}` : "";
             iconEl.style.display = 'block';
         } else {
@@ -137,15 +138,10 @@ export class ModalView {
             subBlock.classList.add('hidden');
         }
 
-        // Métadonnées avancées (@host ou @orga, @plateforme)
+        // Métadonnées avancées (@host ou @orga, Helldwin par défaut si non précisé, @plateforme)
         const hostContainer = document.getElementById('modal-host-container');
-        const host = event.meta?.host || event.meta?.orga;
-        if (host) {
-            document.getElementById('modal-event-host').innerText = host;
-            hostContainer.classList.remove('hidden');
-        } else {
-            hostContainer.classList.add('hidden');
-        }
+        document.getElementById('modal-event-host').innerText = event.meta?.host || event.meta?.orga || CONFIG.DEFAULT_HOST;
+        hostContainer.classList.remove('hidden');
 
         const platformContainer = document.getElementById('modal-platform-container');
         if (event.meta?.plateforme) {

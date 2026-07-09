@@ -11,11 +11,14 @@ export class MetadataParser {
      * @returns {Object} { tags: Array, meta: Object, content: string }
      */
     static parse(text) {
-        const tags = [];
+        // Set (pas juste un tableau) : dédoublonne les tags répétés — notamment pendant la
+        // migration Notes -> Tags (voir EventGenerator.generate()), où une même ligne peut
+        // temporairement porter le même #tag dans les deux colonnes fusionnées ici.
+        const tagSet = new Set();
         const meta = {};
         const linesContent = [];
 
-        if (!text) return { tags, meta, content: "" };
+        if (!text) return { tags: [], meta, content: "" };
 
         text.split("\n").forEach(line => {
             const trimmedLine = line.trim();
@@ -23,7 +26,7 @@ export class MetadataParser {
 
             // 1. Détection des Tags (#tag)
             if (trimmedLine.startsWith("#")) {
-                tags.push(trimmedLine.slice(1).trim().toLowerCase());
+                tagSet.add(trimmedLine.slice(1).trim().toLowerCase());
                 return;
             }
 
@@ -54,7 +57,7 @@ export class MetadataParser {
         });
 
         return {
-            tags,
+            tags: [...tagSet],
             meta,
             content: linesContent.join("\n").trim()
         };

@@ -4,13 +4,14 @@ import { EventGenerator } from './services/EventGenerator.js';
 import { EventRepository } from './repositories/EventRepository.js';
 import { CalendarView } from './ui/CalendarView.js';
 import { ModalView } from './ui/ModalView.js';
-import { renderEventCard } from './ui/EventCardTemplate.js';
+import { renderEventCard, isGenuinelyLive } from './ui/EventCardTemplate.js';
 import { renderSearchResults } from './ui/SearchResultsView.js';
 import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
 import { SearchEngine } from './services/SearchEngine.js';
 import { IcsExporter } from './services/IcsExporter.js';
 import { renderActivityHeatmap } from './ui/ActivityHeatmap.js';
+import { DateUtils } from './utils/DateUtils.js';
 import { escapeHtml } from './utils/Html.js';
 import { formatMinutes } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
@@ -140,15 +141,18 @@ function renderTypeFilterBar() {
 function renderUpcomingSidebar(events) {
     const container = document.getElementById('upcoming-list');
     const countLabel = document.getElementById('upcoming-count');
+    // toLocalDateStr (pas toISOString) : sinon "aujourd'hui" est décalé d'un jour en arrière
+    // pour un fuseau positif (France), et les événements d'hier apparaissaient encore sous
+    // "Aujourd'hui" dans la sidebar.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = DateUtils.toLocalDateStr(today);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    const tomorrowStr = DateUtils.toLocalDateStr(tomorrow);
     const weekLimit = new Date(today);
     weekLimit.setDate(weekLimit.getDate() + 7);
-    const weekLimitStr = weekLimit.toISOString().split('T')[0];
+    const weekLimitStr = DateUtils.toLocalDateStr(weekLimit);
 
     const upcoming = events
         .filter(e => e.start.split('T')[0] >= todayStr && !e.isCanceled)
@@ -246,7 +250,7 @@ function formatCountdown(targetDate) {
 // TOUT le dépôt (pas les filtres actifs) : c'est une info globale, pas liée au filtrage.
 function computeNextEvent() {
     const all = repo.getAll().filter(e => !e.isCanceled && !e.isPlanned);
-    const live = all.find(e => e.progressStatus === "En Cours");
+    const live = all.find(isGenuinelyLive);
     if (live) return { event: live, isLive: true };
 
     const now = new Date();
@@ -285,7 +289,7 @@ function updateNextEventBanner() {
 function updateUIState() {
     let filtered = repo.getAll();
 
-    // Filtrage corrigé sur e.category ("watch", "game") plutôt que "e.type"
+    // Filtre par catégorie dynamique (config.js THEMES[...].cat), pas par type exact.
     if (currentCategory !== "all") {
         filtered = filtered.filter(e => e.category === currentCategory);
     }
@@ -409,17 +413,16 @@ function setupFiltersToggle() {
 // Contenu des notes de version : à éditer librement à chaque mise à jour notable.
 // Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
 const PATCH_NOTES = {
-    version: "2026-07-09",
+    version: "2026-07-09b",
     sections: [
         {
             title: "🚀 Nouveautés",
             items: [
-                "Affichage corrigé des événements qui chevauchent minuit (ex: 23h30 → 01h10) : l'heure de fin s'affiche désormais clairement sur la tuile.",
-                "Lien direct partageable vers un événement (bouton 🔗 dans la modale) et export .ics du planning affiché (bouton 📅 .ics en haut).",
-                "Bandeau \"Prochain événement\" avec compte à rebours, et bouton ❓ Aide/légende.",
-                "Catégories entièrement dynamiques (filtres + statistiques), suivent automatiquement la configuration.",
-                "Sidebar \"Prochainement\" regroupée par Aujourd'hui/Demain/Cette semaine, mini heatmap d'activité, badge 🆕 sur les événements nouvellement ajoutés.",
-                "La vue du calendrier (Mois/Semaine/Planning) et les filtres actifs sont désormais mémorisés d'une visite à l'autre."
+                "Nouvelle colonne <b>Tags</b> dans le tableur : toutes les balises (#tag, @host, @lieu...) peuvent désormais y être saisies séparément, en laissant Notes pour du texte libre uniquement. La migration est progressive, rien ne casse pour les lignes pas encore migrées.",
+                "Organisateur affiché par défaut : « Helldwin » si aucun @host n'est précisé, au lieu de rester vide.",
+                "Statuts Prévu/En Cours/Terminé recalculés plus finement par occurrence (et plus par ligne entière du tableur) : une série sans durée réelle connue reste \"En Cours\" plutôt que d'être annoncée \"Terminée\" sur une simple estimation, et un événement ponctuel ne reste plus \"En Cours\" indéfiniment.",
+                "Le bandeau \"En direct\" et la pastille animée ne se fient plus indéfiniment à un statut \"En Cours\" incertain (durée non confirmée) : passé quelques heures sans confirmation, l'événement n'est plus annoncé comme diffusé \"maintenant\".",
+                "Vue Semaine : la plage horaire affichée est resserrée à la fenêtre réellement utilisée (14h → 2h du matin), pour ne plus avoir à défiler énormément et perdre de vue les événements tardifs."
             ]
         },
         {
@@ -559,10 +562,70 @@ function setupHelpOverlay() {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 }
 
+// Recherche : la saisie est temporisée (200ms) pour éviter de relancer le filtrage sur
+// chaque frappe (recherche + rendu sur plus d'un millier d'événements), et le raccourci
+// clavier "/" y donne le focus directement (sauf si un autre champ est déjà en cours de
+// saisie), comme dans la plupart des apps web.
+function setupSearchInput() {
+    const input = document.getElementById('recherche');
+    const clearBtn = document.getElementById('btn-clear-search');
+    const icon = document.getElementById('search-icon');
+    let debounceTimer = null;
+
+    const toggleClearBtn = (hasValue) => {
+        clearBtn.classList.toggle('hidden', !hasValue);
+        icon.classList.toggle('hidden', hasValue);
+    };
+
+    const applyQuery = (value) => {
+        currentSearchQuery = value;
+        toggleClearBtn(value.length > 0);
+        updateUIState();
+    };
+
+    input.addEventListener('input', (e) => {
+        toggleClearBtn(e.target.value.length > 0);
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => applyQuery(e.target.value), 200);
+    });
+
+    clearBtn.addEventListener('click', () => {
+        input.value = "";
+        applyQuery("");
+        input.focus();
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== '/') return;
+        const activeTag = document.activeElement?.tagName;
+        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+        e.preventDefault();
+        input.focus();
+    });
+}
+
+// Ferme la modale/popup au premier plan avec Échap (celles qui n'ont qu'un clic en dehors
+// ou un bouton dédié jusqu'ici) : geste attendu par réflexe sur la plupart des sites.
+function setupEscapeToClose() {
+    const overlayCloseButtons = [
+        ['patchnotes-overlay', 'btn-close-patchnotes'],
+        ['help-overlay', 'btn-close-help'],
+        ['admin-overlay', 'btn-close-admin']
+    ];
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        for (const [overlayId, btnId] of overlayCloseButtons) {
+            const overlay = document.getElementById(overlayId);
+            if (!overlay.classList.contains('hidden')) {
+                document.getElementById(btnId).click();
+                return;
+            }
+        }
+    });
+}
+
 async function initApp() {
     try {
-        console.log("🚀 Lancement final en Production...");
-
         // Restaure les filtres de la dernière visite avant le premier rendu, pour que
         // les barres de filtres et le calendrier reflètent directement le bon état.
         restoreFiltersFromStorage();
@@ -570,6 +633,8 @@ async function initApp() {
         // ModalView pilote la modale existante ; le clic sur un tag relance une recherche.
         ModalView.init((tag) => {
             document.getElementById('recherche').value = `#${tag}`;
+            document.getElementById('btn-clear-search').classList.remove('hidden');
+            document.getElementById('search-icon').classList.add('hidden');
             currentSearchQuery = `#${tag}`;
             updateUIState();
         });
@@ -597,17 +662,25 @@ async function initApp() {
         setupAdminMode();
         setupPatchNotes();
         setupHelpOverlay();
+        setupEscapeToClose();
 
         document.getElementById('btn-retry-load').addEventListener('click', () => loadData());
 
-        document.getElementById('next-event-banner').addEventListener('click', () => {
-            if (nextEventForBanner) ModalView.open(nextEventForBanner);
+        const openNextEventBanner = () => { if (nextEventForBanner) ModalView.open(nextEventForBanner); };
+        document.getElementById('next-event-banner').addEventListener('click', openNextEventBanner);
+        // Accessibilité clavier : le bandeau est un div focusable (role="button"), Entrée/Espace
+        // doivent donc l'activer comme le ferait un vrai <button>.
+        document.getElementById('next-event-banner').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openNextEventBanner();
+            }
         });
         // Rafraîchit le compte à rebours régulièrement sans dépendre d'un rechargement des données.
         setInterval(updateNextEventBanner, 30000);
 
         document.getElementById('btn-export-ics').addEventListener('click', () => {
-            const filename = `planning-2gelog-${new Date().toISOString().split('T')[0]}.ics`;
+            const filename = `planning-2gelog-${DateUtils.toLocalDateStr(new Date())}.ics`;
             IcsExporter.download(lastFilteredEvents, filename);
         });
 
@@ -615,10 +688,7 @@ async function initApp() {
         calendarInstance = CalendarView.create('calendar', (ev) => ModalView.open(ev));
         calendarInstance.render();
 
-        document.getElementById('recherche').addEventListener('input', (e) => {
-            currentSearchQuery = e.target.value;
-            updateUIState();
-        });
+        setupSearchInput();
 
         document.getElementById('filter-categories-container').addEventListener('click', (e) => {
             const btn = e.target.closest('button');
@@ -655,6 +725,8 @@ async function initApp() {
             currentTagFilter = null;
             currentSearchQuery = "";
             document.getElementById('recherche').value = "";
+            document.getElementById('btn-clear-search').classList.add('hidden');
+            document.getElementById('search-icon').classList.remove('hidden');
             setActiveCategoryButton(document.querySelector('#filter-categories-container button[data-cat="all"]'));
             renderTypeFilterBar();
             updateTagsFilterBar(repo.getAll());

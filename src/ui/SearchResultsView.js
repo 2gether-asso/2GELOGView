@@ -13,7 +13,7 @@ function renderRow(e, idx) {
     const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
     const episode = escapeHtml(getEpisodeLabel(e));
     const location = e.location && e.location !== CONFIG.DEFAULT_LOCATION ? escapeHtml(e.location) : "";
-    const host = escapeHtml(e.meta?.host || e.meta?.orga || "");
+    const host = escapeHtml(e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST);
     const duration = formatMinutes(e.dur);
     const title = escapeHtml(e.title);
     const type = escapeHtml(e.type || 'Événement');
@@ -84,7 +84,7 @@ function renderGroupRow(group, indexOf) {
     group.forEach(e => (e.tags || []).forEach(t => tagsSet.add(t)));
 
     const location = first.location && first.location !== CONFIG.DEFAULT_LOCATION ? escapeHtml(first.location) : "";
-    const host = escapeHtml(first.meta?.host || first.meta?.orga || "");
+    const host = escapeHtml(first.meta?.host || first.meta?.orga || CONFIG.DEFAULT_HOST);
     const title = escapeHtml(first.title);
     const type = escapeHtml(first.type || 'Événement');
 
