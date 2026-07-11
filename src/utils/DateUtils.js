@@ -51,7 +51,11 @@ export class DateUtils {
     static extractEpisodes(notes) {
         if (!notes) return [];
         return notes.split('\n').map(l => {
-            const m = l.match(/(\d{2}\/\d{2}\/\d{4})(?:\s+à)?\s*(\d{1,2}:\d{2}(?::\d{2})?)?:\s*(.*)/i);
+            // Espace optionnel entre l'heure et le ":" final (ex: "11/07/2026 20:30 : texte") :
+            // sans lui, une ligne écrite avec cet espace ne matchait pas DU TOUT (le ":" collé
+            // à l'heure était obligatoire), et perdait silencieusement son heure ET son texte
+            // au profit de l'heure/numérotation par défaut de la ligne entière.
+            const m = l.match(/(\d{2}\/\d{2}\/\d{4})(?:\s+à)?\s*(\d{1,2}:\d{2}(?::\d{2})?)?\s*:\s*(.*)/i);
             return m ? { 
                 date: `${m[1].split('/')[2]}-${m[1].split('/')[1]}-${m[1].split('/')[0]}`, 
                 heure: m[2] ? this.formatHeure(m[2]) : null, 
