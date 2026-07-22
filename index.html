@@ -115,17 +115,20 @@
             <button id="btn-export-ics" title="Exporter le planning affiché en .ics" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 📅 .ics
             </button>
-            <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-open-reminders" title="Gérer vos rappels de notification" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🔔 Rappels
+            </button>
+            <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" class="text-[11px] font-bold text-indigo-300 hover:text-white px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
+                🎉 Rétrospective
+            </button>
+            <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" class="hidden text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 💬 Discord
             </button>
-            <button id="btn-toggle-notifications" title="Activer un rappel navigateur 15 min avant chaque session" aria-pressed="false" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🔕 Rappels
-            </button>
-            <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" class="hidden text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 🖥️ Kiosque
             </button>
             <button id="btn-admin-view" class="hidden text-[11px] font-bold text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
-                📊 Rétrospective
+                🛠️ Admin
             </button>
             <button id="btn-clear-filters" class="text-[11px] font-bold text-rose-400 hover:text-rose-300 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
                 ✕ Annuler les filtres
@@ -282,13 +285,11 @@
                 <p id="modal-event-notes" class="text-slate-300 italic text-xs leading-relaxed whitespace-pre-line">Aucune description disponible.</p>
             </div>
 
-            <div id="modal-rsvp-container" class="hidden flex-col space-y-1.5">
-                <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">🙋 Vous y allez ? <span class="normal-case font-medium opacity-60">(pense-bête visible sur cet appareil uniquement)</span></div>
-                <div class="flex gap-1.5">
-                    <button data-rsvp="yes" class="flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all">✅ Je viens</button>
-                    <button data-rsvp="maybe" class="flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all">🤔 Peut-être</button>
-                    <button data-rsvp="no" class="flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all">❌ Non</button>
-                </div>
+            <div id="modal-reminder-container" class="flex flex-col space-y-1.5">
+                <button id="modal-reminder-btn" class="w-full flex items-center justify-center gap-2 text-[11px] font-bold px-3 py-2 rounded-lg border transition-all">
+                    🔔 M'envoyer un rappel
+                </button>
+                <p class="text-[10px] text-slate-600 text-center">Notification navigateur avant le début de cet événement. S'il revient sur plusieurs dates (série hebdo ou notée dans les Notes/Tags), le rappel suit automatiquement chaque prochaine diffusion.</p>
             </div>
 
             <div class="flex flex-col space-y-1.5">
@@ -345,22 +346,48 @@
                         <div>🔗 Bouton dans la modale d'un événement — copie un lien direct vers celui-ci.</div>
                         <div>📅 .ics — télécharge le planning actuellement affiché pour l'importer dans votre agenda (Google/Outlook/Apple). C'est un export ponctuel, pas un abonnement synchronisé automatiquement.</div>
                         <div>💬 Discord — copie un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.</div>
-                        <div>🔕/🔔 Rappels — active des notifications navigateur 15 minutes avant chaque session (nécessite votre autorisation, et l'onglet doit rester ouvert).</div>
-                        <div>🙋 RSVP — dans la modale d'un événement, "Je viens / Peut-être / Non" est un pense-bête personnel, visible uniquement sur votre appareil.</div>
+                        <div>🔔 Rappels — sur n'importe quel événement, "M'envoyer un rappel" (dans sa modale) prévient par notification navigateur avant son début. Pour une série à plusieurs dates (hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion. Le bouton 🔔 Rappels de l'en-tête ouvre la liste de vos abonnements et un interrupteur global pour tout activer d'un coup.</div>
                         <div>📆 Période (Du/Au) — filtre le calendrier sur une plage de dates ; le lien <code>?today=1</code> n'affiche que les sessions du jour.</div>
-                        <div>🖥️ Kiosque — affichage plein écran sans interaction (rotation automatique Aujourd'hui/Cette semaine), idéal sur un écran dédié.</div>
+                        <div>🎉 Rétrospective — bilan visuel de l'année (temps passé ensemble, catégories, MVP organisateur, mois le plus actif...), une année à la fois.</div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <div id="reminders-overlay" class="hidden fixed inset-0 z-[65] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+        <div class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="reminders-title">
+            <div class="flex items-start justify-between mb-3">
+                <h2 id="reminders-title" class="text-lg font-black text-white">🔔 Rappels</h2>
+                <button id="btn-close-reminders" aria-label="Fermer" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all font-bold text-sm">✕</button>
+            </div>
+
+            <div class="glass-panel rounded-xl p-3 flex items-center justify-between gap-3 mb-4">
+                <div class="text-xs text-slate-300 min-w-0">
+                    <div class="font-bold text-slate-200">Tout activer</div>
+                    <div class="text-slate-500">Être prévenu 15 min avant chaque session à venir, sans avoir à suivre chaque série individuellement.</div>
+                </div>
+                <button id="btn-toggle-all-reminders" aria-pressed="false" class="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
+            </div>
+
+            <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Suivis individuellement</div>
+            <div id="reminders-list" class="space-y-1.5"></div>
+        </div>
+    </div>
+
     <div id="admin-overlay" class="fixed inset-0 z-[60] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-6 sm:p-10">
         <div class="max-w-5xl mx-auto flex items-center justify-between mb-6">
-            <h2 class="text-xl font-black text-white">🛠️ Mode Admin — Rétrospectives annuelles</h2>
+            <h2 class="text-xl font-black text-white">🛠️ Mode Admin — Statistiques & anomalies</h2>
             <button id="btn-close-admin" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all font-bold text-sm">✕ Fermer</button>
         </div>
         <div id="admin-content"></div>
+    </div>
+
+    <div id="retrospective-overlay" class="fixed inset-0 z-[62] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-10">
+        <div class="max-w-2xl mx-auto flex items-center justify-end mb-4">
+            <button id="btn-close-retrospective" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all font-bold text-sm">✕ Fermer</button>
+        </div>
+        <div id="retrospective-content"></div>
     </div>
 
     <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[#06080c]" role="status" aria-live="polite">

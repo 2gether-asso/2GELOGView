@@ -164,6 +164,27 @@ de chaque diffusion, ajoutez une ligne par date dans `Tags` au format :
   aussi bien).
 - Une ligne = un événement généré ce jour-là. C'est prioritaire sur le mot-clé `hebdo`.
 
+### Durées explicites par épisode (pour une série dont la durée varie trop pour une moyenne)
+
+Par défaut, "Durée Réelle" (durée cumulée de toute la ligne) est répartie à parts égales
+entre toutes les occurrences. Si certains épisodes durent nettement plus ou moins longtemps
+que d'autres, ajoutez une durée par épisode entre parenthèses, séparées par des virgules,
+en toute fin de ligne :
+
+```
+15/07/2026 : Episodes 3 à 6 (1h,23min,45min,1h)
+```
+
+- Une durée par épisode couvert par la ligne (ici 4 épisodes → 4 durées).
+- Formats acceptés : `1h`, `1h30`, `45min`, `90` (minutes nues), ou `HH:MM`.
+- La tuile de cette occurrence prend alors fin après la **somme** des durées indiquées
+  (ici 1h + 23min + 45min + 1h = 3h08), au lieu de l'estimation moyenne.
+- Les autres occurrences de la même ligne (sans cette annotation) se partagent le reste de
+  "Durée Réelle" une fois cette somme déduite — pour ne pas compter deux fois le même temps.
+- Une parenthèse qui ne contient pas que des durées (ex: `Episode 5 (rediffusion)`) est
+  laissée telle quelle et reste affichée normalement : seule une parenthèse où **chaque**
+  élément ressemble à une durée est interprétée ainsi.
+
 ## 6. Pauses et reprises
 
 Pour une série en expansion hebdomadaire, on peut suspendre temporairement les occurrences :

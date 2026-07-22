@@ -132,19 +132,24 @@ export class EventGenerator {
                 }
                 cur.setDate(cur.getDate() + 7);
             }
-            const avgDuration = validEntries.length > 0 ? Math.round(totalDuration / validEntries.length) : totalDuration;
+            // Durée de chaque occurrence : réelle (explicite par épisode) quand annotée,
+            // moyenne du reliquat de "Durée Réelle" sinon — voir _computeEpisodeDurations().
+            const entries = validEntries.map(({ explicit }) => ({
+                explicit,
+                count: explicit ? this._countEpisodesInText(explicit.text) : 1
+            }));
+            const durations = this._computeEpisodeDurations(entries, totalDuration);
 
-            validEntries.forEach(({ iso, explicit }) => {
-                const count = explicit ? this._countEpisodesInText(explicit.text) : 1;
+            validEntries.forEach(({ iso, explicit }, i) => {
+                const { count } = entries[i];
+                const { duration: effectiveDuration, isEstimate } = durations[i];
                 const startNum = episodeCounter + 1;
                 episodeCounter += count;
                 const label = count > 1 ? `Épisodes ${startNum}-${episodeCounter}` : `Épisode ${episodeCounter}`;
                 const heureInst = explicit?.heure || heureGlobale;
-                // Durée moyenne de cet épisode (pas de "Date de fin" par occurrence pour une
-                // série hebdo : celle du tableur ne concerne que la fin de la série entière).
-                // Sans "Durée Réelle" du tout, on part d'un repère par défaut par épisode
-                // (voir DEFAULT_EPISODE_DURATION_MINUTES) en attendant la vraie donnée.
-                const effectiveDuration = avgDuration > 0 ? avgDuration : count * DEFAULT_EPISODE_DURATION_MINUTES;
+                // Pas de "Date de fin" par occurrence pour une série hebdo (celle du tableur
+                // ne concerne que la fin de la série entière) : la fin se calcule toujours
+                // depuis la durée effective de cette occurrence précise.
                 const durationEnd = this.computeDurationEnd(iso, heureInst, effectiveDuration);
 
                 instances.push(this._createBaseInstance(title, parsedNotes, type, theme, row, {
@@ -154,13 +159,12 @@ export class EventGenerator {
                     allDay: !heureInst,
                     end: durationEnd?.endValue || null,
                     isMultiDay: durationEnd?.isMultiDay || false,
-                    // Fin estimée (pas de vraie "Durée Réelle") : ne doit pas suffire à
-                    // conclure "Terminé" tant que la vraie donnée n'est pas connue (voir
-                    // _computeProgressStatus).
-                    endIsEstimate: avgDuration <= 0,
+                    // Fin estimée (pas de durée réelle connue pour cette occurrence précise) :
+                    // ne doit pas suffire à conclure "Terminé" (voir _computeProgressStatus).
+                    endIsEstimate: isEstimate,
                     sub: explicit ? explicit.text : null,
                     episode: isSeries ? label : null,
-                    dur: avgDuration
+                    dur: effectiveDuration
                 }));
             });
         }
@@ -168,15 +172,13 @@ export class EventGenerator {
         // continue : uniquement les dates listées, sans reconduction automatique).
         else if (episodes.length > 0) {
             const validEpisodes = episodes.filter(ep => !this._isPaused(ep.date, pauseDate, repriseDate));
-            const avgDuration = validEpisodes.length > 0 ? Math.round(totalDuration / validEpisodes.length) : totalDuration;
+            const entries = validEpisodes.map(ep => ({ explicit: ep, count: this._countEpisodesInText(ep.text) }));
+            const durations = this._computeEpisodeDurations(entries, totalDuration);
 
-            validEpisodes.forEach(ep => {
+            validEpisodes.forEach((ep, i) => {
                 episodeCounter++;
                 const heureInst = ep.heure || heureGlobale;
-                // Une ligne "Episode 4 à 6" couvre 3 épisodes : sans "Durée Réelle", le repère
-                // par défaut (voir DEFAULT_EPISODE_DURATION_MINUTES) est multiplié d'autant.
-                const count = this._countEpisodesInText(ep.text);
-                const effectiveDuration = avgDuration > 0 ? avgDuration : count * DEFAULT_EPISODE_DURATION_MINUTES;
+                const { duration: effectiveDuration, isEstimate } = durations[i];
                 const durationEnd = this.computeDurationEnd(ep.date, heureInst, effectiveDuration);
                 instances.push(this._createBaseInstance(title, parsedNotes, type, theme, row, {
                     ...baseConfig,
@@ -185,10 +187,10 @@ export class EventGenerator {
                     allDay: !heureInst,
                     end: durationEnd?.endValue || null,
                     isMultiDay: durationEnd?.isMultiDay || false,
-                    endIsEstimate: avgDuration <= 0,
+                    endIsEstimate: isEstimate,
                     sub: ep.text,
                     episode: isSeries ? `Épisode ${episodeCounter}` : null,
-                    dur: avgDuration
+                    dur: effectiveDuration
                 }));
             });
         }
@@ -323,6 +325,48 @@ export class EventGenerator {
         const pauseIso = pause ? pause.toISOString().split('T')[0] : null;
         const repriseIso = reprise ? reprise.toISOString().split('T')[0] : null;
         return pauseIso && dateIso >= pauseIso && (!repriseIso || dateIso < repriseIso);
+    }
+
+    /**
+     * Calcule la durée effective de chaque occurrence d'une ligne hebdo/épisodique.
+     * Une occurrence annotée avec des durées explicites par épisode (ex: "Episodes 3 à 6
+     * (1h,23min,45min,1h)", voir DateUtils.extractEpisodes) utilise leur somme : réelle et
+     * fiable, indépendamment de "Durée Réelle". Les occurrences restantes (sans annotation)
+     * se partagent le RELIQUAT de "Durée Réelle" — le total de la ligne moins ce qui est déjà
+     * expliqué par les durées explicites — réparti sur le nombre d'épisodes qu'il leur reste
+     * à couvrir, plutôt qu'une simple division uniforme qui gonflerait injustement leur part
+     * (et fausserait les statistiques cumulées) avec du temps déjà compté ailleurs.
+     * @param {Array<{explicit: Object|null, count: number}>} entries
+     * @param {number} totalDuration - "Durée Réelle" cumulée de toute la ligne (minutes)
+     * @returns {Array<{duration: number, isEstimate: boolean}>}
+     */
+    static _computeEpisodeDurations(entries, totalDuration) {
+        let explicitTotal = 0;
+        const explicitDurations = entries.map(({ explicit }) => {
+            const durations = explicit?.durations;
+            if (!durations || durations.length === 0) return null;
+            const sum = durations.reduce((a, b) => a + b, 0);
+            explicitTotal += sum;
+            return sum;
+        });
+
+        // Le reliquat se répartit au PRORATA du nombre d'épisodes de chaque occurrence
+        // restante (une entrée "Episodes 3 à 6" en couvre 4, une "Episode 9" n'en couvre
+        // qu'1) — diviser par le nombre d'OCCURRENCES plutôt que d'ÉPISODES sous-évaluerait
+        // les occurrences à plusieurs épisodes et sur-évaluerait celles à un seul.
+        const remainingEpisodeCount = entries.reduce(
+            (sum, { count }, i) => explicitDurations[i] === null ? sum + count : sum, 0
+        );
+        const remainingTotal = Math.max(0, totalDuration - explicitTotal);
+        // Sans "Durée Réelle" du tout pour ce qui reste, on part d'un repère par défaut par
+        // épisode (voir DEFAULT_EPISODE_DURATION_MINUTES) en attendant la vraie donnée.
+        const perEpisodeAvg = remainingEpisodeCount > 0 ? remainingTotal / remainingEpisodeCount : 0;
+
+        return entries.map(({ count }, i) => {
+            if (explicitDurations[i] !== null) return { duration: explicitDurations[i], isEstimate: false };
+            if (perEpisodeAvg > 0) return { duration: Math.round(perEpisodeAvg * count), isEstimate: false };
+            return { duration: count * DEFAULT_EPISODE_DURATION_MINUTES, isEstimate: true };
+        });
     }
 
     /**

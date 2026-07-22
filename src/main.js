@@ -14,8 +14,10 @@ import { DiscordExporter } from './services/DiscordExporter.js';
 import { renderActivityHeatmap } from './ui/ActivityHeatmap.js';
 import { DateUtils } from './utils/DateUtils.js';
 import { escapeHtml } from './utils/Html.js';
-import { formatMinutes, topN } from './utils/Format.js';
+import { formatMinutes, topN, formatCategoryLabel } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
+import { ReminderService } from './services/ReminderService.js';
+import { renderRetrospective, getAvailableYears } from './ui/RetrospectiveView.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -43,15 +45,6 @@ const SEEN_EVENTS_KEY = 'seen:upcomingEventIds';
 
 const CATEGORY_BTN_ACTIVE = "px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold shadow-[0_0_15px_rgba(99,102,241,0.4)]";
 const CATEGORY_BTN_INACTIVE = "px-3 py-1 rounded-lg bg-white/5 border border-white/5 text-slate-400 hover:text-slate-200 transition-all";
-
-// Libellés lisibles pour quelques catégories courtes (config.js THEMES[...].cat) qui ne se
-// prêtent pas bien à une simple capitalisation ("irl" -> "IRL" plutôt que "Irl").
-const CATEGORY_LABEL_OVERRIDES = { irl: "IRL", jdr: "JDR" };
-
-function formatCategoryLabel(cat) {
-    if (CATEGORY_LABEL_OVERRIDES[cat]) return CATEGORY_LABEL_OVERRIDES[cat];
-    return cat.replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 function setActiveCategoryButton(selectedBtn) {
     document.querySelectorAll('#filter-categories-container button').forEach(b => {
@@ -473,23 +466,26 @@ function setupFiltersToggle() {
 // Contenu des notes de version : à éditer librement à chaque mise à jour notable.
 // Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
 const PATCH_NOTES = {
-    version: "2026-07-09c",
+    version: "2026-07-09e",
     sections: [
         {
             title: "🚀 Nouveautés",
             items: [
-                "Rappels navigateur (bouton 🔕 Rappels) : soyez prévenu 15 minutes avant le début d'une session, même onglet en arrière-plan (opt-in, rien n'est envoyé sans votre accord).",
+                "🎉 Rétrospective annuelle : un bilan visuel de l'année façon \"Wrapped\" (temps passé ensemble, répartition par catégorie, MVP organisateur, mois le plus actif, tags favoris...) — accessible à tous via le bouton 🎉 Rétrospective de l'en-tête, une année à la fois.",
+                "Rappels repensés : \"🔔 M'envoyer un rappel\" fonctionne sur n'importe quel événement — pour une série (dates hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion, pas seulement celle ouverte. Le bouton 🔔 Rappels de l'en-tête ouvre désormais la liste de vos abonnements, avec un interrupteur pour tout activer d'un coup.",
                 "Bouton 💬 Discord : copie en un clic un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.",
-                "RSVP léger dans la modale (\"Vous y allez ?\") : un pense-bête personnel (Je viens / Peut-être / Non), visible uniquement sur votre appareil.",
                 "Nouveaux boutons dans la modale : 💬 lien direct vers le salon Discord de l'événement (<code>@salon</code>), 🗳️ lien vers un sondage (<code>@sondage</code>) pour voter le prochain film/jeu.",
                 "Filtre par période (\"Du / Au\") dans la barre de filtres, et lien direct <code>?today=1</code> pour n'afficher que les sessions du jour.",
                 "Mode Kiosque (🖥️) : affichage plein écran sans interaction, idéal sur un écran dédié affiché en continu.",
-                "Top organisateurs de l'année ajouté au panneau Statistiques."
+                "Top organisateurs de l'année ajouté au panneau Statistiques.",
+                "Durées d'épisodes qui varient trop pour une moyenne : une annotation <code>(1h,23min,45min,1h)</code> en fin de ligne datée donne la durée réelle de chacun."
             ]
         },
         {
             title: "🛠️ Corrections",
             items: [
+                "Durée d'un épisode couvrant plusieurs semaines à la fois (ex: \"Episodes 3 à 6\") : n'est plus diluée à parts égales entre toutes les semaines de la série, mais répartie au prorata du nombre d'épisodes de chacune.",
+                "Discord et Kiosque sont désormais regroupés avec le mode Admin (moins utiles en usage courant), pour ne pas encombrer l'en-tête.",
                 "Nouvelle colonne <b>Tags</b> dans le tableur : toutes les balises (#tag, @host, @lieu...) peuvent désormais y être saisies séparément, en laissant Notes pour du texte libre uniquement.",
                 "Organisateur affiché par défaut : « Helldwin » si aucun @host n'est précisé, au lieu de rester vide.",
                 "Statuts Prévu/En Cours/Terminé recalculés plus finement par occurrence : une série sans durée réelle connue reste \"En Cours\" plutôt que d'être annoncée \"Terminée\" à tort.",
@@ -540,24 +536,35 @@ const NOTIF_ENABLED_KEY = 'notif:enabled';
 const NOTIF_NOTIFIED_KEY = 'notif:notifiedIds';
 const NOTIF_LEAD_MINUTES = 15;
 
-function areNotificationsEnabled() {
-    return typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem(NOTIF_ENABLED_KEY) === '1';
+function hasNotificationPermission() {
+    return typeof Notification !== 'undefined' && Notification.permission === 'granted';
 }
 
-function updateNotifButton() {
-    const btn = document.getElementById('btn-toggle-notifications');
-    const enabled = areNotificationsEnabled();
-    btn.innerHTML = enabled ? '🔔 Rappels activés' : '🔕 Rappels';
+function isBlanketRemindersEnabled() {
+    return hasNotificationPermission() && localStorage.getItem(NOTIF_ENABLED_KEY) === '1';
+}
+
+// Un événement déclenche un rappel si l'interrupteur global "Tout activer" est actif, OU si
+// son titre (voir ReminderService) est suivi individuellement.
+function shouldRemindFor(event) {
+    return hasNotificationPermission() && (isBlanketRemindersEnabled() || ReminderService.isSet(event.title));
+}
+
+function updateBlanketReminderButton() {
+    const btn = document.getElementById('btn-toggle-all-reminders');
+    const enabled = isBlanketRemindersEnabled();
+    btn.innerHTML = enabled ? '🔔 Activé' : '🔕 Désactivé';
     btn.setAttribute('aria-pressed', String(enabled));
+    btn.className = `shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
 }
 
 // Rappel navigateur (opt-in, Web Notification API) : la permission une fois accordée par
 // le navigateur ne peut pas être révoquée depuis le JS, donc "désactiver" ne fait que
 // couper notre propre déclenchement (localStorage), la permission système reste accordée.
-async function toggleNotifications() {
-    if (areNotificationsEnabled()) {
+async function toggleBlanketReminders() {
+    if (isBlanketRemindersEnabled()) {
         localStorage.setItem(NOTIF_ENABLED_KEY, '0');
-        updateNotifButton();
+        updateBlanketReminderButton();
         return;
     }
     const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
@@ -565,17 +572,64 @@ async function toggleNotifications() {
         localStorage.setItem(NOTIF_ENABLED_KEY, '1');
         new Notification('2GELOG', { body: `Rappels activés : vous serez prévenu ${NOTIF_LEAD_MINUTES} minutes avant chaque session.` });
     }
-    updateNotifButton();
+    updateBlanketReminderButton();
 }
 
-function setupNotifications() {
-    const btn = document.getElementById('btn-toggle-notifications');
-    if (typeof Notification === 'undefined') {
-        btn.classList.add('hidden');
+// Panneau "Suivis individuellement" (abonnements ReminderService, par titre) : affiche la
+// prochaine occurrence connue de chaque titre suivi, avec un bouton pour se désabonner.
+function renderRemindersList() {
+    const container = document.getElementById('reminders-list');
+    const reminders = ReminderService.getAll();
+
+    if (reminders.length === 0) {
+        container.innerHTML = `<div class="text-[11px] text-slate-600 italic">Aucun événement suivi individuellement pour l'instant. Ouvrez-en un et cliquez sur "🔔 M'envoyer un rappel".</div>`;
         return;
     }
-    updateNotifButton();
-    btn.addEventListener('click', toggleNotifications);
+
+    const now = new Date();
+    const all = repo.getAll();
+    container.innerHTML = reminders.map(({ title }) => {
+        const next = all
+            .filter(e => e.title === title && !e.isCanceled && new Date(e.start) > now)
+            .sort((a, b) => a.start.localeCompare(b.start))[0];
+        const nextLabel = next
+            ? new Date(next.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + (next.heure ? ' · ' + next.heure : '')
+            : "Aucune prochaine date connue";
+        return `
+            <div class="glass-card flex items-center justify-between gap-2 p-2.5 rounded-xl">
+                <div class="min-w-0">
+                    <div class="text-xs font-bold text-slate-200 truncate">${escapeHtml(title)}</div>
+                    <div class="text-[11px] text-slate-500">Prochaine : ${escapeHtml(nextLabel)}</div>
+                </div>
+                <button data-remove-title="${escapeHtml(title)}" title="Ne plus suivre" aria-label="Ne plus suivre ${escapeHtml(title)}" class="shrink-0 text-slate-500 hover:text-rose-400 text-xs p-1.5 rounded-md hover:bg-rose-500/10 transition-all">✕</button>
+            </div>
+        `;
+    }).join('');
+}
+
+function setupRemindersOverlay() {
+    const overlay = document.getElementById('reminders-overlay');
+    const open = () => {
+        updateBlanketReminderButton();
+        renderRemindersList();
+        overlay.classList.remove('hidden');
+        overlay.classList.add('flex');
+    };
+    const close = () => { overlay.classList.add('hidden'); overlay.classList.remove('flex'); };
+
+    document.getElementById('btn-open-reminders').addEventListener('click', open);
+    document.getElementById('btn-close-reminders').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    document.getElementById('btn-toggle-all-reminders').addEventListener('click', toggleBlanketReminders);
+
+    document.getElementById('reminders-list').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-remove-title]');
+        if (!btn) return;
+        ReminderService.remove(btn.dataset.removeTitle);
+        renderRemindersList();
+        updateUIState(); // Rafraîchit le badge 🔔 sur les tuiles concernées.
+    });
 }
 
 function getNotifiedIds() {
@@ -589,15 +643,16 @@ function getNotifiedIds() {
 
 // Cherche, sur TOUT le dépôt (pas les filtres actifs à l'écran : le rappel doit sonner pour
 // n'importe quelle session à venir), les événements démarrant dans moins de
-// NOTIF_LEAD_MINUTES et déclenche une notification navigateur une seule fois chacun.
+// NOTIF_LEAD_MINUTES et concernés par un rappel (global ou par abonnement individuel) et
+// déclenche une notification navigateur une seule fois chacun.
 function checkUpcomingNotifications() {
-    if (!areNotificationsEnabled()) return;
+    if (!hasNotificationPermission()) return;
     const now = new Date();
     const leadMs = NOTIF_LEAD_MINUTES * 60000;
     const notified = new Set(getNotifiedIds());
 
     const due = repo.getAll().filter(e => {
-        if (e.isCanceled || e.isPlanned || notified.has(e.id)) return false;
+        if (e.isCanceled || e.isPlanned || notified.has(e.id) || !shouldRemindFor(e)) return false;
         const diff = new Date(e.start) - now;
         return diff > 0 && diff <= leadMs;
     });
@@ -705,6 +760,10 @@ function setupAdminMode() {
     const content = document.getElementById('admin-content');
 
     btnAdmin.classList.remove('hidden');
+    // Export Discord et mode Kiosque : plutôt des outils d'organisateur que d'usage courant,
+    // regroupés avec le mode Admin pour ne pas encombrer l'en-tête des visiteurs classiques.
+    document.getElementById('btn-export-discord').classList.remove('hidden');
+    document.getElementById('btn-kiosk-mode').classList.remove('hidden');
 
     const openAdmin = () => {
         renderAdminView(content, repo.getAll(), dataAnomalies);
@@ -729,6 +788,38 @@ function setupAdminMode() {
 
     document.getElementById('btn-close-admin').addEventListener('click', () => {
         overlay.classList.add('hidden');
+    });
+}
+
+let currentRetrospectiveYear = null;
+
+// Rétrospective annuelle "vitrine" (voir RetrospectiveView.js) : accessible à tous, contrairement
+// au mode Admin (anomalies/tableaux techniques, réservé aux organisateurs via ?admin).
+function setupRetrospective() {
+    const overlay = document.getElementById('retrospective-overlay');
+    const content = document.getElementById('retrospective-content');
+
+    const renderCurrentYear = () => renderRetrospective(content, repo.getAll(), currentRetrospectiveYear);
+
+    const open = () => {
+        const years = getAvailableYears(repo.getAll());
+        const thisYear = new Date().getFullYear();
+        // Ouvre sur l'année en cours si elle a des données, sinon la plus récente disponible.
+        currentRetrospectiveYear = years.includes(thisYear) ? thisYear : (years[0] || thisYear);
+        renderCurrentYear();
+        overlay.classList.remove('hidden');
+    };
+    const close = () => overlay.classList.add('hidden');
+
+    document.getElementById('btn-open-retrospective').addEventListener('click', open);
+    document.getElementById('btn-close-retrospective').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    content.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-retro-year]');
+        if (!btn || btn.disabled) return;
+        currentRetrospectiveYear = Number(btn.dataset.retroYear);
+        renderCurrentYear();
     });
 }
 
@@ -835,6 +926,8 @@ function setupEscapeToClose() {
     const overlayCloseButtons = [
         ['patchnotes-overlay', 'btn-close-patchnotes'],
         ['help-overlay', 'btn-close-help'],
+        ['reminders-overlay', 'btn-close-reminders'],
+        ['retrospective-overlay', 'btn-close-retrospective'],
         ['admin-overlay', 'btn-close-admin']
     ];
     document.addEventListener('keydown', (e) => {
@@ -888,10 +981,11 @@ async function initApp() {
         setupStatsToggle();
         setupFiltersToggle();
         setupAdminMode();
+        setupRetrospective();
         setupPatchNotes();
         setupHelpOverlay();
         setupEscapeToClose();
-        setupNotifications();
+        setupRemindersOverlay();
         setupKioskMode();
 
         document.getElementById('btn-retry-load').addEventListener('click', () => loadData());

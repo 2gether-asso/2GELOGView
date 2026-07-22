@@ -47,7 +47,18 @@ export function validateRows(rows) {
         // dans l'une ou l'autre colonne selon l'avancement de la migration de la ligne.
         const rawNotes = [row["Tags"], row["Notes"]].filter(Boolean).join("\n");
         const episodes = DateUtils.extractEpisodes(rawNotes);
-        if (episodes.length > 0 && end) {
+
+        // Cette vérification ne vaut que pour la Priorité 2 d'EventGenerator (épisodes datés
+        // SEULS, sans reconduction) : dans ce cas la liste explicite EST la totalité des
+        // épisodes, sa dernière date doit donc raisonnablement coïncider avec "Date de fin".
+        // Pour une expansion hebdo (mot-clé "hebdo" ou type "Soirée Série", Priorité 1), les
+        // dates explicites ne sont que des annotations ponctuelles (ex: un double épisode une
+        // semaine donnée) posées sur une reconduction automatique bien plus longue — rien
+        // n'impose qu'elles couvrent jusqu'à la fin de la série, et le signaler serait un faux
+        // positif (constaté sur une ligne hebdo avec juste une annotation "semaine 1").
+        const isSeries = type === "Soirée Série";
+        const hasHebdoKeyword = /hebdo/i.test(rawNotes);
+        if (!hasHebdoKeyword && !isSeries && episodes.length > 0 && end) {
             const lastEpisodeDate = episodes[episodes.length - 1].date; // format YYYY-MM-DD
             const endIso = end.toISOString().split('T')[0];
             if (lastEpisodeDate !== endIso) {

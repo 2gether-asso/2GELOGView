@@ -26,3 +26,33 @@ export function topN(obj, n = 5) {
         .sort((a, b) => b[1] - a[1])
         .slice(0, n);
 }
+
+// Libellés lisibles pour quelques catégories courtes (config.js THEMES[...].cat) qui ne se
+// prêtent pas bien à une simple capitalisation ("irl" -> "IRL" plutôt que "Irl").
+const CATEGORY_LABEL_OVERRIDES = { irl: "IRL", jdr: "JDR" };
+
+/**
+ * Formate une catégorie (config.js THEMES[...].cat) en libellé lisible. Partagé par la
+ * barre de filtres, le tableau de bord et la rétrospective annuelle.
+ * @param {string} cat
+ * @returns {string}
+ */
+export function formatCategoryLabel(cat) {
+    if (CATEGORY_LABEL_OVERRIDES[cat]) return CATEGORY_LABEL_OVERRIDES[cat];
+    return cat.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Convertit des minutes en "XjYh" au-delà d'une journée (ex: 780 -> "13j"), ou délègue à
+ * formatMinutes en dessous — pour un gros total cumulé (rétrospective annuelle) plus
+ * parlant qu'un simple compteur d'heures à trois chiffres.
+ * @param {number} totalMinutes
+ * @returns {string}
+ */
+export function formatDurationLong(totalMinutes) {
+    if (!totalMinutes) return "0 min";
+    const days = Math.floor(totalMinutes / 1440);
+    if (days === 0) return formatMinutes(totalMinutes);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    return hours > 0 ? `${days}j ${hours}h` : `${days}j`;
+}

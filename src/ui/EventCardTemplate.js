@@ -1,6 +1,6 @@
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
-import { RsvpService } from '../services/RsvpService.js';
+import { ReminderService } from '../services/ReminderService.js';
 
 // Les visuels sources sont en format portrait (~8:9). On force ce ratio sur les
 // vignettes plutôt qu'un cadre carré pour éviter le crop "object-cover" sur un carré.
@@ -84,12 +84,10 @@ function renderNewBadge(e) {
     return `<span class="text-[11px] font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🆕 Nouveau</span>`;
 }
 
-/** Rappel visuel du RSVP local ("Vous y allez ?" dans la modale, voir RsvpService/ModalView). */
-function renderRsvpBadge(e) {
-    const status = RsvpService.get(e.id);
-    if (status === 'yes') return `<span class="text-[11px] font-bold text-emerald-300 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">✅ Vous venez</span>`;
-    if (status === 'maybe') return `<span class="text-[11px] font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🤔 Peut-être</span>`;
-    return '';
+/** Badge "🔔 Rappel activé" si ce titre (série entière) est suivi, voir ReminderService/ModalView. */
+function renderReminderBadge(e) {
+    if (!ReminderService.isSet(e.title)) return '';
+    return `<span class="text-[11px] font-bold text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">🔔 Rappel activé</span>`;
 }
 
 export function renderEventCard(e, readableDate = null) {
@@ -140,7 +138,7 @@ export function renderEventCard(e, readableDate = null) {
                 <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
                     ${renderStatusBadge(e.progressStatus)}
                     ${renderNewBadge(e)}
-                    ${renderRsvpBadge(e)}
+                    ${renderReminderBadge(e)}
                     ${detailsEpisode ? `<span class="text-[11px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">📺 ${detailsEpisode}</span>` : ''}
                     ${location ? `<span class="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">📍 ${location}</span>` : ''}
                 </div>

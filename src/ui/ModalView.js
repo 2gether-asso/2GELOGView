@@ -1,14 +1,10 @@
 import { CONFIG } from '../config.js';
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { renderStatusBadge, getOvernightSuffix } from './EventCardTemplate.js';
-import { RsvpService } from '../services/RsvpService.js';
+import { ReminderService } from '../services/ReminderService.js';
 
-const RSVP_IDLE_CLASS = "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200";
-const RSVP_ACTIVE_CLASSES = {
-    yes: "bg-emerald-600/80 border-emerald-400 text-white",
-    maybe: "bg-amber-600/80 border-amber-400 text-white",
-    no: "bg-rose-600/80 border-rose-400 text-white"
-};
+const REMINDER_IDLE_CLASS = "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200";
+const REMINDER_ACTIVE_CLASS = "bg-indigo-600/80 border-indigo-400 text-white";
 
 // Lieu par défaut (voir EventGenerator) : la carte "Lieu" est masquée quand elle ne
 // contient rien de plus informatif que cette valeur par défaut.
@@ -19,13 +15,13 @@ export class ModalView {
      * Attache les écouteurs d'événements de la modale (fermeture, clic sur tag).
      * Idempotent : peut être appelé plusieurs fois sans dupliquer les listeners.
      * @param {Function} onTagClick - Callback appelé avec le tag (sans #) cliqué dans la modale
-     * @param {Function} onRsvpChange - Callback appelé (sans argument) après un changement de réponse RSVP
+     * @param {Function} onReminderChange - Callback appelé (sans argument) après un changement d'abonnement rappel
      */
-    static init(onTagClick = null, onRsvpChange = null) {
+    static init(onTagClick = null, onReminderChange = null) {
         if (this._initialized) return;
         this._initialized = true;
         this._onTagClick = onTagClick;
-        this._onRsvpChange = onRsvpChange;
+        this._onReminderChange = onReminderChange;
 
         const container = document.getElementById('custom-modal-container');
         const closeBtn = document.getElementById('modal-close-btn');
@@ -41,15 +37,26 @@ export class ModalView {
             }
         });
 
-        // RSVP léger : re-cliquer sur la réponse déjà active l'efface (toggle).
-        document.getElementById('modal-rsvp-container').addEventListener('click', (e) => {
-            const btn = e.target.closest('button[data-rsvp]');
-            if (!btn || !this._currentEventId) return;
-            const status = btn.dataset.rsvp;
-            const current = RsvpService.get(this._currentEventId);
-            RsvpService.set(this._currentEventId, current === status ? null : status);
-            this._applyRsvpButtonStyles();
-            if (this._onRsvpChange) this._onRsvpChange();
+        // Rappel suivi par titre, pas par instance (voir ReminderService) : fonctionne sur
+        // tout type d'événement, et couvre automatiquement chaque nouvelle diffusion pour
+        // une série (même titre répété sur plusieurs dates), pas seulement celle ouverte ici.
+        // Demande la permission de notification au premier clic si besoin.
+        document.getElementById('modal-reminder-btn').addEventListener('click', async () => {
+            if (!this._currentEventTitle) return;
+            if (typeof Notification === 'undefined') {
+                window.alert("Les notifications ne sont pas prises en charge par ce navigateur.");
+                return;
+            }
+            if (Notification.permission !== 'granted') {
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') return;
+            }
+            const nowSubscribed = ReminderService.toggle(this._currentEventTitle);
+            this._applyReminderButtonStyle();
+            if (nowSubscribed) {
+                new Notification('2GELOG', { body: `Rappel activé pour "${this._currentEventTitle}" : vous serez prévenu avant chaque prochaine diffusion.` });
+            }
+            if (this._onReminderChange) this._onReminderChange();
         });
 
         document.getElementById('modal-event-tags').addEventListener('click', (e) => {
@@ -87,6 +94,7 @@ export class ModalView {
         if (!event) return;
 
         this._currentEventId = event.id || null;
+        this._currentEventTitle = event.title || null;
         // Rend l'URL partageable (?event=<id>) sans recharger la page ni polluer
         // l'historique de navigation (remplace l'entrée courante plutôt que d'en empiler une).
         if (event.id) {
@@ -172,16 +180,10 @@ export class ModalView {
 
         document.getElementById('modal-event-notes').innerText = event.notes || "Aucune note ou description pour cet événement.";
 
-        // RSVP léger : peu pertinent pour un événement annulé ou déjà terminé.
-        const rsvpContainer = document.getElementById('modal-rsvp-container');
-        if (!event.isCanceled && event.progressStatus !== "Terminé") {
-            rsvpContainer.classList.remove('hidden');
-            rsvpContainer.classList.add('flex');
-            this._applyRsvpButtonStyles();
-        } else {
-            rsvpContainer.classList.add('hidden');
-            rsvpContainer.classList.remove('flex');
-        }
+        // Le rappel est suivi par titre, pas par occurrence : reste pertinent même si CETTE
+        // occurrence précise est déjà terminée (une prochaine diffusion peut exister,
+        // notamment pour une série).
+        this._applyReminderButtonStyle();
 
         // Tags cliquables
         const tagsBox = document.getElementById('modal-event-tags');
@@ -203,13 +205,12 @@ export class ModalView {
         document.getElementById('modal-close-btn').focus();
     }
 
-    /** Applique le style actif/inactif aux 3 boutons RSVP selon la réponse enregistrée pour l'événement ouvert. */
-    static _applyRsvpButtonStyles() {
-        const current = RsvpService.get(this._currentEventId);
-        document.querySelectorAll('#modal-rsvp-container button[data-rsvp]').forEach(btn => {
-            const isActive = btn.dataset.rsvp === current;
-            btn.className = `flex-1 text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all ${isActive ? RSVP_ACTIVE_CLASSES[btn.dataset.rsvp] : RSVP_IDLE_CLASS}`;
-        });
+    /** Applique le style actif/inactif au bouton de rappel selon l'abonnement de CE titre. */
+    static _applyReminderButtonStyle() {
+        const btn = document.getElementById('modal-reminder-btn');
+        const isActive = ReminderService.isSet(this._currentEventTitle);
+        btn.className = `w-full flex items-center justify-center gap-2 text-[11px] font-bold px-3 py-2 rounded-lg border transition-all ${isActive ? REMINDER_ACTIVE_CLASS : REMINDER_IDLE_CLASS}`;
+        btn.innerHTML = isActive ? '🔔 Rappel activé' : "🔔 M'envoyer un rappel";
     }
 
     /** Affiche/masque un des boutons-lien optionnels de la modale (fiche/salon/sondage). */
@@ -237,6 +238,7 @@ export class ModalView {
             window.history.replaceState(null, '', url);
         }
         this._currentEventId = null;
+        this._currentEventTitle = null;
 
         // Restaure le focus sur l'élément qui avait ouvert la modale.
         if (this._lastFocused && typeof this._lastFocused.focus === 'function') {
