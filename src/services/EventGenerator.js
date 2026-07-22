@@ -124,14 +124,30 @@ export class EventGenerator {
             // seules les occurrences passées et celle de la semaine prochaine sont générées.
             const limit = end || new Date(today.getTime() + (7 * 24 * 60 * 60 * 1000));
             const validEntries = [];
+            const seenIso = new Set();
             let cur = new Date(start);
             while (cur <= limit) {
                 const iso = cur.toISOString().split('T')[0];
-                if (!this._isPaused(iso, pauseDate, repriseDate)) {
+                if (!this._isPaused(iso, pauseDate, repriseDate) && !seenIso.has(iso)) {
                     validEntries.push({ iso, explicit: episodesByDate.get(iso) || null });
+                    seenIso.add(iso);
                 }
                 cur.setDate(cur.getDate() + 7);
             }
+            // Une date explicitement notée qui ne tombe pas sur la grille hebdomadaire (ex: un
+            // "marathon" à plusieurs épisodes par semaine, sorties presque quotidiennes plutôt
+            // qu'un rythme hebdo strict) doit quand même être générée : sans ça, seules les dates
+            // tombant PAR HASARD sur début+7j×n étaient prises en compte, et le reste des dates
+            // pourtant notées disparaissait silencieusement (constaté sur une série à 6 dates
+            // notées en une semaine, dont seules 2 tombaient sur la grille hebdo).
+            episodes.forEach(ep => {
+                if (!seenIso.has(ep.date) && !this._isPaused(ep.date, pauseDate, repriseDate)) {
+                    validEntries.push({ iso: ep.date, explicit: ep });
+                    seenIso.add(ep.date);
+                }
+            });
+            validEntries.sort((a, b) => a.iso.localeCompare(b.iso));
+
             // Durée de chaque occurrence : réelle (explicite par épisode) quand annotée,
             // moyenne du reliquat de "Durée Réelle" sinon — voir _computeEpisodeDurations().
             const entries = validEntries.map(({ explicit }) => ({
@@ -176,7 +192,13 @@ export class EventGenerator {
             const durations = this._computeEpisodeDurations(entries, totalDuration);
 
             validEpisodes.forEach((ep, i) => {
-                episodeCounter++;
+                // Comme en Priorité 1 : une entrée "Episode 4 et 5" couvre 2 épisodes, la
+                // numérotation doit avancer d'autant (pas de +1 systématique), sous peine de
+                // décaler l'étiquette affichée par rapport au texte réel de l'entrée suivante.
+                const { count } = entries[i];
+                const startNum = episodeCounter + 1;
+                episodeCounter += count;
+                const label = count > 1 ? `Épisodes ${startNum}-${episodeCounter}` : `Épisode ${episodeCounter}`;
                 const heureInst = ep.heure || heureGlobale;
                 const { duration: effectiveDuration, isEstimate } = durations[i];
                 const durationEnd = this.computeDurationEnd(ep.date, heureInst, effectiveDuration);
@@ -189,7 +211,7 @@ export class EventGenerator {
                     isMultiDay: durationEnd?.isMultiDay || false,
                     endIsEstimate: isEstimate,
                     sub: ep.text,
-                    episode: isSeries ? `Épisode ${episodeCounter}` : null,
+                    episode: isSeries ? label : null,
                     dur: effectiveDuration
                 }));
             });
