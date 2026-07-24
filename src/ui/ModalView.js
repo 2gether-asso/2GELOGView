@@ -2,6 +2,7 @@ import { CONFIG } from '../config.js';
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { renderStatusBadge, getOvernightSuffix } from './EventCardTemplate.js';
 import { ReminderService } from '../services/ReminderService.js';
+import { embedFileName } from '../utils/EmbedId.js';
 
 const REMINDER_IDLE_CLASS = "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200";
 const REMINDER_ACTIVE_CLASS = "bg-indigo-600/80 border-indigo-400 text-white";
@@ -67,12 +68,16 @@ export class ModalView {
             if (this._onTagClick) this._onTagClick(tag);
         });
 
-        // Lien partageable direct vers l'événement ouvert (?event=<id>).
+        // Lien partageable : pointe vers la page d'aperçu statique (e/<hash>.html, générée
+        // par scripts/generate-embeds.js) plutôt que directement vers "?event=<id>". Collé
+        // sur Discord, c'est cette page qui fournit l'aperçu (titre/date/affiche) car le
+        // robot ne lit que le HTML statique ; un vrai visiteur y est aussitôt redirigé vers
+        // l'app (?event=<id>) sans rien y voir. embedFileName() doit rester identique à celui
+        // utilisé côté génération pour que le lien retombe sur le bon fichier.
         document.getElementById('modal-copy-link-btn').addEventListener('click', async (e) => {
             if (!this._currentEventId) return;
-            const url = new URL(window.location.href);
-            url.search = '';
-            url.searchParams.set('event', this._currentEventId);
+            const base = new URL('.', window.location.href);
+            const url = new URL(`e/${embedFileName(this._currentEventId)}.html`, base);
             const btn = e.currentTarget;
             try {
                 await navigator.clipboard.writeText(url.href);

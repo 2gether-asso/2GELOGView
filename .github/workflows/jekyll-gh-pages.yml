@@ -9,6 +9,11 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+  # Régénère les pages d'aperçu Discord/Twitter (/e/*.html, voir scripts/generate-embeds.js)
+  # toutes les heures : le tableur Google Sheet change en continu sans passer par un push git.
+  schedule:
+    - cron: "0 * * * *"
+
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
@@ -28,6 +33,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Generate Discord/Twitter preview pages
+        # Ne doit jamais bloquer le déploiement du reste du site (ex: Google Sheet
+        # momentanément injoignable) : un aperçu manquant est un défaut mineur, pas
+        # une raison de ne pas publier les vraies mises à jour de l'app.
+        continue-on-error: true
+        run: |
+          npm install
+          npm run generate:embeds
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Build with Jekyll

@@ -466,11 +466,12 @@ function setupFiltersToggle() {
 // Contenu des notes de version : à éditer librement à chaque mise à jour notable.
 // Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
 const PATCH_NOTES = {
-    version: "2026-07-09e",
+    version: "2026-07-24",
     sections: [
         {
             title: "🚀 Nouveautés",
             items: [
+                "Aperçu automatique sur Discord : le lien copié (bouton 🔗 dans la modale) affiche désormais titre, date et affiche de l'événement dès qu'il est collé dans un salon, sans avoir à cliquer.",
                 "🎉 Rétrospective annuelle : un bilan visuel de l'année façon \"Wrapped\" (temps passé ensemble, répartition par catégorie, MVP organisateur, mois le plus actif, tags favoris...) — accessible à tous via le bouton 🎉 Rétrospective de l'en-tête, une année à la fois.",
                 "Rappels repensés : \"🔔 M'envoyer un rappel\" fonctionne sur n'importe quel événement — pour une série (dates hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion, pas seulement celle ouverte. Le bouton 🔔 Rappels de l'en-tête ouvre désormais la liste de vos abonnements, avec un interrupteur pour tout activer d'un coup.",
                 "Bouton 💬 Discord : copie en un clic un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.",

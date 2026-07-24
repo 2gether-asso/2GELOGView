@@ -1,0 +1,12 @@
+{
+  "name": "2gelogview-embeds",
+  "private": true,
+  "type": "module",
+  "description": "Génération CI des pages d'aperçu Discord/Twitter (og:*) par événement. N'affecte pas l'app statique elle-même (aucun build step pour index.html).",
+  "scripts": {
+    "generate:embeds": "node scripts/generate-embeds.js"
+  },
+  "devDependencies": {
+    "papaparse": "^5.4.1"
+  }
+}
