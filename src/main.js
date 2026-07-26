@@ -17,7 +17,7 @@ import { escapeHtml } from './utils/Html.js';
 import { formatMinutes, topN, formatCategoryLabel } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
 import { ReminderService } from './services/ReminderService.js';
-import { renderRetrospective, getAvailableYears } from './ui/RetrospectiveView.js';
+import { renderRetrospective, getAvailableYears, getBucketEvents } from './ui/RetrospectiveView.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -466,11 +466,12 @@ function setupFiltersToggle() {
 // Contenu des notes de version : à éditer librement à chaque mise à jour notable.
 // Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
 const PATCH_NOTES = {
-    version: "2026-07-24",
+    version: "2026-07-26b",
     sections: [
         {
             title: "🚀 Nouveautés",
             items: [
+                "Rétrospective enrichie : mur des affiches, premier/dernier moment de l'année, jour de la semaine et tranche horaire préférés, événement qui revient le plus, taux de fiabilité du planning, plus longue série de semaines actives... Survolez un mois/jour du graphique pour un résumé, cliquez dessus pour la liste complète des sessions.",
                 "Aperçu automatique sur Discord : le lien copié (bouton 🔗 dans la modale) affiche désormais titre, date et affiche de l'événement dès qu'il est collé dans un salon, sans avoir à cliquer.",
                 "🎉 Rétrospective annuelle : un bilan visuel de l'année façon \"Wrapped\" (temps passé ensemble, répartition par catégorie, MVP organisateur, mois le plus actif, tags favoris...) — accessible à tous via le bouton 🎉 Rétrospective de l'en-tête, une année à la fois.",
                 "Rappels repensés : \"🔔 M'envoyer un rappel\" fonctionne sur n'importe quel événement — pour une série (dates hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion, pas seulement celle ouverte. Le bouton 🔔 Rappels de l'en-tête ouvre désormais la liste de vos abonnements, avec un interrupteur pour tout activer d'un coup.",
@@ -793,6 +794,29 @@ function setupAdminMode() {
 }
 
 let currentRetrospectiveYear = null;
+// Événements du dernier mois/jour de semaine ouvert en détail (voir openBucketDetail) :
+// indexé de la même façon que le rendu, pour retrouver l'objet complet au clic sur une carte.
+let bucketDetailCache = [];
+
+/**
+ * Liste complète (et non plus seulement le résumé "top 3" de l'infobulle) des sessions d'un
+ * mois ou jour de semaine de la rétrospective, ouverte au clic sur une barre des graphiques
+ * (voir renderHoverBarChart dans RetrospectiveView.js).
+ */
+function openBucketDetail(kind, label, index) {
+    bucketDetailCache = getBucketEvents(repo.getAll(), currentRetrospectiveYear, kind, index);
+
+    const title = document.getElementById('bucket-detail-title');
+    const content = document.getElementById('bucket-detail-content');
+    const count = bucketDetailCache.length;
+    title.textContent = `${label} ${currentRetrospectiveYear} · ${count} session${count > 1 ? 's' : ''}`;
+    content.innerHTML = bucketDetailCache.map((e, idx) => {
+        const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+    }).join('');
+
+    document.getElementById('bucket-detail-overlay').classList.remove('hidden');
+}
 
 // Rétrospective annuelle "vitrine" (voir RetrospectiveView.js) : accessible à tous, contrairement
 // au mode Admin (anomalies/tableaux techniques, réservé aux organisateurs via ?admin).
@@ -817,10 +841,40 @@ function setupRetrospective() {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
     content.addEventListener('click', (e) => {
+        const bar = e.target.closest('[data-bucket-kind]');
+        if (bar) {
+            openBucketDetail(bar.dataset.bucketKind, bar.dataset.bucketLabel, Number(bar.dataset.bucketIndex));
+            return;
+        }
         const btn = e.target.closest('button[data-retro-year]');
         if (!btn || btn.disabled) return;
         currentRetrospectiveYear = Number(btn.dataset.retroYear);
         renderCurrentYear();
+    });
+    // Accessibilité clavier : les barres sont des div focusables (role="button"), Entrée/Espace
+    // doivent donc les activer comme le ferait un vrai <button> (même besoin que next-event-banner).
+    content.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const bar = e.target.closest('[data-bucket-kind]');
+        if (!bar) return;
+        e.preventDefault();
+        openBucketDetail(bar.dataset.bucketKind, bar.dataset.bucketLabel, Number(bar.dataset.bucketIndex));
+    });
+
+    const bucketOverlay = document.getElementById('bucket-detail-overlay');
+    const closeBucketDetail = () => bucketOverlay.classList.add('hidden');
+    document.getElementById('btn-close-bucket-detail').addEventListener('click', closeBucketDetail);
+    bucketOverlay.addEventListener('click', (e) => {
+        if (e.target === bucketOverlay) { closeBucketDetail(); return; }
+        const card = e.target.closest('[data-idx]');
+        if (!card) return;
+        const ev = bucketDetailCache[Number(card.dataset.idx)];
+        if (!ev) return;
+        // Ferme les deux overlays de la rétrospective avant d'ouvrir la modale : ModalView
+        // (z-50) est sous les deux (z-62/63), elle resterait invisible sinon.
+        closeBucketDetail();
+        close();
+        ModalView.open(ev);
     });
 }
 
@@ -928,6 +982,7 @@ function setupEscapeToClose() {
         ['patchnotes-overlay', 'btn-close-patchnotes'],
         ['help-overlay', 'btn-close-help'],
         ['reminders-overlay', 'btn-close-reminders'],
+        ['bucket-detail-overlay', 'btn-close-bucket-detail'],
         ['retrospective-overlay', 'btn-close-retrospective'],
         ['admin-overlay', 'btn-close-admin']
     ];

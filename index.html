@@ -390,6 +390,16 @@
         <div id="retrospective-content"></div>
     </div>
 
+    <!-- Liste complète des sessions d'un mois/jour de semaine, ouverte au clic sur une barre
+         des graphiques de la rétrospective (voir setupRetrospective() dans main.js). -->
+    <div id="bucket-detail-overlay" class="fixed inset-0 z-[63] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-10">
+        <div class="max-w-2xl mx-auto flex items-center justify-between mb-4">
+            <h3 id="bucket-detail-title" class="text-lg font-black text-white"></h3>
+            <button id="btn-close-bucket-detail" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all font-bold text-sm">✕ Fermer</button>
+        </div>
+        <div id="bucket-detail-content" class="max-w-2xl mx-auto space-y-2"></div>
+    </div>
+
     <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[#06080c]" role="status" aria-live="polite">
         <div class="h-10 w-10 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin" aria-hidden="true"></div>
         <p class="text-sm text-slate-400">Chargement du calendrier…</p>
