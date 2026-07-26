@@ -5,10 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>2GELOG V2 - UwU</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%236366f1'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white' font-family='Arial'%3E2G%3C/text%3E%3C/svg%3E">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-touch-icon" href="./assets/img/pwa/icon-192.png">
+    <meta name="theme-color" content="#161b22">
 
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
@@ -29,6 +34,13 @@
         .glass-panel { background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border); }
         .glass-card { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.04); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
         .glass-card:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); }
+
+        /* Thème saisonnier (voir src/services/SeasonalTheme.js) : purement cosmétique, ne fait
+           que teinter le fond et le liseré des panneaux via les variables --season-* posées
+           sur <html>. Aucune règle ici ne modifie une mise en page ou un comportement. */
+        html[data-season] body { background: radial-gradient(circle at 50% 0%, var(--season-bg-tint) 0%, var(--bg-deep) 70%); }
+        html[data-season] .glass-panel { border-color: color-mix(in srgb, var(--season-color) 30%, var(--glass-border)); }
+        html[data-season] #header-status-dot { background: var(--season-color); box-shadow: 0 0 10px color-mix(in srgb, var(--season-color) 80%, transparent); }
 
         .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -101,10 +113,11 @@
 <body class="h-dvh w-screen flex flex-col antialiased">
 
     <header class="shrink-0 border-b border-white/5 bg-[#161b22]/40 backdrop-blur-xl flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-40">
-        <div class="flex items-center space-x-4">
-            <div class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
+        <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer">
+            <div id="header-status-dot" class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
             <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
                 2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2</span>
+                <span id="seasonal-badge" class="hidden font-bold text-[10px] px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
             </h1>
         </div>
 
@@ -112,8 +125,25 @@
             <button id="btn-help" title="Aide et légende" aria-label="Aide et légende" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 ❓
             </button>
-            <button id="btn-export-ics" title="Exporter le planning affiché en .ics" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <label for="theme-select" class="sr-only">Thème saisonnier</label>
+            <select id="theme-select" title="Choisir le thème saisonnier (par défaut : automatique selon la date)" class="text-[11px] font-bold text-slate-400 hover:text-white pl-2 pr-1 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <option value="auto">🎨 Auto</option>
+                <option value="halloween">🎃 Halloween</option>
+                <option value="noel">🎄 Noël</option>
+                <option value="st-valentin">💖 St-Valentin</option>
+                <option value="none">◾ Aucun</option>
+            </select>
+            <button id="btn-export-ics" title="Exporter le planning affiché en .ics (instantané ponctuel)" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 📅 .ics
+            </button>
+            <button id="btn-subscribe-ics" title="Copier le lien d'abonnement (webcal://) : se resynchronise tout seul dans votre appli calendrier" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🔗 S'abonner
+            </button>
+            <button id="btn-toggle-timeline" title="Vue Frise : la même sélection organisée par mois, séries regroupées en un seul bloc" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🗓️ Frise
+            </button>
+            <button id="btn-toggle-map" title="Carte des lieux IRL (meetups)" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🗺️ Carte
             </button>
             <button id="btn-open-reminders" title="Gérer vos rappels de notification" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 🔔 Rappels
@@ -186,6 +216,10 @@
         <section class="flex-1 p-4 h-full relative overflow-y-auto overflow-x-hidden custom-scroll bg-black/[0.05]">
             <div id="calendar" class="w-full min-h-full"></div>
             <div id="search-results" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
+            <div id="timeline-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
+            <div id="map-view" class="hidden w-full h-full">
+                <div id="meetup-map" class="w-full h-full rounded-xl overflow-hidden"></div>
+            </div>
         </section>
 
         <section id="sidebar-panel" class="w-full sm:w-80 absolute sm:relative inset-y-0 right-0 z-20 sm:z-auto border-l border-white/5 bg-[#0d1117] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden p-4 space-y-4 backdrop-blur-sm transition-all shadow-2xl sm:shadow-none">
@@ -272,7 +306,7 @@
             <div id="modal-meta-block" class="grid grid-cols-2 gap-3 text-xs">
                 <div id="modal-host-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
                     <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">👤 Organisé par</div>
-                    <div id="modal-event-host" class="text-slate-200 font-semibold mt-1"></div>
+                    <button id="modal-event-host" title="Voir le profil de cet organisateur" class="text-slate-200 font-semibold mt-1 hover:text-indigo-400 hover:underline transition-colors text-left"></button>
                 </div>
                 <div id="modal-platform-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
                     <div class="text-slate-500 font-bold text-[9px] uppercase tracking-wider">📺 Plateforme</div>
@@ -344,7 +378,8 @@
                     <div class="space-y-1 text-xs">
                         <div>🆕 <b>Nouveau</b> — événement ajouté au tableur depuis votre dernière visite.</div>
                         <div>🔗 Bouton dans la modale d'un événement — copie un lien direct vers celui-ci.</div>
-                        <div>📅 .ics — télécharge le planning actuellement affiché pour l'importer dans votre agenda (Google/Outlook/Apple). C'est un export ponctuel, pas un abonnement synchronisé automatiquement.</div>
+                        <div>📅 .ics — télécharge le planning actuellement affiché pour l'importer dans votre agenda (Google/Outlook/Apple). C'est un export ponctuel, à réimporter manuellement si le planning change.</div>
+                        <div>🔗 S'abonner — copie un lien d'abonnement (webcal://) vers le planning complet : à ajouter une seule fois dans votre appli calendrier, qui se resynchronise ensuite tout seul (régénéré côté serveur toutes les heures).</div>
                         <div>💬 Discord — copie un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.</div>
                         <div>🔔 Rappels — sur n'importe quel événement, "M'envoyer un rappel" (dans sa modale) prévient par notification navigateur avant son début. Pour une série à plusieurs dates (hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion. Le bouton 🔔 Rappels de l'en-tête ouvre la liste de vos abonnements et un interrupteur global pour tout activer d'un coup.</div>
                         <div>📆 Période (Du/Au) — filtre le calendrier sur une plage de dates ; le lien <code>?today=1</code> n'affiche que les sessions du jour.</div>
@@ -398,6 +433,17 @@
             <button id="btn-close-bucket-detail" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all font-bold text-sm">✕ Fermer</button>
         </div>
         <div id="bucket-detail-content" class="max-w-2xl mx-auto space-y-2"></div>
+    </div>
+
+    <!-- Mini-profil d'un organisateur, ouvert au clic sur son nom (sidebar "Top organisateurs"
+         ou champ "Organisé par" de la modale) - voir openOrganizerProfile() dans main.js. -->
+    <div id="organizer-profile-overlay" class="fixed inset-0 z-[63] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-10">
+        <div class="max-w-2xl mx-auto flex items-center justify-between mb-4">
+            <h3 id="organizer-profile-title" class="text-lg font-black text-white"></h3>
+            <button id="btn-close-organizer-profile" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all font-bold text-sm">✕ Fermer</button>
+        </div>
+        <div id="organizer-profile-summary" class="max-w-2xl mx-auto mb-4"></div>
+        <div id="organizer-profile-content" class="max-w-2xl mx-auto space-y-2"></div>
     </div>
 
     <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[#06080c]" role="status" aria-live="polite">

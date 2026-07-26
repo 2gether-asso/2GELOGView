@@ -34,9 +34,15 @@ export function getEpisodeLabel(e) {
     return e.meta?.episode || e.meta?.diffusion || e.sub || e.episode || "";
 }
 
+// Racine du dépôt (dossier contenant assets/), calculée depuis l'URL de CE module : une carte
+// affichée depuis une page en sous-dossier (ex: widget/) doit résoudre l'icône vers assets/ à
+// la racine, pas vers un assets/ relatif à sa propre page (voir même idiom dans utils/Html.js).
+const REPO_ROOT_URL = new URL('../..', import.meta.url).href;
+
 /** Chemin de l'icône de catégorie (assets/img/badges/), avec repli sur l'icône générique "Hors Prog". */
 export function getIconSrc(e) {
-    return e.img ? `./assets/img/badges/${e.img}` : './assets/img/badges/hors-prog.png';
+    const fileName = e.img || 'hors-prog.png';
+    return new URL(`assets/img/badges/${fileName}`, REPO_ROOT_URL).href;
 }
 
 /**

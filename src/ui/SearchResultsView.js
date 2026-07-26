@@ -7,7 +7,7 @@ function shortDate(iso) {
     return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-function renderRow(e, idx) {
+export function renderRow(e, idx) {
     const iconSrc = getIconSrc(e);
     const dateObj = new Date(e.start);
     const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
@@ -57,7 +57,7 @@ function renderRow(e, idx) {
  * Regroupe les instances partageant le même titre (une ligne de tableur "hebdo"/série
  * génère une instance par date). On garde l'ordre de première apparition.
  */
-function groupByTitle(events) {
+export function groupByTitle(events) {
     const order = [];
     const map = new Map();
     events.forEach(e => {
@@ -72,7 +72,7 @@ function groupByTitle(events) {
  * ligne résumant le total (occurrences, durée cumulée, plage de dates), dépliable pour
  * voir chaque date individuellement et l'ouvrir dans la modale.
  */
-function renderGroupRow(group, indexOf) {
+export function renderGroupRow(group, indexOf) {
     const sorted = [...group].sort((a, b) => a.start.localeCompare(b.start));
     const first = sorted[0];
     const iconSrc = getIconSrc(first);
@@ -158,7 +158,7 @@ function renderGroupRow(group, indexOf) {
 // Un seul écouteur délégué par conteneur (le contenu est réinjecté à chaque recherche).
 const wiredContainers = new WeakSet();
 
-function wireGroupToggle(container) {
+export function wireGroupToggle(container) {
     if (wiredContainers.has(container)) return;
     wiredContainers.add(container);
     container.addEventListener('click', (e) => {

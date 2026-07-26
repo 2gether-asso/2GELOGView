@@ -9,10 +9,14 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-  # Régénère les pages d'aperçu Discord/Twitter (/e/*.html, voir scripts/generate-embeds.js)
-  # toutes les heures : le tableur Google Sheet change en continu sans passer par un push git.
   schedule:
+    # Régénère les pages d'aperçu Discord/Twitter (/e/*.html, voir scripts/generate-embeds.js)
+    # et le flux .ics abonnable toutes les heures : le tableur Google Sheet change en continu
+    # sans passer par un push git.
     - cron: "0 * * * *"
+    # Digest hebdomadaire Discord (scripts/post-discord-digest.js), le lundi matin - repéré via
+    # github.event.schedule dans le step ci-dessous pour ne PAS se déclencher à chaque run horaire.
+    - cron: "0 8 * * 1"
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -37,14 +41,23 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Generate Discord/Twitter preview pages
+      - name: Generate Discord/Twitter preview pages and live .ics feed
         # Ne doit jamais bloquer le déploiement du reste du site (ex: Google Sheet
-        # momentanément injoignable) : un aperçu manquant est un défaut mineur, pas
-        # une raison de ne pas publier les vraies mises à jour de l'app.
+        # momentanément injoignable) : un aperçu ou un flux .ics manquant est un défaut
+        # mineur, pas une raison de ne pas publier les vraies mises à jour de l'app.
         continue-on-error: true
         run: |
           npm install
           npm run generate:embeds
+          npm run generate:ics
+      - name: Post weekly Discord digest
+        # Ne se déclenche QUE sur le cron du lundi matin (pas le cron horaire ci-dessus) ou un
+        # lancement manuel (pratique pour tester) - jamais à chaque run horaire, sinon spam.
+        if: github.event.schedule == '0 8 * * 1' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: npm run post:discord-digest
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Build with Jekyll

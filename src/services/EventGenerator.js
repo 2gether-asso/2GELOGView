@@ -114,12 +114,19 @@ export class EventGenerator {
         // compterait la durée totale, multipliant artificiellement le temps cumulé).
         const totalDuration = DateUtils.parseDuration(row["Durée Réelle"]);
 
-        // Priorité 1 : Expansion Hebdomadaire (le cas "Soirée Série" standard). Certaines
-        // semaines peuvent porter une annotation explicite ("11/07/2025: Episode 1 et 2")
-        // pour signaler un double épisode ou tout autre cas particulier ; la numérotation
-        // continue alors correctement pour les semaines suivantes (ex: la semaine d'après
-        // reprend à "Épisode 3", pas "Épisode 2").
-        if (hasHebdoKeyword || isSeries) {
+        // Priorité 1 : Expansion Hebdomadaire. Déclenchée par le mot-clé explicite "hebdo", ou
+        // par isSeries UNIQUEMENT si aucun épisode n'est explicitement daté dans les Notes (une
+        // série "à l'aveugle", sans annotation par semaine) : une "Soirée Série" qui annote CHAQUE
+        // date réelle (ex: IZombie/Preacher, une ligne par diffusion) ne doit PAS aussi subir la
+        // grille hebdomadaire synthétique, sous peine de fabriquer des semaines fantômes pendant
+        // les pauses naturelles (vacances...) non marquées par un mot-clé "pause"/"reprise" — la
+        // grille hebdomadaire ne sait sauter QUE via ce mot-clé explicite, jamais en déduisant
+        // un silence entre deux dates notées. Constaté sur IZombie S2/Preacher S2 : la grille
+        // comblait le trou de plusieurs semaines avec de fausses occurrences auto-numérotées,
+        // décalant au passage la numérotation de tous les épisodes réels suivants. Si des
+        // épisodes sont explicitement notés sans mot-clé "hebdo", la Priorité 2 ci-dessous s'en
+        // charge : uniquement les dates listées, sans reconduction devinée.
+        if (hasHebdoKeyword || (isSeries && episodes.length === 0)) {
             // Sans date de fin explicite, on ne projette pas des mois de "Prévu" spéculatifs :
             // seules les occurrences passées et celle de la semaine prochaine sont générées.
             const limit = end || new Date(today.getTime() + (7 * 24 * 60 * 60 * 1000));

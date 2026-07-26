@@ -16,13 +16,19 @@ export function escapeHtml(value) {
         .replace(/'/g, "&#39;");
 }
 
+// Racine du dépôt (dossier contenant assets/), calculée depuis l'URL de CE module plutôt que
+// depuis window.location.href : un chemin relatif comme "./assets/img/default/Movie
+// Banner.png" (config.js) doit toujours pointer vers assets/ à la racine, que la page qui
+// affiche la carte soit index.html (racine) ou une page dans un sous-dossier (ex: widget/).
+const REPO_ROOT_URL = new URL('../..', import.meta.url).href;
+
 /**
  * Valide qu'une valeur (URL @image/@lien du tableur, ou chemin local d'une bannière par
  * défaut dans config.js) est bien utilisable dans un `src`, un `href` ou un
  * `background-image` : ni `javascript:`, ni `data:`, ni tout autre schéma ne doit pouvoir
- * s'y glisser. Le chemin est résolu par rapport à la page courante (base) pour accepter
- * aussi bien une URL absolue (http/https) qu'un chemin relatif local (ex:
- * "./assets/img/default/Movie Banner.png").
+ * s'y glisser. Un chemin relatif local (ex: "./assets/img/default/Movie Banner.png") est
+ * résolu par rapport à la racine du dépôt (voir REPO_ROOT_URL) ; une URL absolue (http/https)
+ * est acceptée telle quelle, quelle que soit la page qui l'affiche.
  * @param {*} value
  * @returns {string} L'URL (absolue, espaces/accents encodés) si valide, sinon une chaîne vide.
  */
@@ -30,7 +36,7 @@ export function sanitizeUrl(value) {
     if (!value) return "";
     const trimmed = String(value).trim();
     try {
-        const url = new URL(trimmed, window.location.href);
+        const url = new URL(trimmed, REPO_ROOT_URL);
         if (url.protocol !== "http:" && url.protocol !== "https:") return "";
         return url.href;
     } catch {

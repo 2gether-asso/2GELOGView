@@ -6,6 +6,8 @@ import { CalendarView } from './ui/CalendarView.js';
 import { ModalView } from './ui/ModalView.js';
 import { renderEventCard, isGenuinelyLive } from './ui/EventCardTemplate.js';
 import { renderSearchResults } from './ui/SearchResultsView.js';
+import { renderTimeline } from './ui/TimelineView.js';
+import { initMeetupMap, updateMeetupMap } from './ui/MeetupMapView.js';
 import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
 import { SearchEngine } from './services/SearchEngine.js';
@@ -17,7 +19,9 @@ import { escapeHtml } from './utils/Html.js';
 import { formatMinutes, topN, formatCategoryLabel } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
 import { ReminderService } from './services/ReminderService.js';
-import { renderRetrospective, getAvailableYears, getBucketEvents } from './ui/RetrospectiveView.js';
+import { renderRetrospective, getAvailableYears, getBucketEvents, computeOrganizerFacts, renderBadgeShelf } from './ui/RetrospectiveView.js';
+import { computeBadges } from './services/BadgeService.js';
+import { applySeasonalTheme, resolveActiveSeason, getManualOverride, setManualOverride } from './services/SeasonalTheme.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -34,6 +38,13 @@ let dataAnomalies = [];
 // les événements affichés pour retrouver l'objet complet lors d'un clic (délégation).
 let upcomingEventsCache = [];
 let searchResultsCache = [];
+let timelineCache = [];
+// Sens d'affichage de la vue Frise, modifiable via son propre bouton (voir TimelineView.js
+// data-timeline-order-toggle) - indépendant du reste des filtres.
+let timelineSortOrder = 'asc'; // 'asc' | 'desc'
+// La recherche (isSearching) prime toujours sur ce mode : basculer en Frise/Carte n'empêche
+// pas de chercher, ça change juste ce qui s'affiche quand la recherche est vide.
+let currentViewMode = 'calendar'; // 'calendar' | 'timeline' | 'map'
 // Dernier ensemble filtré affiché (calendrier ou recherche) : utilisé par l'export .ics
 // pour exporter "ce que l'utilisateur voit" plutôt que tout le dépôt.
 let lastFilteredEvents = [];
@@ -100,7 +111,7 @@ function renderDashboardStats(events) {
     hostsContainer.innerHTML = topHosts.length === 0
         ? `<span class="text-[11px] text-slate-600 italic">Aucune donnée</span>`
         : topHosts.map(([host, minutes]) => `
-            <div class="flex items-center justify-between gap-2 text-[11px]">
+            <div class="flex items-center justify-between gap-2 text-[11px] cursor-pointer hover:text-white transition-colors" data-host="${escapeHtml(host)}">
                 <span class="text-slate-300 truncate capitalize">${escapeHtml(host)}</span>
                 <span class="text-slate-500 font-bold shrink-0">${formatMinutes(minutes)}</span>
             </div>
@@ -333,6 +344,41 @@ function updateNextEventBanner() {
     }
 }
 
+// Reflète currentViewMode sur les boutons Frise/Carte (surbrillance du mode actif) - factorisé
+// pour être appelable aussi bien depuis leurs propres clics que depuis goHome() (retour logo).
+function applyViewButtonStyles() {
+    const timelineBtn = document.getElementById('btn-toggle-timeline');
+    const mapBtn = document.getElementById('btn-toggle-map');
+    [[timelineBtn, 'timeline'], [mapBtn, 'map']].forEach(([btn, mode]) => {
+        const active = currentViewMode === mode;
+        btn.classList.toggle('bg-indigo-500/10', active);
+        btn.classList.toggle('border-indigo-500/20', active);
+        btn.classList.toggle('text-indigo-300', active);
+    });
+}
+
+// Remet à zéro catégorie/type/tag/recherche/période (mais pas la vue Calendrier/Frise/Carte,
+// ni les overlays ouvertes) - factorisé pour être appelé aussi bien par "✕ Annuler les filtres"
+// que par le clic sur le logo (retour accueil, voir goHome()).
+function resetFiltersAndSearch() {
+    currentCategory = "all";
+    currentTypeFilter = null;
+    currentTagFilter = null;
+    currentSearchQuery = "";
+    currentDateFrom = null;
+    currentDateTo = null;
+    document.getElementById('recherche').value = "";
+    document.getElementById('btn-clear-search').classList.add('hidden');
+    document.getElementById('search-icon').classList.remove('hidden');
+    document.getElementById('filter-date-from').value = "";
+    document.getElementById('filter-date-to').value = "";
+    document.getElementById('btn-clear-date-range').classList.add('hidden');
+    setActiveCategoryButton(document.querySelector('#filter-categories-container button[data-cat="all"]'));
+    renderTypeFilterBar();
+    updateTagsFilterBar(repo.getAll());
+    saveFiltersToStorage();
+}
+
 function updateUIState() {
     let filtered = repo.getAll();
 
@@ -355,18 +401,31 @@ function updateUIState() {
 
     const calendarEl = document.getElementById('calendar');
     const searchResultsEl = document.getElementById('search-results');
+    const timelineEl = document.getElementById('timeline-view');
+    const mapEl = document.getElementById('map-view');
     const isSearching = currentSearchQuery.trim().length > 0;
+
+    // Quatre vues mutuellement exclusives sur la même sélection filtrée : la recherche prime
+    // toujours sur Frise/Carte (voir currentViewMode plus haut), qui priment sur le calendrier.
+    calendarEl.classList.add('hidden');
+    searchResultsEl.classList.add('hidden');
+    timelineEl.classList.add('hidden');
+    mapEl.classList.add('hidden');
 
     if (isSearching) {
         filtered = SearchEngine.search(filtered, { query: currentSearchQuery });
         searchResultsCache = [...filtered].sort((a, b) => a.start.localeCompare(b.start));
-        // Remplace le calendrier par un listing complet dédié (plus d'infos qu'une tuile)
-        calendarEl.classList.add('hidden');
         searchResultsEl.classList.remove('hidden');
         renderSearchResults(searchResultsEl, searchResultsCache);
+    } else if (currentViewMode === 'timeline') {
+        timelineCache = [...filtered].sort((a, b) => a.start.localeCompare(b.start));
+        timelineEl.classList.remove('hidden');
+        renderTimeline(timelineEl, timelineCache, timelineSortOrder);
+    } else if (currentViewMode === 'map') {
+        mapEl.classList.remove('hidden');
+        updateMeetupMap(filtered, (ev) => ModalView.open(ev));
     } else {
         calendarEl.classList.remove('hidden');
-        searchResultsEl.classList.add('hidden');
         CalendarView.sync(calendarInstance, filtered);
     }
 
@@ -466,8 +525,20 @@ function setupFiltersToggle() {
 // Contenu des notes de version : à éditer librement à chaque mise à jour notable.
 // Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
 const PATCH_NOTES = {
-    version: "2026-07-26b",
+    version: "2026-07-26c",
     sections: [
+        {
+            title: "🚀 V2.1",
+            items: [
+                "🗓️ Nouvelle vue Frise : la sélection filtrée organisée par mois, une série entière (hebdo ou notée) regroupée en un seul bloc plutôt que dispersée en autant de lignes que de diffusions.",
+                "🗺️ Nouvelle vue Carte : les meetups IRL localisés sur une carte interactive (Montpellier, Paris, Grenoble pour commencer, facilement extensible).",
+                "🏅 Badges communautaires dans la rétrospective (régularité, diversité, fiabilité...), et un mini-profil par organisateur (cliquez son nom dans \"Top organisateurs\" ou dans la modale d'un événement) avec ses propres badges.",
+                "📲 App installable : ajoutez 2GELOG à votre écran d'accueil, fonctionne même hors-ligne avec les dernières données connues.",
+                "🎨 Thème saisonnier automatique (Halloween, Noël, St-Valentin) — désactivable en un clic sur le badge de l'en-tête si besoin.",
+                "🧩 Widget \"Prochains événements\" embarquable ailleurs (description de salon Discord, Notion, autre site) : <code>widget/index.html?count=6</code>.",
+                "💬 Digest Discord hebdomadaire automatique (en plus du bouton manuel existant) — nécessite qu'un organisateur configure un webhook (voir README)."
+            ]
+        },
         {
             title: "🚀 Nouveautés",
             items: [
@@ -500,7 +571,7 @@ const PATCH_NOTES = {
             items: [
                 "Le lieu par défaut des événements est désormais « Discord 2GETHER » sauf indication contraire.",
                 "Un événement peut toujours être annulé ou reporté à la dernière minute : pensez à vérifier le calendrier avant chaque session.",
-                "L'export .ics est un instantané ponctuel à réimporter manuellement, pas un abonnement synchronisé automatiquement (le site est 100% statique, sans serveur)."
+                "Le bouton 📅 .ics est un export ponctuel à réimporter manuellement ; pour une synchronisation automatique, préférez 🔗 S'abonner (lien webcal://, régénéré côté serveur toutes les heures)."
             ]
         }
     ]
@@ -745,6 +816,39 @@ function setupKioskMode() {
     });
 }
 
+// Thème saisonnier (voir SeasonalTheme.js) : purement cosmétique (teinte de fond + pastille
+// d'en-tête), jamais bloquant. Le badge affiché sert aussi de bouton pour le désactiver le
+// temps de la saison, au cas où certains visiteurs préfèrent le thème neutre habituel.
+function refreshSeasonalTheme() {
+    const season = resolveActiveSeason();
+    const cfg = applySeasonalTheme(season);
+    const badge = document.getElementById('seasonal-badge');
+    if (!cfg) {
+        badge.classList.add('hidden');
+        return;
+    }
+    badge.textContent = `${cfg.emoji} ${cfg.label}`;
+    badge.style.color = cfg.color;
+    badge.style.borderColor = `${cfg.color}40`;
+    badge.style.background = `${cfg.color}1a`;
+    badge.classList.remove('hidden');
+}
+
+// Thème saisonnier : "Auto" (par défaut) suit la date réelle, ou un choix manuel (forcer un
+// thème toute l'année, ou le désactiver complètement) via le sélecteur d'en-tête - persisté
+// dans localStorage (voir SeasonalTheme.js). Le badge n'est plus qu'un indicatif visuel du
+// thème actif, ce sélecteur est l'unique commande.
+function setupSeasonalTheme() {
+    const select = document.getElementById('theme-select');
+    select.value = getManualOverride();
+    refreshSeasonalTheme();
+
+    select.addEventListener('change', () => {
+        setManualOverride(select.value);
+        refreshSeasonalTheme();
+    });
+}
+
 async function sha256Hex(text) {
     const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
     return [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -818,6 +922,76 @@ function openBucketDetail(kind, label, index) {
     document.getElementById('bucket-detail-overlay').classList.remove('hidden');
 }
 
+// Sessions du dernier organisateur ouvert en profil (voir openOrganizerProfile) : indexé de la
+// même façon que le rendu, pour retrouver l'objet complet au clic sur une carte.
+let organizerProfileCache = [];
+
+/**
+ * Mini-profil d'un organisateur (toutes années confondues) : total de sessions/temps animé,
+ * badges personnels (réutilise BadgeService/computeOrganizerFacts - même mécanique que la
+ * rétrospective annuelle), et la liste complète de ses sessions. Ouvert depuis le "Top
+ * organisateurs" de la sidebar ou le champ "Organisé par" de la modale d'un événement.
+ * @param {string} hostName - Nom tel que cliqué (pas forcément déjà normalisé)
+ */
+function openOrganizerProfile(hostName) {
+    if (!hostName) return;
+    const normalized = hostName.trim().toLowerCase();
+    const allEvents = repo.getAll();
+    const facts = computeOrganizerFacts(allEvents, normalized);
+
+    organizerProfileCache = [...facts.realSessions].sort((a, b) => new Date(b.start) - new Date(a.start));
+
+    const currentYear = new Date().getFullYear();
+    const yearStats = StatsService.compute(allEvents.filter(e => new Date(e.start).getFullYear() === currentYear));
+    const isTopHostThisYear = (topN(yearStats.byHost, 1)[0] || [])[0] === normalized;
+
+    document.getElementById('organizer-profile-title').innerHTML = `👤 <span class="capitalize">${escapeHtml(hostName)}</span>`;
+    document.getElementById('organizer-profile-summary').innerHTML = `
+        <div class="grid grid-cols-3 gap-3 mb-3">
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-white">${facts.totalSessions}</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Sessions organisées</div>
+            </div>
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-indigo-400">${formatMinutes(facts.totalTime)}</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Temps animé (cumulé)</div>
+            </div>
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-white">${facts.distinctTypes}</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Types différents</div>
+            </div>
+        </div>
+        ${isTopHostThisYear ? `<div class="text-center text-xs font-bold text-amber-300 mb-3">👑 MVP de ${currentYear}</div>` : ''}
+        ${renderBadgeShelf(computeBadges(facts))}
+    `;
+    document.getElementById('organizer-profile-content').innerHTML = organizerProfileCache.map((e, idx) => {
+        const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+    }).join('');
+
+    document.getElementById('organizer-profile-overlay').classList.remove('hidden');
+}
+
+function setupOrganizerProfile() {
+    const overlay = document.getElementById('organizer-profile-overlay');
+    const close = () => overlay.classList.add('hidden');
+
+    document.getElementById('btn-close-organizer-profile').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) { close(); return; }
+        const card = e.target.closest('[data-idx]');
+        if (!card) return;
+        const ev = organizerProfileCache[Number(card.dataset.idx)];
+        if (ev) { close(); ModalView.open(ev); }
+    });
+
+    // Délégation de clic sur le "Top organisateurs" de la sidebar (voir renderDashboardStats).
+    document.getElementById('stat-hosts-container').addEventListener('click', (e) => {
+        const row = e.target.closest('[data-host]');
+        if (row) openOrganizerProfile(row.dataset.host);
+    });
+}
+
 // Rétrospective annuelle "vitrine" (voir RetrospectiveView.js) : accessible à tous, contrairement
 // au mode Admin (anomalies/tableaux techniques, réservé aux organisateurs via ?admin).
 function setupRetrospective() {
@@ -887,6 +1061,21 @@ function openEventFromUrl() {
     if (ev) ModalView.open(ev);
 }
 
+// Affiche l'heure de la dernière synchronisation réussie (sur la pastille d'en-tête, déjà
+// existante) : utile en PWA hors-ligne, où le Service Worker (voir sw.js) peut servir la
+// dernière copie connue du CSV de façon totalement transparente pour ce code - impossible de
+// distinguer une réponse réseau fraîche d'une réponse mise en cache, donc on se contente
+// d'enregistrer "la dernière fois que ça a marché", vrai dans les deux cas.
+const LAST_SYNCED_KEY = 'csv:lastSyncedAt';
+
+function updateLastSyncedTooltip() {
+    const dot = document.getElementById('header-status-dot');
+    const raw = localStorage.getItem(LAST_SYNCED_KEY);
+    if (!dot || !raw) return;
+    const time = new Date(parseInt(raw, 10)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    dot.title = `Dernière synchronisation : ${time}`;
+}
+
 // Récupère le CSV, régénère le dépôt et rafraîchit l'UI. Isolée d'initApp() pour
 // pouvoir être rejouée par le bouton "Réessayer" sans dupliquer les écouteurs.
 async function loadData() {
@@ -914,6 +1103,8 @@ async function loadData() {
         checkUpcomingNotifications();
         renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
         openEventFromUrl();
+        localStorage.setItem(LAST_SYNCED_KEY, Date.now().toString());
+        updateLastSyncedTooltip();
         loadingEl.classList.add('hidden');
     } catch (error) {
         console.error("❌ Erreur de chargement du planning :", error);
@@ -983,6 +1174,7 @@ function setupEscapeToClose() {
         ['help-overlay', 'btn-close-help'],
         ['reminders-overlay', 'btn-close-reminders'],
         ['bucket-detail-overlay', 'btn-close-bucket-detail'],
+        ['organizer-profile-overlay', 'btn-close-organizer-profile'],
         ['retrospective-overlay', 'btn-close-retrospective'],
         ['admin-overlay', 'btn-close-admin']
     ];
@@ -1000,6 +1192,20 @@ function setupEscapeToClose() {
 
 async function initApp() {
     try {
+        // Purement cosmétique et indépendant des données du tableur : posé tôt, avant même
+        // le chargement du CSV.
+        setupSeasonalTheme();
+
+        // PWA : coquille + dernier CSV connu mis en cache pour un fonctionnement hors-ligne
+        // (voir sw.js). Ignoré silencieusement sur un navigateur qui ne supporte pas les
+        // service workers - dégradation gracieuse, jamais bloquant.
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js').catch(err => console.warn('⚠️ Enregistrement du Service Worker échoué :', err));
+        }
+        // Reflète tout de suite la dernière synchro connue (visite précédente), avant même que
+        // le chargement en cours n'ait eu le temps d'aboutir ou d'échouer.
+        updateLastSyncedTooltip();
+
         // Restaure les filtres de la dernière visite avant le premier rendu, pour que
         // les barres de filtres et le calendrier reflètent directement le bon état.
         restoreFiltersFromStorage();
@@ -1014,7 +1220,7 @@ async function initApp() {
             document.getElementById('search-icon').classList.add('hidden');
             currentSearchQuery = `#${tag}`;
             updateUIState();
-        }, () => updateUIState());
+        }, () => updateUIState(), (host) => openOrganizerProfile(host));
 
         // Délégation de clic sur la sidebar "Prochainement" : ouvre la modale
         // avec l'objet événement complet (pas de lookup global requis).
@@ -1033,11 +1239,49 @@ async function initApp() {
             if (ev) ModalView.open(ev);
         });
 
+        // Idem pour la vue Frise (mêmes lignes/groupes que la vue Recherche, voir TimelineView.js).
+        document.getElementById('timeline-view').addEventListener('click', (e) => {
+            const orderToggle = e.target.closest('[data-timeline-order-toggle]');
+            if (orderToggle) {
+                timelineSortOrder = timelineSortOrder === 'asc' ? 'desc' : 'asc';
+                updateUIState();
+                return;
+            }
+            const card = e.target.closest('[data-idx]');
+            if (!card) return;
+            const ev = timelineCache[Number(card.dataset.idx)];
+            if (ev) ModalView.open(ev);
+        });
+
+        // Bascule Calendrier <-> Frise/Carte : la recherche (isSearching) prime toujours sur ce
+        // choix, voir updateUIState(). Un seul bouton actif à la fois (retour au calendrier si
+        // on reclique le bouton déjà actif, ou si on active l'autre vue).
+        const timelineBtn = document.getElementById('btn-toggle-timeline');
+        const mapBtn = document.getElementById('btn-toggle-map');
+        timelineBtn.addEventListener('click', () => {
+            currentViewMode = currentViewMode === 'timeline' ? 'calendar' : 'timeline';
+            applyViewButtonStyles();
+            updateUIState();
+        });
+        mapBtn.addEventListener('click', () => {
+            currentViewMode = currentViewMode === 'map' ? 'calendar' : 'map';
+            applyViewButtonStyles();
+            if (currentViewMode === 'map') {
+                const map = initMeetupMap('meetup-map');
+                // Le conteneur était caché (display:none) lors de l'init : Leaflet a calculé sa
+                // taille sur une boîte à 0px, invalidateSize() la recalcule maintenant qu'elle
+                // est visible (sinon la carte reste tronquée/mal centrée tant qu'on ne zoome pas).
+                setTimeout(() => map.invalidateSize(), 50);
+            }
+            updateUIState();
+        });
+
         setupSidebarToggle();
         setupStatsToggle();
         setupFiltersToggle();
         setupAdminMode();
         setupRetrospective();
+        setupOrganizerProfile();
         setupPatchNotes();
         setupHelpOverlay();
         setupEscapeToClose();
@@ -1063,6 +1307,23 @@ async function initApp() {
         document.getElementById('btn-export-ics').addEventListener('click', () => {
             const filename = `planning-2gelog-${DateUtils.toLocalDateStr(new Date())}.ics`;
             IcsExporter.download(lastFilteredEvents, filename);
+        });
+
+        // Lien d'abonnement (webcal://) vers le flux régénéré en continu par la CI (voir
+        // scripts/generate-ics.js) : à la différence du bouton 📅 .ics ci-dessus (un instantané
+        // ponctuel à réimporter à la main), ce lien ne se copie qu'une fois dans l'appli
+        // calendrier de l'utilisateur, qui se resynchronise ensuite tout seul.
+        document.getElementById('btn-subscribe-ics').addEventListener('click', async (e) => {
+            const webcalUrl = CONFIG.SITE_URL.replace(/^https?:\/\//, 'webcal://') + 'ics/planning.ics';
+            const btn = e.currentTarget;
+            try {
+                await navigator.clipboard.writeText(webcalUrl);
+                const original = btn.textContent;
+                btn.textContent = '✅ Copié !';
+                setTimeout(() => { btn.textContent = original; }, 1500);
+            } catch {
+                window.prompt("Copiez ce lien d'abonnement dans votre appli calendrier :", webcalUrl);
+            }
         });
 
         document.getElementById('btn-export-discord').addEventListener('click', async (e) => {
@@ -1112,23 +1373,33 @@ async function initApp() {
         });
 
         document.getElementById('btn-clear-filters').addEventListener('click', () => {
-            currentCategory = "all";
-            currentTypeFilter = null;
-            currentTagFilter = null;
-            currentSearchQuery = "";
-            currentDateFrom = null;
-            currentDateTo = null;
-            document.getElementById('recherche').value = "";
-            document.getElementById('btn-clear-search').classList.add('hidden');
-            document.getElementById('search-icon').classList.remove('hidden');
-            document.getElementById('filter-date-from').value = "";
-            document.getElementById('filter-date-to').value = "";
-            document.getElementById('btn-clear-date-range').classList.add('hidden');
-            setActiveCategoryButton(document.querySelector('#filter-categories-container button[data-cat="all"]'));
-            renderTypeFilterBar();
-            updateTagsFilterBar(repo.getAll());
-            saveFiltersToStorage();
+            resetFiltersAndSearch();
             updateUIState();
+        });
+
+        // Logo/titre d'en-tête : retour à l'accueil (réinitialise filtres/recherche/vue, ferme
+        // toute overlay ouverte). Ignore les clics venant du badge saisonnier imbriqué dedans
+        // (purement indicatif désormais, mais autant éviter un double effet de bord si son
+        // wrapper capte quand même le clic).
+        const goHome = () => {
+            resetFiltersAndSearch();
+            if (currentViewMode !== 'calendar') {
+                currentViewMode = 'calendar';
+                applyViewButtonStyles();
+            }
+            ['help-overlay', 'reminders-overlay', 'retrospective-overlay', 'admin-overlay',
+                'bucket-detail-overlay', 'organizer-profile-overlay', 'patchnotes-overlay'
+            ].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+            ModalView.hide();
+            updateUIState();
+        };
+        const homeBtn = document.getElementById('btn-go-home');
+        homeBtn.addEventListener('click', (e) => {
+            if (e.target.closest('#seasonal-badge')) return;
+            goHome();
+        });
+        homeBtn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goHome(); }
         });
 
         await loadData();

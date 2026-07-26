@@ -3,6 +3,7 @@ import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { formatMinutes, formatDurationLong, formatCategoryLabel, topN } from '../utils/Format.js';
 import { CONFIG } from '../config.js';
 import { renderEventCard } from './EventCardTemplate.js';
+import { computeBadges } from '../services/BadgeService.js';
 
 const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
 const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -390,6 +391,31 @@ function longestWeekStreak(events) {
     return best;
 }
 
+/**
+ * Équivalent de computeYearFacts() mais pour TOUTES les sessions d'un organisateur (toutes
+ * années confondues plutôt qu'une année précise) - même forme de résultat, pour que le mini-
+ * profil organisateur (main.js openOrganizerProfile) puisse réutiliser computeBadges() telle
+ * quelle sans dupliquer ce calcul.
+ * @param {Array<Object>} events - Tous les événements du dépôt
+ * @param {string} hostName - Déjà normalisé (trim + minuscules), comme les clés de StatsService.byHost
+ * @returns {Object}
+ */
+export function computeOrganizerFacts(events, hostName) {
+    const hostEvents = events.filter(e => (e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST).trim().toLowerCase() === hostName);
+    const realSessions = hostEvents.filter(e => !e.isCanceled && !e.isPlanned);
+    const canceled = hostEvents.filter(e => e.isCanceled).length;
+    const totalSessions = realSessions.length;
+    const totalTime = realSessions.reduce((sum, e) => sum + (e.dur || 0), 0);
+
+    const distinctTypes = new Set(realSessions.map(e => e.type)).size;
+    const distinctGames = new Set(realSessions.filter(e => e.category === 'jeux').map(e => e.title)).size;
+    const distinctWatched = new Set(realSessions.filter(e => e.category === 'visionnage').map(e => e.title)).size;
+    const reliabilityPct = (totalSessions + canceled) > 0 ? Math.round((totalSessions / (totalSessions + canceled)) * 100) : 100;
+    const streak = longestWeekStreak(realSessions);
+
+    return { realSessions, totalSessions, totalTime, distinctTypes, distinctGames, distinctWatched, canceled, reliabilityPct, streak };
+}
+
 function renderTopTags(byTag) {
     const tags = topN(byTag, 8);
     if (tags.length === 0) return '';
@@ -427,6 +453,28 @@ function renderFunFacts(facts) {
     `;
 }
 
+/**
+ * Vitrine des badges communautaires (voir BadgeService.js) : tous affichés, y compris ceux pas
+ * encore débloqués (grisés) — façon "à débloquer", plutôt que masqués, pour donner un objectif
+ * visible d'une année sur l'autre. Réutilisée telle quelle pour le profil organisateur (à venir).
+ */
+export function renderBadgeShelf(badges) {
+    const achievedCount = badges.filter(b => b.achieved).length;
+    const tiles = badges.map(b => `
+        <div class="glass-panel rounded-xl p-3 text-center transition-all ${b.achieved ? '' : 'opacity-30 grayscale'}" title="${escapeHtml(b.description)}">
+            <div class="text-2xl" aria-hidden="true">${b.emoji}</div>
+            <div class="text-[10px] font-bold text-white mt-1 leading-tight">${escapeHtml(b.label)}</div>
+        </div>
+    `).join('');
+
+    return `
+        <div class="glass-panel rounded-2xl p-5 space-y-3">
+            ${sectionHeading('🏅', `Badges (${achievedCount}/${badges.length})`)}
+            <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">${tiles}</div>
+        </div>
+    `;
+}
+
 function renderYearComparison(currentTotal, previousTotal, previousYear) {
     if (previousTotal === null) return '';
     const delta = currentTotal - previousTotal;
@@ -451,14 +499,48 @@ function renderYearComparison(currentTotal, previousTotal, previousYear) {
  * @param {Array<Object>} events - Tous les événements du dépôt (toutes années confondues)
  * @param {number} year
  */
-export function renderRetrospective(container, events, year) {
-    const availableYears = getAvailableYears(events);
+/**
+ * Calcule l'ensemble des statistiques dérivées d'une année (temps total, diversité, fiabilité,
+ * régularité...) à partir de la liste complète des événements du dépôt. Source unique de
+ * vérité partagée par la rétrospective et les badges (BadgeService.js) : ni l'une ni l'autre
+ * ne doit recalculer ces mêmes chiffres séparément.
+ * @param {Array<Object>} events - Tous les événements du dépôt (toutes années confondues)
+ * @param {number} year
+ * @returns {Object}
+ */
+export function computeYearFacts(events, year) {
     const yearEvents = events.filter(e => new Date(e.start).getFullYear() === year);
     const stats = StatsService.compute(yearEvents);
 
     const realSessions = yearEvents.filter(e => !e.isCanceled && !e.isPlanned);
     const totalSessions = realSessions.length;
     const totalTime = realSessions.reduce((sum, e) => sum + (e.dur || 0), 0);
+
+    const distinctTypes = new Set(realSessions.map(e => e.type)).size;
+    const distinctHosts = new Set(realSessions.map(e => (e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST).trim().toLowerCase())).size;
+    const distinctGames = new Set(realSessions.filter(e => e.category === 'jeux').map(e => e.title)).size;
+    const distinctWatched = new Set(realSessions.filter(e => e.category === 'visionnage').map(e => e.title)).size;
+    const [topHost, topHostMinutes] = topN(stats.byHost, 1)[0] || [null, 0];
+
+    const canceled = stats.counters.annulations || 0;
+    const reliabilityPct = (totalSessions + canceled) > 0 ? Math.round((totalSessions / (totalSessions + canceled)) * 100) : 100;
+    const streak = longestWeekStreak(realSessions);
+
+    return {
+        stats, realSessions, totalSessions, totalTime,
+        distinctTypes, distinctHosts, distinctGames, distinctWatched,
+        topHost, topHostMinutes, canceled, reliabilityPct, streak
+    };
+}
+
+export function renderRetrospective(container, events, year) {
+    const availableYears = getAvailableYears(events);
+    const facts = computeYearFacts(events, year);
+    const {
+        stats, realSessions, totalSessions, totalTime,
+        distinctTypes, distinctHosts, distinctGames, distinctWatched,
+        topHost, topHostMinutes, canceled, reliabilityPct, streak
+    } = facts;
 
     if (totalSessions === 0) {
         container.innerHTML = `
@@ -472,16 +554,6 @@ export function renderRetrospective(container, events, year) {
 
     const monthBuckets = bucketEvents(realSessions, BUCKET_KEY_FN.month, 12);
     const weekdayBuckets = bucketEvents(realSessions, BUCKET_KEY_FN.weekday, 7);
-
-    const distinctTypes = new Set(realSessions.map(e => e.type)).size;
-    const distinctHosts = new Set(realSessions.map(e => (e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST).trim().toLowerCase())).size;
-    const distinctGames = new Set(realSessions.filter(e => e.category === 'jeux').map(e => e.title)).size;
-    const distinctWatched = new Set(realSessions.filter(e => e.category === 'visionnage').map(e => e.title)).size;
-    const [topHost, topHostMinutes] = topN(stats.byHost, 1)[0] || [null, 0];
-
-    const canceled = stats.counters.annulations || 0;
-    const reliabilityPct = (totalSessions + canceled) > 0 ? Math.round((totalSessions / (totalSessions + canceled)) * 100) : 100;
-    const streak = longestWeekStreak(realSessions);
 
     const prevYearEvents = events.filter(e => new Date(e.start).getFullYear() === year - 1 && !e.isCanceled && !e.isPlanned);
     const hasPrevYear = availableYears.includes(year - 1);
@@ -521,6 +593,7 @@ export function renderRetrospective(container, events, year) {
                 distinctGames,
                 distinctWatched
             })}
+            ${renderBadgeShelf(computeBadges(facts))}
 
             <p class="text-center text-xs text-slate-600 pt-2 pb-1">Merci d'avoir fait vivre 2GETHER cette année 🎉</p>
         </div>

@@ -17,12 +17,14 @@ export class ModalView {
      * Idempotent : peut être appelé plusieurs fois sans dupliquer les listeners.
      * @param {Function} onTagClick - Callback appelé avec le tag (sans #) cliqué dans la modale
      * @param {Function} onReminderChange - Callback appelé (sans argument) après un changement d'abonnement rappel
+     * @param {Function} onHostClick - Callback appelé avec le nom (non normalisé) de l'organisateur cliqué
      */
-    static init(onTagClick = null, onReminderChange = null) {
+    static init(onTagClick = null, onReminderChange = null, onHostClick = null) {
         if (this._initialized) return;
         this._initialized = true;
         this._onTagClick = onTagClick;
         this._onReminderChange = onReminderChange;
+        this._onHostClick = onHostClick;
 
         const container = document.getElementById('custom-modal-container');
         const closeBtn = document.getElementById('modal-close-btn');
@@ -66,6 +68,13 @@ export class ModalView {
             const tag = btn.dataset.tag;
             this.hide();
             if (this._onTagClick) this._onTagClick(tag);
+        });
+
+        document.getElementById('modal-event-host').addEventListener('click', () => {
+            const host = this._currentEventHost;
+            if (!host) return;
+            this.hide();
+            if (this._onHostClick) this._onHostClick(host);
         });
 
         // Lien partageable : pointe vers la page d'aperçu statique (e/<hash>.html, générée
@@ -172,7 +181,8 @@ export class ModalView {
 
         // Métadonnées avancées (@host ou @orga, Helldwin par défaut si non précisé, @plateforme)
         const hostContainer = document.getElementById('modal-host-container');
-        document.getElementById('modal-event-host').innerText = event.meta?.host || event.meta?.orga || CONFIG.DEFAULT_HOST;
+        this._currentEventHost = event.meta?.host || event.meta?.orga || CONFIG.DEFAULT_HOST;
+        document.getElementById('modal-event-host').innerText = this._currentEventHost;
         hostContainer.classList.remove('hidden');
 
         const platformContainer = document.getElementById('modal-platform-container');
@@ -244,6 +254,7 @@ export class ModalView {
         }
         this._currentEventId = null;
         this._currentEventTitle = null;
+        this._currentEventHost = null;
 
         // Restaure le focus sur l'élément qui avait ouvert la modale.
         if (this._lastFocused && typeof this._lastFocused.focus === 'function') {
