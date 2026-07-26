@@ -57,6 +57,7 @@ jobs:
         continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_MEMBER_ROLE_ID: ${{ secrets.DISCORD_MEMBER_ROLE_ID }}
         run: npm run post:discord-digest
       - name: Setup Pages
         uses: actions/configure-pages@v5

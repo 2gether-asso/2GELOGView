@@ -1,10 +1,11 @@
 export const CONFIG = {
     CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVu8Z5ZxyDpRVG3eFFLuWH_iWKZyKuLWKvW617wBfAMT6no6UVah6HSqlhM8LDKjheEc4EBfSXgooM/pub?gid=0&single=true&output=csv",
 
-    // URL publique du site déployé (GitHub Pages, sans domaine perso ⇒ sous-chemin /2GELOGView/).
-    // Utilisée uniquement par scripts/generate-embeds.js (exécuté en CI, hors navigateur) pour
-    // construire des URLs absolues (og:image, lien de redirection) dans les pages d'aperçu Discord.
-    SITE_URL: "https://2gether-asso.github.io/2GELOGView/",
+    // URL publique du site déployé (domaine personnalisé, voir CNAME à la racine du dépôt) :
+    // servi à la racine (pas de sous-chemin /2GELOGView/) contrairement à l'URL github.io brute.
+    // Utilisée par les scripts CI (generate-embeds.js, generate-ics.js, post-discord-digest.js,
+    // hors navigateur) pour construire des URLs absolues (og:image, liens d'aperçu/abonnement).
+    SITE_URL: "https://planning.2gether-asso.fr/",
 
     // Lieu affiché quand aucun @location/@loc n'est renseigné dans les Notes (voir
     // EventGenerator). Centralisé ici pour n'avoir qu'un seul endroit à changer.
