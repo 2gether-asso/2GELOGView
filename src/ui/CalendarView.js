@@ -91,15 +91,12 @@ export class CalendarView {
             height: 'auto',
             themeSystem: 'standard',
 
-            // Vues à créneaux horaires : plage resserrée à la fenêtre réellement utilisée plutôt
-            // que 00h-24h, sans quoi un événement tardif (23h50 → 01h50) se retrouvait tout en
-            // bas d'une colonne de 24h à faire défiler, presque invisible sans défiler
-            // énormément. Simples valeurs de démarrage ici : recalculées dynamiquement à partir
-            // des heures min/max réellement présentes dans les données dès le premier
-            // sync() (voir _computeSlotRange), pour ne jamais couper un événement hors-norme
-            // (très tôt ou très tard) qui déborderait de cette plage par défaut.
-            slotMinTime: '14:00:00',
-            slotMaxTime: '26:00:00',
+            // Vues à créneaux horaires : la journée complète (0h) plutôt qu'une fenêtre resserrée,
+            // avec 6h de marge sur le jour suivant (30h = 6h du matin) pour qu'un événement tardif
+            // (23h50 → 01h50, voire plus tard) reste toujours entièrement visible dans la colonne
+            // de son jour de départ sans jamais être coupé.
+            slotMinTime: '00:00:00',
+            slotMaxTime: '30:00:00',
             slotDuration: '00:30:00',
             slotLabelInterval: '01:00:00',
             scrollTime: '17:00:00',
@@ -163,18 +160,6 @@ export class CalendarView {
         if (!calendarInstance) return;
         calendarInstance.removeAllEvents();
 
-        // Plage horaire des vues Semaine/Jour recalculée sur les données réellement affichées
-        // (voir _computeSlotRange) : évite de couper un événement qui commence avant ou finit
-        // après la fenêtre par défaut. setOption ne redéclenche un re-rendu de la grille que si
-        // la plage a réellement changé (évite un recalcul inutile à chaque changement de vue).
-        const range = CalendarView._computeSlotRange(customEvents) || { min: '14:00:00', max: '26:00:00' };
-        const cachedRange = CalendarView._lastSlotRange;
-        if (!cachedRange || cachedRange.min !== range.min || cachedRange.max !== range.max) {
-            calendarInstance.setOption('slotMinTime', range.min);
-            calendarInstance.setOption('slotMaxTime', range.max);
-            CalendarView._lastSlotRange = range;
-        }
-
         // Seule la vue Mois (dayGridMonth) a besoin d'un événement borné à une seule journée :
         // chaque jour y est une case de hauteur variable, et un segment de continuation qui
         // déborde sur le jour suivant y provoquait un débordement visuel et une hauteur de
@@ -217,59 +202,6 @@ export class CalendarView {
 
         calendarInstance.addEventSource(fullCalendarEvents);
     }
-
-    /**
-     * Calcule la plage [début, fin] à couvrir par les vues Semaine/Jour à partir des heures de
-     * diffusion réellement présentes dans les événements affichés (marge d'1h de chaque côté),
-     * plutôt qu'une fenêtre fixe qui pouvait couper un événement démarrant tôt ou finissant tard.
-     * @param {Array<Object>} customEvents
-     * @returns {{min: string, max: string}|null} Durées "HH:MM:SS" pour slotMinTime/slotMaxTime, ou
-     *   null si aucun événement horodaté (tous en "toute la journée"/sans heure) dans le lot.
-     */
-    static _computeSlotRange(customEvents) {
-        let minStart = null;
-        let maxEnd = null;
-
-        customEvents.forEach(evt => {
-            // Les événements "toute la journée" (bandeaux IRL multi-jours, ou sans heure connue)
-            // n'ont pas d'heure exploitable : ils s'affichent dans la ligne dédiée des vues à
-            // créneaux horaires, indépendamment de slotMinTime/slotMaxTime.
-            if (evt.allDay || !evt.start || !evt.start.includes('T')) return;
-
-            const [sh, sm] = evt.start.split('T')[1].split(':').map(Number);
-            const startMin = sh * 60 + sm;
-            if (minStart === null || startMin < minStart) minStart = startMin;
-
-            // Sans heure de fin connue, on ne réserve au moins que la place jusqu'à l'heure de
-            // début (la marge d'1h ajoutée plus bas laisse quand même de quoi afficher le bloc).
-            let endMin = startMin;
-            if (evt.end && evt.end.includes('T')) {
-                const [eh, em] = evt.end.split('T')[1].split(':').map(Number);
-                endMin = eh * 60 + em;
-                // Chevauche minuit (voir isMultiDay dans EventGenerator) : l'heure de fin se lit
-                // "après minuit" dans le référentiel de la grille (01:50 le lendemain → 25:50),
-                // plutôt que comme si elle finissait avant même d'avoir commencé.
-                if (evt.end.split('T')[0] !== evt.start.split('T')[0]) endMin += 24 * 60;
-            }
-            if (maxEnd === null || endMin > maxEnd) maxEnd = endMin;
-        });
-
-        if (minStart === null || maxEnd === null) return null;
-
-        minStart = Math.max(0, minStart - 60);
-        maxEnd = maxEnd + 60;
-        if (maxEnd <= minStart) maxEnd = minStart + 60; // Filet de sécurité pour un cas dégénéré.
-
-        return { min: CalendarView._minutesToDuration(minStart), max: CalendarView._minutesToDuration(maxEnd) };
-    }
-
-    /** Convertit un nombre de minutes (peut dépasser 1440 pour une heure "après minuit") en durée "HH:MM:SS". */
-    static _minutesToDuration(totalMinutes) {
-        const h = Math.floor(totalMinutes / 60);
-        const m = totalMinutes % 60;
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
-    }
 }
 
 CalendarView._lastEvents = [];
-CalendarView._lastSlotRange = null;

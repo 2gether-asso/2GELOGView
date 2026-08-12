@@ -96,7 +96,45 @@ function renderReminderBadge(e) {
     return `<span class="text-[11px] font-bold text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">🔔 Rappel activé</span>`;
 }
 
+/**
+ * Gabarit compact (QOL #17, densité d'affichage) : 2 lignes plutôt que la carte complète
+ * multi-blocs - pour voir davantage de sessions à l'écran sans défiler, sans pour autant tronquer
+ * l'essentiel. Ligne 1 (identité + timing, ce qu'on scanne en premier) : Icône / Titre / Heure.
+ * Ligne 2 (le reste, contexte secondaire) : Type, Statut, Épisode, date. Basculé automatiquement
+ * par renderEventCard selon html.density-compact (voir setupDensityToggle dans main.js). Tailles
+ * de police/badges volontairement identiques au gabarit confortable habituel.
+ */
+function renderCompactRow(e, readableDate) {
+    const title = escapeHtml(e.title);
+    const type = escapeHtml(e.type || 'Événement');
+    const detailsEpisode = escapeHtml(getEpisodeLabel(e));
+    const iconSrc = getIconSrc(e);
+
+    return `
+        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden ${e.isCanceled ? 'opacity-30 line-through' : ''}">
+            <img src="${iconSrc}" alt="" class="w-6 ${ICON_ASPECT_CLASS} rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
+            <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
+                    ${renderLiveDot(e)}
+                    <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
+                    ${e.heure ? `<span class="text-[11px] font-extrabold text-indigo-400 shrink-0">🕒 ${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
+                </div>
+                <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
+                    <span class="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded border border-white/5 bg-black/20" style="color: ${e.col}" title="${type}">${type}</span>
+                    ${renderStatusBadge(e.progressStatus)}
+                    ${detailsEpisode ? `<span class="text-[11px] font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">📺 ${detailsEpisode}</span>` : ''}
+                    ${readableDate ? `<span class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</span>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 export function renderEventCard(e, readableDate = null) {
+    if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
+        return renderCompactRow(e, readableDate);
+    }
+
     const detailsEpisode = escapeHtml(getEpisodeLabel(e));
     // e.location est toujours renseigné par EventGenerator (avec un lieu par défaut).
     const location = e.location && e.location !== CONFIG.DEFAULT_LOCATION ? escapeHtml(e.location) : "";

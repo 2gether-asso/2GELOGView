@@ -7,6 +7,7 @@ import { ModalView } from './ui/ModalView.js';
 import { renderEventCard, isGenuinelyLive } from './ui/EventCardTemplate.js';
 import { renderSearchResults } from './ui/SearchResultsView.js';
 import { renderTimeline } from './ui/TimelineView.js';
+import { renderTodayView } from './ui/TodayView.js';
 import { initMeetupMap, updateMeetupMap } from './ui/MeetupMapView.js';
 import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
@@ -33,22 +34,38 @@ let calendarInstance = null;
 let currentCategory = "all";
 let currentTagFilter = null;
 let currentTypeFilter = null;
+let currentHostFilter = null;
 let currentSearchQuery = "";
 let currentDateFrom = null;
 let currentDateTo = null;
 let dataAnomalies = [];
+
+// Catégories masquées en permanence (QOL #18) : distinct du filtre "actif" à la fois (currentCategory,
+// un seul choix affiché) - un ensemble qui exclut ces catégories de TOUTES les vues jusqu'à
+// réactivation explicite, mémorisé d'une visite à l'autre.
+const HIDDEN_CATEGORIES_KEY = 'ui:hiddenCategories';
+let hiddenCategories = new Set();
+
+// Vues favorites (QOL #1) : jeux de filtres nommés, rappelables en un clic depuis le sélecteur
+// dédié de la barre de filtres. Ne mémorise que catégorie/type/tag/organisateur (pas la période,
+// pour la même raison que saveFiltersToStorage ne la mémorise pas non plus - voir plus bas).
+const SAVED_VIEWS_KEY = 'ui:savedViews';
+let savedViews = [];
 
 // La sidebar "Prochainement" et le listing de recherche conservent en mémoire
 // les événements affichés pour retrouver l'objet complet lors d'un clic (délégation).
 let upcomingEventsCache = [];
 let searchResultsCache = [];
 let timelineCache = [];
-// Sens d'affichage de la vue Frise, modifiable via son propre bouton (voir TimelineView.js
-// data-timeline-order-toggle) - indépendant du reste des filtres.
+let todayViewCache = [];
+// Sens d'affichage et année affichée de la vue Frise, modifiables via leurs propres contrôles
+// (voir TimelineView.js data-timeline-order-toggle / data-timeline-year) - indépendants du
+// reste des filtres.
 let timelineSortOrder = 'asc'; // 'asc' | 'desc'
-// La recherche (isSearching) prime toujours sur ce mode : basculer en Frise/Carte n'empêche
-// pas de chercher, ça change juste ce qui s'affiche quand la recherche est vide.
-let currentViewMode = 'calendar'; // 'calendar' | 'timeline' | 'map'
+let timelineYear = new Date().getFullYear();
+// La recherche (isSearching) prime toujours sur ce mode : basculer en Frise/Carte/Aujourd'hui
+// n'empêche pas de chercher, ça change juste ce qui s'affiche quand la recherche est vide.
+let currentViewMode = 'calendar'; // 'calendar' | 'timeline' | 'map' | 'today'
 // Dernier ensemble filtré affiché (calendrier ou recherche) : utilisé par l'export .ics
 // pour exporter "ce que l'utilisateur voit" plutôt que tout le dépôt.
 let lastFilteredEvents = [];
@@ -62,13 +79,43 @@ const CATEGORY_BTN_ACTIVE = "px-3 py-1 rounded-lg bg-indigo-600 text-white font-
 const CATEGORY_BTN_INACTIVE = "px-3 py-1 rounded-lg bg-white/5 border border-white/5 text-slate-300 hover:text-white hover:bg-white/10 transition-all";
 
 function setActiveCategoryButton(selectedBtn) {
-    document.querySelectorAll('#filter-categories-container button').forEach(b => {
+    // Scopé à button[data-cat] (pas tous les <button>) : le petit bouton 👁 masquer/afficher
+    // accolé à chaque catégorie (voir renderCategoryFilterBar) est aussi un <button> mais porte
+    // data-hide-cat, pas data-cat - il ne doit pas se faire écraser son style par celui-ci.
+    document.querySelectorAll('#filter-categories-container button[data-cat]').forEach(b => {
         b.className = (b === selectedBtn) ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE;
     });
 }
 
+function loadHiddenCategories() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(HIDDEN_CATEGORIES_KEY) || '[]');
+        hiddenCategories = new Set(Array.isArray(raw) ? raw : []);
+    } catch {
+        hiddenCategories = new Set();
+    }
+}
+
+function saveHiddenCategories() {
+    localStorage.setItem(HIDDEN_CATEGORIES_KEY, JSON.stringify([...hiddenCategories]));
+}
+
+function updateHiddenCategoriesBadge() {
+    const btn = document.getElementById('btn-hidden-categories');
+    if (hiddenCategories.size === 0) {
+        btn.classList.add('hidden');
+        return;
+    }
+    btn.textContent = `🙈 ${hiddenCategories.size} masquée${hiddenCategories.size > 1 ? 's' : ''}`;
+    btn.classList.remove('hidden');
+}
+
 // Catégories générées dynamiquement depuis config.js THEMES[...].cat plutôt qu'une liste
 // binaire figée ("watch"/"game") : suit automatiquement la taxonomie définie dans la config.
+// Chaque pastille porte aussi un petit bouton 👁/🙈 (QOL #18) pour la masquer durablement de
+// TOUTES les vues (pas juste "filtrer dessus" comme le clic sur la pastille elle-même) - utile
+// pour des catégories qu'on ne veut simplement plus jamais voir (ex: Gazette), sans avoir à
+// re-sélectionner "Tous" puis reperdre ce choix à la prochaine visite.
 function renderCategoryFilterBar() {
     const container = document.getElementById('filter-categories-container');
     const categories = [...new Set(
@@ -76,11 +123,44 @@ function renderCategoryFilterBar() {
     )];
 
     const allBtn = `<button data-cat="all" class="${!currentCategory || currentCategory === 'all' ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE}">Tous</button>`;
-    const catBtns = categories.map(cat =>
-        `<button data-cat="${escapeHtml(cat)}" class="${currentCategory === cat ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE}">${escapeHtml(formatCategoryLabel(cat))}</button>`
-    ).join('');
+    const catBtns = categories.map(cat => {
+        const isHidden = hiddenCategories.has(cat);
+        const label = escapeHtml(formatCategoryLabel(cat));
+        return `
+            <span class="inline-flex items-center gap-0.5 ${isHidden ? 'opacity-40' : ''}">
+                <button data-cat="${escapeHtml(cat)}" class="${currentCategory === cat ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE} ${isHidden ? 'line-through' : ''}">${label}</button>
+                <button data-hide-cat="${escapeHtml(cat)}" title="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" aria-label="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" class="text-[11px] text-slate-500 hover:text-amber-300 px-1 py-1 rounded-md hover:bg-white/5 transition-all">${isHidden ? '🙈' : '👁'}</button>
+            </span>`;
+    }).join('');
 
     container.innerHTML = allBtn + catBtns;
+    updateHiddenCategoriesBadge();
+}
+
+// Top organisateurs (par nombre de sessions réelles) pour le filtre "Organisateurs" (QOL #2) -
+// même position/rôle que updateTagsFilterBar (barre horizontale scrollable), pour une cohérence
+// visuelle entre les deux. Distinct du clic sur un nom dans la sidebar/modale (qui ouvre le
+// PROFIL de l'organisateur) : ici on FILTRE le calendrier sur lui, sans quitter la vue courante.
+function renderHostFilterBar(events) {
+    const container = document.getElementById('filter-hosts-container');
+    const counts = {};
+    events.forEach(e => {
+        if (e.isCanceled || e.isPlanned) return;
+        const host = (e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST).trim();
+        counts[host] = (counts[host] || 0) + 1;
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+
+    if (sorted.length === 0) {
+        container.innerHTML = `<span class="text-[11px] text-slate-600 italic">Aucun organisateur</span>`;
+        return;
+    }
+
+    container.innerHTML = sorted.map(([host, count]) => {
+        const isSelected = currentHostFilter === host;
+        const safeHost = escapeHtml(host);
+        return `<button data-host="${safeHost}" class="px-3 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${isSelected ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}">${safeHost} <span class="text-[9px] opacity-70 ml-0.5">(${count})</span></button>`;
+    }).join('');
 }
 
 // Le panneau "Statistiques" ne porte que sur l'année en cours (pas tout l'historique) :
@@ -222,7 +302,8 @@ function saveFiltersToStorage() {
     localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify({
         category: currentCategory,
         type: currentTypeFilter,
-        tag: currentTagFilter
+        tag: currentTagFilter,
+        host: currentHostFilter
     }));
 }
 
@@ -236,9 +317,173 @@ function restoreFiltersFromStorage() {
         if (saved.category) currentCategory = saved.category;
         if (saved.type) currentTypeFilter = saved.type;
         if (saved.tag) currentTagFilter = saved.tag;
+        if (saved.host) currentHostFilter = saved.host;
     } catch {
         // Valeur corrompue : on ignore silencieusement et repart sur les filtres par défaut.
     }
+}
+
+function loadSavedViews() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY) || '[]');
+        savedViews = Array.isArray(raw) ? raw : [];
+    } catch {
+        savedViews = [];
+    }
+}
+
+function persistSavedViews() {
+    localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(savedViews));
+}
+
+function renderSavedViewsSelect() {
+    const select = document.getElementById('saved-views-select');
+    const current = select.value;
+    select.innerHTML = `<option value="">— Aucune —</option>` +
+        savedViews.map((v, idx) => `<option value="${idx}">${escapeHtml(v.name)}</option>`).join('');
+    // Conserve la sélection si elle existe toujours après un ré-rendu (ex: après suppression
+    // d'une AUTRE vue, qui décale les index des suivantes dans la liste).
+    if ([...select.options].some(o => o.value === current)) select.value = current;
+}
+
+// Vue favorite (QOL #1) : jeu de filtres (catégorie/type/tag/organisateur, PAS la période -
+// même raison que setupDateRangeFilter ci-dessous) nommé et rappelable en un clic, sans avoir à
+// recliquer chaque pastille individuellement à chaque visite pour retrouver une combinaison
+// utilisée régulièrement (ex: "mes soirées jeux du mardi").
+function setupSavedViews() {
+    const select = document.getElementById('saved-views-select');
+    const deleteBtn = document.getElementById('btn-delete-view');
+
+    document.getElementById('btn-save-view').addEventListener('click', () => {
+        const name = window.prompt("Nom de cette vue favorite (ex: \"Soirées jeux\") :");
+        if (!name || !name.trim()) return;
+        savedViews.push({
+            name: name.trim(),
+            category: currentCategory,
+            type: currentTypeFilter,
+            tag: currentTagFilter,
+            host: currentHostFilter
+        });
+        persistSavedViews();
+        renderSavedViewsSelect();
+        select.value = String(savedViews.length - 1);
+        deleteBtn.classList.remove('hidden');
+    });
+
+    select.addEventListener('change', () => {
+        deleteBtn.classList.toggle('hidden', select.value === "");
+        if (select.value === "") return;
+        const view = savedViews[Number(select.value)];
+        if (!view) return;
+        currentCategory = view.category || 'all';
+        currentTypeFilter = view.type || null;
+        currentTagFilter = view.tag || null;
+        currentHostFilter = view.host || null;
+        setActiveCategoryButton(document.querySelector(`#filter-categories-container button[data-cat="${currentCategory === 'all' ? 'all' : CSS.escape(currentCategory)}"]`) || document.querySelector('#filter-categories-container button[data-cat="all"]'));
+        renderTypeFilterBar();
+        updateTagsFilterBar(repo.getAll());
+        renderHostFilterBar(repo.getAll());
+        saveFiltersToStorage();
+        updateUIState();
+    });
+
+    deleteBtn.addEventListener('click', () => {
+        if (select.value === "") return;
+        const idx = Number(select.value);
+        const view = savedViews[idx];
+        if (!view || !window.confirm(`Supprimer la vue favorite "${view.name}" ?`)) return;
+        savedViews.splice(idx, 1);
+        persistSavedViews();
+        renderSavedViewsSelect();
+        deleteBtn.classList.add('hidden');
+    });
+}
+
+// Mini-calendrier de navigation rapide (QOL #16) : popover avec un mois cliquable pour sauter
+// directement à une date précise, plus rapide que d'enchaîner les boutons prev/next de
+// FullCalendar quand la cible est éloignée (ex: dans 3 mois). Pure navigation (comme prev/next),
+// ne touche à aucun filtre - juste la date affichée par le calendrier.
+let miniCalendarDate = new Date();
+
+function renderMiniCalendar() {
+    const popover = document.getElementById('mini-calendar-popover');
+    const year = miniCalendarDate.getFullYear();
+    const month = miniCalendarDate.getMonth();
+    const monthLabel = miniCalendarDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+
+    const firstOfMonth = new Date(year, month, 1);
+    const startOffset = (firstOfMonth.getDay() + 6) % 7; // 0 = Lundi
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const todayStr = DateUtils.toLocalDateStr(new Date());
+
+    let cells = '';
+    for (let i = 0; i < startOffset; i++) cells += `<span></span>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const isToday = dateStr === todayStr;
+        cells += `<button data-minical-date="${dateStr}" class="w-7 h-7 rounded-md text-[11px] font-bold transition-all ${isToday ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:bg-white/10'}">${d}</button>`;
+    }
+
+    popover.innerHTML = `
+        <div class="flex items-center justify-between mb-2">
+            <button id="minical-prev" aria-label="Mois précédent" class="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/10 transition-all">‹</button>
+            <span class="text-[11px] font-bold text-slate-200 capitalize">${monthLabel}</span>
+            <button id="minical-next" aria-label="Mois suivant" class="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/10 transition-all">›</button>
+        </div>
+        <div class="grid grid-cols-7 gap-1 text-center text-[9px] font-bold text-slate-500 mb-1">
+            ${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => `<span>${d}</span>`).join('')}
+        </div>
+        <div class="grid grid-cols-7 gap-1 place-items-center">${cells}</div>
+    `;
+}
+
+function setupMiniCalendar() {
+    const btn = document.getElementById('btn-open-minical');
+    const popover = document.getElementById('mini-calendar-popover');
+
+    const openPopover = () => {
+        miniCalendarDate = new Date();
+        renderMiniCalendar();
+        // position:fixed (voir index.html) : calculée ici plutôt que par un simple `absolute`
+        // CSS, pour échapper à tout contexte d'empilement ambigu avec la barre d'outils sticky
+        // du calendrier plus bas dans la page.
+        const rect = btn.getBoundingClientRect();
+        popover.style.left = `${Math.round(rect.left)}px`;
+        popover.style.top = `${Math.round(rect.bottom + 8)}px`;
+        popover.classList.remove('hidden');
+    };
+    const closePopover = () => popover.classList.add('hidden');
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (popover.classList.contains('hidden')) openPopover(); else closePopover();
+    });
+
+    popover.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (e.target.id === 'minical-prev') { miniCalendarDate.setMonth(miniCalendarDate.getMonth() - 1); renderMiniCalendar(); return; }
+        if (e.target.id === 'minical-next') { miniCalendarDate.setMonth(miniCalendarDate.getMonth() + 1); renderMiniCalendar(); return; }
+        const dateBtn = e.target.closest('button[data-minical-date]');
+        if (!dateBtn) return;
+        const dateStr = dateBtn.dataset.minicalDate;
+        closePopover();
+
+        if (currentSearchQuery) {
+            currentSearchQuery = "";
+            document.getElementById('recherche').value = "";
+            document.getElementById('btn-clear-search').classList.add('hidden');
+            document.getElementById('search-icon').classList.remove('hidden');
+        }
+        currentViewMode = 'calendar';
+        applyViewButtonStyles();
+        updateUIState();
+        if (calendarInstance) calendarInstance.gotoDate(dateStr);
+    });
+
+    // Clic en dehors du popover : le referme, comme n'importe quel menu déroulant standard.
+    document.addEventListener('click', (e) => {
+        if (!popover.classList.contains('hidden') && !popover.contains(e.target) && e.target !== btn) closePopover();
+    });
 }
 
 // La période (Du/Au) n'est volontairement PAS mémorisée d'une visite à l'autre (contrairement
@@ -358,11 +603,56 @@ function updateNextEventBanner() {
 function applyViewButtonStyles() {
     const timelineBtn = document.getElementById('btn-toggle-timeline');
     const mapBtn = document.getElementById('btn-toggle-map');
-    [[timelineBtn, 'timeline'], [mapBtn, 'map']].forEach(([btn, mode]) => {
+    const todayBtn = document.getElementById('btn-goto-today');
+    [[timelineBtn, 'timeline'], [mapBtn, 'map'], [todayBtn, 'today']].forEach(([btn, mode]) => {
         const active = currentViewMode === mode;
         btn.classList.toggle('bg-indigo-500/10', active);
         btn.classList.toggle('border-indigo-500/20', active);
         btn.classList.toggle('text-indigo-300', active);
+    });
+}
+
+// Vue "Aujourd'hui" dédiée (QOL #6, voir TodayView.js) : une page de présentation du programme
+// du jour à part entière (même statut que Frise/Carte, currentViewMode='today'), pas juste un
+// raccourci de navigation dans le calendrier. Quitte aussi la recherche si elle était active,
+// pour que ce soit bien elle qui s'affiche.
+function goToTodayView() {
+    if (currentSearchQuery) {
+        currentSearchQuery = "";
+        document.getElementById('recherche').value = "";
+        document.getElementById('btn-clear-search').classList.add('hidden');
+        document.getElementById('search-icon').classList.remove('hidden');
+    }
+    currentViewMode = currentViewMode === 'today' ? 'calendar' : 'today';
+    applyViewButtonStyles();
+    updateUIState();
+}
+
+// Densité d'affichage des cartes (QOL #17) : bascule une classe sur <html>, lue par les règles
+// CSS `.density-compact` (voir index.html) qui resserrent paddings/tailles de police des cartes
+// d'événements - utile pour voir plus de sessions à l'écran sans défiler, au prix du confort de
+// lecture. Mémorisé d'une visite à l'autre comme les autres préférences d'affichage (thème...).
+const DENSITY_KEY = 'ui:density';
+function applyDensity(compact) {
+    document.documentElement.classList.toggle('density-compact', compact);
+    const btn = document.getElementById('btn-toggle-density');
+    btn.title = `Densité d'affichage des cartes : ${compact ? 'compacte' : 'confortable'}`;
+    btn.innerHTML = compact
+        ? '📐<span class="hidden sm:inline"> Compact</span>'
+        : '📐<span class="hidden sm:inline"> Confortable</span>';
+}
+function setupDensityToggle() {
+    const compact = localStorage.getItem(DENSITY_KEY) === '1';
+    applyDensity(compact);
+    document.getElementById('btn-toggle-density').addEventListener('click', () => {
+        const nowCompact = !document.documentElement.classList.contains('density-compact');
+        applyDensity(nowCompact);
+        localStorage.setItem(DENSITY_KEY, nowCompact ? '1' : '0');
+        // renderEventCard (EventCardTemplate.js) choisit son gabarit (compact ou confortable) en
+        // lisant html.density-compact AU MOMENT du rendu : un changement ne prend effet sur les
+        // cartes déjà affichées qu'en les re-rendant, d'où ce rafraîchissement immédiat plutôt
+        // que d'attendre le prochain changement de filtre/vue pour voir l'effet.
+        updateUIState();
     });
 }
 
@@ -373,6 +663,7 @@ function resetFiltersAndSearch() {
     currentCategory = "all";
     currentTypeFilter = null;
     currentTagFilter = null;
+    currentHostFilter = null;
     currentSearchQuery = "";
     currentDateFrom = null;
     currentDateTo = null;
@@ -385,12 +676,28 @@ function resetFiltersAndSearch() {
     setActiveCategoryButton(document.querySelector('#filter-categories-container button[data-cat="all"]'));
     renderTypeFilterBar();
     updateTagsFilterBar(repo.getAll());
+    renderHostFilterBar(repo.getAll());
+    document.getElementById('saved-views-select').value = "";
+    document.getElementById('btn-delete-view').classList.add('hidden');
     saveFiltersToStorage();
 }
 
 function updateUIState() {
     let filtered = repo.getAll();
 
+    // Catégories masquées durablement (QOL #18) : exclues de TOUTES les vues, indépendamment du
+    // filtre "actif" (currentCategory) - appliqué en premier pour qu'aucun autre filtre ne
+    // puisse "repêcher" un événement d'une catégorie qu'on a choisi de ne plus jamais voir.
+    if (hiddenCategories.size > 0) {
+        filtered = filtered.filter(e => !hiddenCategories.has(e.category));
+    }
+    // Snapshot pour la vue "Aujourd'hui" (voir plus bas) : `filter` renvoie un nouveau tableau à
+    // chaque étape (ne mute jamais `filtered` en place), donc cette référence reste valide même
+    // une fois que `filtered` continue de se réduire avec les filtres de navigation ci-dessous -
+    // "aujourd'hui" doit rester une photo fidèle de la vraie journée (comme le bandeau "Prochain
+    // événement" ou le résumé quotidien), pas dépendante d'une catégorie/tag/organisateur/période
+    // actuellement sélectionnés ailleurs.
+    const eventsForToday = filtered;
     // Filtre par catégorie dynamique (config.js THEMES[...].cat), pas par type exact.
     if (currentCategory !== "all") {
         filtered = filtered.filter(e => e.category === currentCategory);
@@ -400,6 +707,9 @@ function updateUIState() {
     }
     if (currentTagFilter) {
         filtered = filtered.filter(e => e.tags && e.tags.includes(currentTagFilter));
+    }
+    if (currentHostFilter) {
+        filtered = filtered.filter(e => (e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST).trim() === currentHostFilter);
     }
     if (currentDateFrom) {
         filtered = filtered.filter(e => e.start.split('T')[0] >= currentDateFrom);
@@ -412,14 +722,17 @@ function updateUIState() {
     const searchResultsEl = document.getElementById('search-results');
     const timelineEl = document.getElementById('timeline-view');
     const mapEl = document.getElementById('map-view');
+    const todayEl = document.getElementById('today-view');
     const isSearching = currentSearchQuery.trim().length > 0;
 
-    // Quatre vues mutuellement exclusives sur la même sélection filtrée : la recherche prime
-    // toujours sur Frise/Carte (voir currentViewMode plus haut), qui priment sur le calendrier.
+    // Cinq vues mutuellement exclusives sur la même sélection filtrée : la recherche prime
+    // toujours sur Frise/Carte/Aujourd'hui (voir currentViewMode plus haut), qui priment sur le
+    // calendrier.
     calendarEl.classList.add('hidden');
     searchResultsEl.classList.add('hidden');
     timelineEl.classList.add('hidden');
     mapEl.classList.add('hidden');
+    todayEl.classList.add('hidden');
 
     if (isSearching) {
         filtered = SearchEngine.search(filtered, { query: currentSearchQuery });
@@ -427,12 +740,19 @@ function updateUIState() {
         searchResultsEl.classList.remove('hidden');
         renderSearchResults(searchResultsEl, searchResultsCache);
     } else if (currentViewMode === 'timeline') {
-        timelineCache = [...filtered].sort((a, b) => a.start.localeCompare(b.start));
+        // Défile jusqu'au repère "Aujourd'hui" seulement quand la Frise vient de devenir
+        // visible (pas à chaque changement de filtre/tri une fois déjà ouverte, sans quoi
+        // basculer l'ordre d'affichage arracherait l'utilisateur d'un endroit où il aurait
+        // déjà fait défiler manuellement).
+        const justOpened = timelineEl.classList.contains('hidden');
         timelineEl.classList.remove('hidden');
-        renderTimeline(timelineEl, timelineCache, timelineSortOrder);
+        timelineCache = renderTimeline(timelineEl, filtered, timelineSortOrder, timelineYear, justOpened);
     } else if (currentViewMode === 'map') {
         mapEl.classList.remove('hidden');
         updateMeetupMap(filtered, (ev) => ModalView.open(ev));
+    } else if (currentViewMode === 'today') {
+        todayEl.classList.remove('hidden');
+        todayViewCache = renderTodayView(todayEl, eventsForToday);
     } else {
         calendarEl.classList.remove('hidden');
         CalendarView.sync(calendarInstance, filtered);
@@ -477,19 +797,32 @@ function createCollapsiblePanel(storageKey, applyState) {
     };
 }
 
+// Contrôleurs des deux sidebars (Filtres à gauche, Statistiques à droite) : références
+// module-level pour que chacune puisse refermer l'AUTRE sur mobile (voir isMobileWidth
+// plus bas) - sur un écran étroit, les deux sont des overlays plein écran superposés, donc
+// les avoir toutes les deux ouvertes en même temps ne fait que cacher l'une derrière l'autre
+// sans le moindre indice visuel de ce qui vient de se passer.
+let statsSidebarCtrl = null;
+let filtersSidebarCtrl = null;
+const isMobileWidth = () => window.matchMedia('(max-width: 639px)').matches;
+
 function setupSidebarToggle() {
     const panel = document.getElementById('sidebar-panel');
     const btnClose = document.getElementById('btn-toggle-sidebar');
     const btnReopen = document.getElementById('btn-reopen-sidebar');
     const refreshCalendarSize = () => setTimeout(() => calendarInstance && calendarInstance.updateSize(), 260);
 
-    const panelCtrl = createCollapsiblePanel('ui:sidebarCollapsed', (collapsed) => {
+    statsSidebarCtrl = createCollapsiblePanel('ui:sidebarCollapsed', (collapsed) => {
         panel.classList.toggle('hidden', collapsed);
         btnReopen.classList.toggle('hidden', !collapsed);
     });
 
-    btnClose.addEventListener('click', () => { panelCtrl.collapse(); refreshCalendarSize(); });
-    btnReopen.addEventListener('click', () => { panelCtrl.expand(); refreshCalendarSize(); });
+    btnClose.addEventListener('click', () => { statsSidebarCtrl.collapse(); refreshCalendarSize(); });
+    btnReopen.addEventListener('click', () => {
+        if (isMobileWidth()) filtersSidebarCtrl?.collapse();
+        statsSidebarCtrl.expand();
+        refreshCalendarSize();
+    });
 }
 
 // Panneau "Statistiques" repliable : une fois replié, le panneau latéral se réduit à
@@ -511,22 +844,24 @@ function setupStatsToggle() {
     });
 }
 
-// Barre "Catégories / Tags / Types" repliable : évite d'occuper en permanence
-// une bande d'écran quand on ne s'en sert pas.
-function setupFiltersToggle() {
-    const content = document.getElementById('filters-bar-content');
-    const btnToggle = document.getElementById('btn-toggle-filters');
-    const chevron = document.getElementById('filters-chevron');
+// Sidebar Filtres repliable (voir index.html #filters-sidebar) : même mécanique que
+// setupSidebarToggle (panneau Statistiques à droite) - repliée par défaut sur mobile,
+// dépliée sur desktop tant qu'on ne l'a pas explicitement refermée (voir createCollapsiblePanel).
+function setupFiltersSidebarToggle() {
+    const panel = document.getElementById('filters-sidebar');
+    const btnClose = document.getElementById('btn-toggle-filters-sidebar');
+    const btnReopen = document.getElementById('btn-reopen-filters-sidebar');
     const refreshCalendarSize = () => setTimeout(() => calendarInstance && calendarInstance.updateSize(), 260);
 
-    const panelCtrl = createCollapsiblePanel('ui:filtersCollapsed', (collapsed) => {
-        content.classList.toggle('hidden', collapsed);
-        chevron.textContent = collapsed ? '▸' : '▾';
-        btnToggle.setAttribute('aria-expanded', String(!collapsed));
+    filtersSidebarCtrl = createCollapsiblePanel('ui:filtersSidebarCollapsed', (collapsed) => {
+        panel.classList.toggle('hidden', collapsed);
+        btnReopen.classList.toggle('hidden', !collapsed);
     });
 
-    btnToggle.addEventListener('click', () => {
-        panelCtrl.toggle(content.classList.contains('hidden'));
+    btnClose.addEventListener('click', () => { filtersSidebarCtrl.collapse(); refreshCalendarSize(); });
+    btnReopen.addEventListener('click', () => {
+        if (isMobileWidth()) statsSidebarCtrl?.collapse();
+        filtersSidebarCtrl.expand();
         refreshCalendarSize();
     });
 }
@@ -616,10 +951,30 @@ function setupPatchNotes() {
 
 const NOTIF_ENABLED_KEY = 'notif:enabled';
 const NOTIF_NOTIFIED_KEY = 'notif:notifiedIds';
-const NOTIF_LEAD_MINUTES = 15;
+// Délai de rappel configurable (QOL #8, remplace l'ancienne constante fixe à 15 min) - voir
+// #reminder-lead-select dans le panneau Rappels.
+const NOTIF_LEAD_KEY = 'notif:leadMinutes';
+const NOTIF_LEAD_DEFAULT = 15;
+// Ne pas déranger (QOL #19) : timestamp jusqu'auquel TOUS les rappels (global + abonnements
+// individuels) sont mis en pause, sans rien désabonner - juste une pause temporaire.
+const NOTIF_DND_UNTIL_KEY = 'notif:dndUntil';
+// Résumé quotidien (QOL #9) : une notification par jour (pas par session) avec le programme du
+// jour - DAILY_DIGEST_SENT_KEY retient la date du dernier envoi pour n'en déclencher qu'un
+// par jour même si checkDailyDigest() est rappelée toutes les 30s (voir setInterval plus bas).
+const DAILY_DIGEST_ENABLED_KEY = 'notif:dailyDigest';
+const DAILY_DIGEST_SENT_KEY = 'notif:dailyDigestSentDate';
+
+function getReminderLeadMinutes() {
+    return parseInt(localStorage.getItem(NOTIF_LEAD_KEY), 10) || NOTIF_LEAD_DEFAULT;
+}
 
 function hasNotificationPermission() {
     return typeof Notification !== 'undefined' && Notification.permission === 'granted';
+}
+
+function isDndActive() {
+    const until = parseInt(localStorage.getItem(NOTIF_DND_UNTIL_KEY), 10) || 0;
+    return Date.now() < until;
 }
 
 function isBlanketRemindersEnabled() {
@@ -627,9 +982,10 @@ function isBlanketRemindersEnabled() {
 }
 
 // Un événement déclenche un rappel si l'interrupteur global "Tout activer" est actif, OU si
-// son titre (voir ReminderService) est suivi individuellement.
+// son titre (voir ReminderService) est suivi individuellement - sauf pendant une pause "Ne pas
+// déranger" (QOL #19), qui prime sur les deux sans qu'il faille se désabonner de quoi que ce soit.
 function shouldRemindFor(event) {
-    return hasNotificationPermission() && (isBlanketRemindersEnabled() || ReminderService.isSet(event.title));
+    return hasNotificationPermission() && !isDndActive() && (isBlanketRemindersEnabled() || ReminderService.isSet(event.title));
 }
 
 function updateBlanketReminderButton() {
@@ -638,6 +994,27 @@ function updateBlanketReminderButton() {
     btn.innerHTML = enabled ? '🔔 Activé' : '🔕 Désactivé';
     btn.setAttribute('aria-pressed', String(enabled));
     btn.className = `shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
+}
+
+function updateDailyDigestButton() {
+    const btn = document.getElementById('btn-toggle-daily-digest');
+    const enabled = hasNotificationPermission() && localStorage.getItem(DAILY_DIGEST_ENABLED_KEY) === '1';
+    btn.innerHTML = enabled ? '🔔 Activé' : '🔕 Désactivé';
+    btn.setAttribute('aria-pressed', String(enabled));
+    btn.className = `shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
+}
+
+function updateDndUI() {
+    const active = isDndActive();
+    document.getElementById('btn-clear-dnd').classList.toggle('hidden', !active);
+    document.getElementById('dnd-options').classList.toggle('hidden', active);
+    const desc = document.getElementById('reminders-dnd-desc');
+    if (active) {
+        const until = new Date(parseInt(localStorage.getItem(NOTIF_DND_UNTIL_KEY), 10));
+        desc.textContent = `Rappels en pause jusqu'à ${until.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.`;
+    } else {
+        desc.textContent = 'Met en pause tous les rappels temporairement, sans rien désabonner.';
+    }
 }
 
 // Rappel navigateur (opt-in, Web Notification API) : la permission une fois accordée par
@@ -652,9 +1029,48 @@ async function toggleBlanketReminders() {
     const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
     if (permission === 'granted') {
         localStorage.setItem(NOTIF_ENABLED_KEY, '1');
-        new Notification('2GELOG', { body: `Rappels activés : vous serez prévenu ${NOTIF_LEAD_MINUTES} minutes avant chaque session.` });
+        new Notification('2GELOG', { body: `Rappels activés : vous serez prévenu ${getReminderLeadMinutes()} minutes avant chaque session.` });
     }
     updateBlanketReminderButton();
+}
+
+async function toggleDailyDigest() {
+    const enabled = hasNotificationPermission() && localStorage.getItem(DAILY_DIGEST_ENABLED_KEY) === '1';
+    if (enabled) {
+        localStorage.setItem(DAILY_DIGEST_ENABLED_KEY, '0');
+        updateDailyDigestButton();
+        return;
+    }
+    const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (permission === 'granted') {
+        localStorage.setItem(DAILY_DIGEST_ENABLED_KEY, '1');
+        new Notification('2GELOG', { body: "Résumé quotidien activé : un rappel chaque matin s'il y a un programme aujourd'hui." });
+    }
+    updateDailyDigestButton();
+}
+
+// Programme du jour en une seule notification (QOL #9), plutôt qu'une par session - vérifié à
+// chaque appel de checkUpcomingNotifications (toutes les 30s) mais n'envoie réellement qu'une
+// fois par jour civil (DAILY_DIGEST_SENT_KEY retient la date du dernier envoi effectif).
+function checkDailyDigest() {
+    if (!hasNotificationPermission() || isDndActive()) return;
+    if (localStorage.getItem(DAILY_DIGEST_ENABLED_KEY) !== '1') return;
+
+    const todayStr = DateUtils.toLocalDateStr(new Date());
+    if (localStorage.getItem(DAILY_DIGEST_SENT_KEY) === todayStr) return;
+
+    const todayEvents = repo.getAll()
+        .filter(e => !e.isCanceled && !e.isPlanned && e.start.split('T')[0] === todayStr)
+        .sort((a, b) => a.start.localeCompare(b.start));
+
+    localStorage.setItem(DAILY_DIGEST_SENT_KEY, todayStr);
+    if (todayEvents.length === 0) return;
+
+    const body = todayEvents.length === 1
+        ? `${todayEvents[0].title}${todayEvents[0].heure ? ' · ' + todayEvents[0].heure : ''}`
+        : todayEvents.slice(0, 4).map(e => `${e.heure ? e.heure + ' ' : ''}${e.title}`).join('\n') + (todayEvents.length > 4 ? `\n+${todayEvents.length - 4} autre(s)` : '');
+
+    new Notification(`🌅 ${todayEvents.length} session${todayEvents.length > 1 ? 's' : ''} aujourd'hui`, { body, tag: 'daily-digest-' + todayStr });
 }
 
 // Panneau "Suivis individuellement" (abonnements ReminderService, par titre) : affiche la
@@ -691,8 +1107,12 @@ function renderRemindersList() {
 
 function setupRemindersOverlay() {
     const overlay = document.getElementById('reminders-overlay');
+    const leadSelect = document.getElementById('reminder-lead-select');
     const open = () => {
         updateBlanketReminderButton();
+        updateDailyDigestButton();
+        updateDndUI();
+        leadSelect.value = String(getReminderLeadMinutes());
         renderRemindersList();
         overlay.classList.remove('hidden');
         overlay.classList.add('flex');
@@ -704,6 +1124,25 @@ function setupRemindersOverlay() {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
     document.getElementById('btn-toggle-all-reminders').addEventListener('click', toggleBlanketReminders);
+    document.getElementById('btn-toggle-daily-digest').addEventListener('click', toggleDailyDigest);
+
+    leadSelect.addEventListener('change', () => {
+        localStorage.setItem(NOTIF_LEAD_KEY, leadSelect.value);
+    });
+
+    // Ne pas déranger (QOL #19) : chaque bouton porte sa propre durée en heures
+    // (data-dnd-hours), convertie en timestamp d'expiration stocké tel quel.
+    document.getElementById('dnd-options').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-dnd-hours]');
+        if (!btn) return;
+        const hours = Number(btn.dataset.dndHours);
+        localStorage.setItem(NOTIF_DND_UNTIL_KEY, String(Date.now() + hours * 3600000));
+        updateDndUI();
+    });
+    document.getElementById('btn-clear-dnd').addEventListener('click', () => {
+        localStorage.removeItem(NOTIF_DND_UNTIL_KEY);
+        updateDndUI();
+    });
 
     document.getElementById('reminders-list').addEventListener('click', (e) => {
         const btn = e.target.closest('button[data-remove-title]');
@@ -723,14 +1162,31 @@ function getNotifiedIds() {
     }
 }
 
+// Badge sur l'icône de l'app (QOL #10, Badging API) : nombre de sessions du jour, visible sur
+// l'icône même app fermée/en arrière-plan (PWA installée - support variable selon plateforme,
+// ignoré silencieusement si l'API n'existe pas, ex: Firefox). Rafraîchi au même rythme que les
+// notifications (voir son appel dans checkUpcomingNotifications) pour rester à jour toute la
+// journée, y compris après minuit (repasse à 0 puis recompte sur le nouveau "aujourd'hui").
+function updatePwaBadge() {
+    if (!('setAppBadge' in navigator)) return;
+    const todayStr = DateUtils.toLocalDateStr(new Date());
+    const count = repo.getAll().filter(e => !e.isCanceled && !e.isPlanned && e.start.split('T')[0] === todayStr).length;
+    const setter = count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge();
+    setter.catch(() => {});
+}
+
 // Cherche, sur TOUT le dépôt (pas les filtres actifs à l'écran : le rappel doit sonner pour
-// n'importe quelle session à venir), les événements démarrant dans moins de
-// NOTIF_LEAD_MINUTES et concernés par un rappel (global ou par abonnement individuel) et
-// déclenche une notification navigateur une seule fois chacun.
+// n'importe quelle session à venir), les événements démarrant dans moins du délai configuré
+// (voir getReminderLeadMinutes, QOL #8) et concernés par un rappel (global ou par abonnement
+// individuel) et déclenche une notification navigateur une seule fois chacun. Vérifie aussi le
+// résumé quotidien (QOL #9) et le badge d'icône (QOL #10) au passage, sur le même intervalle
+// (voir son appel dans initApp).
 function checkUpcomingNotifications() {
-    if (!hasNotificationPermission()) return;
+    checkDailyDigest();
+    updatePwaBadge();
+    if (!hasNotificationPermission() || isDndActive()) return;
     const now = new Date();
-    const leadMs = NOTIF_LEAD_MINUTES * 60000;
+    const leadMs = getReminderLeadMinutes() * 60000;
     const notified = new Set(getNotifiedIds());
 
     const due = repo.getAll().filter(e => {
@@ -774,8 +1230,16 @@ function enterKioskMode() {
     kioskSavedState = {
         dateFrom: currentDateFrom,
         dateTo: currentDateTo,
-        view: calendarInstance ? calendarInstance.view.type : null
+        view: calendarInstance ? calendarInstance.view.type : null,
+        // Le Kiosque est pensé pour afficher LE CALENDRIER (listMonth) plein écran : sans ce
+        // reset, l'activer alors qu'on était sur Aujourd'hui/Frise/Carte laissait cette vue-là
+        // affichée (currentViewMode n'était jamais repris en compte), pas le calendrier attendu.
+        viewMode: currentViewMode
     };
+    if (currentViewMode !== 'calendar') {
+        currentViewMode = 'calendar';
+        applyViewButtonStyles();
+    }
 
     document.body.classList.add('kiosk-mode');
     document.getElementById('btn-exit-kiosk').classList.remove('hidden');
@@ -808,6 +1272,10 @@ function exitKioskMode() {
         document.getElementById('filter-date-to').value = currentDateTo || "";
         document.getElementById('btn-clear-date-range').classList.toggle('hidden', !currentDateFrom && !currentDateTo);
         if (calendarInstance && kioskSavedState.view) calendarInstance.changeView(kioskSavedState.view);
+        if (kioskSavedState.viewMode && kioskSavedState.viewMode !== currentViewMode) {
+            currentViewMode = kioskSavedState.viewMode;
+            applyViewButtonStyles();
+        }
         kioskSavedState = null;
     }
     updateUIState();
@@ -939,6 +1407,10 @@ let organizerProfileCache = [];
 // Mêmes sessions que organizerProfileCache mais non triées (juste facts.realSessions) : source
 // pour le filtrage par jour de semaine du graphique "hostWeekday" (voir openOrganizerWeekdayDetail).
 let organizerWeekdayCache = [];
+// Organisateur actuellement affiché (nom tel que cliqué + facts déjà calculées) : lu par les
+// boutons d'export .ics/image du profil (pas besoin de tout recalculer à leur propre clic).
+let currentOrganizerHostName = null;
+let currentOrganizerFacts = null;
 
 /**
  * Mini-profil d'un organisateur (toutes années confondues) : total de sessions/temps animé,
@@ -957,6 +1429,14 @@ function openOrganizerProfile(hostName) {
 
     organizerProfileCache = [...facts.realSessions].sort((a, b) => new Date(b.start) - new Date(a.start));
     organizerWeekdayCache = facts.realSessions;
+    currentOrganizerHostName = hostName;
+    currentOrganizerFacts = facts;
+
+    // Lien direct partageable (QOL #13, ?host=<nom>), même mécanique que ModalView pour
+    // ?event=<id> : remplace l'entrée d'historique courante plutôt que d'en empiler une.
+    const url = new URL(window.location.href);
+    url.searchParams.set('host', hostName);
+    window.history.replaceState(null, '', url);
 
     const currentYear = new Date().getFullYear();
     const yearStats = StatsService.compute(allEvents.filter(e => new Date(e.start).getFullYear() === currentYear));
@@ -1047,7 +1527,14 @@ function openOrganizerWeekdayDetail(label, index) {
 
 function setupOrganizerProfile() {
     const overlay = document.getElementById('organizer-profile-overlay');
-    const close = () => overlay.classList.add('hidden');
+    const close = () => {
+        overlay.classList.add('hidden');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('host');
+        window.history.replaceState(null, '', url);
+        currentOrganizerHostName = null;
+        currentOrganizerFacts = null;
+    };
 
     document.getElementById('btn-close-organizer-profile').addEventListener('click', close);
     overlay.addEventListener('click', (e) => {
@@ -1058,6 +1545,37 @@ function setupOrganizerProfile() {
         if (!card) return;
         const ev = organizerProfileCache[Number(card.dataset.idx)];
         if (ev) { close(); ModalView.open(ev); }
+    });
+
+    // Export .ics des seules sessions de cet organisateur (QOL #4) - réutilise IcsExporter
+    // telle quelle, comme l'export global de l'en-tête, juste sur un lot d'événements différent.
+    document.getElementById('btn-organizer-export-ics').addEventListener('click', () => {
+        if (!currentOrganizerFacts) return;
+        const filename = `planning-${currentOrganizerHostName.toLowerCase().replace(/\s+/g, '-')}-2gelog.ics`;
+        IcsExporter.download(currentOrganizerFacts.realSessions, filename);
+    });
+
+    // Image récap partageable (QOL #12) - voir generateOrganizerRecapImage.
+    document.getElementById('btn-organizer-export-image').addEventListener('click', () => {
+        if (!currentOrganizerFacts || !currentOrganizerHostName) return;
+        generateOrganizerRecapImage(currentOrganizerHostName, currentOrganizerFacts);
+    });
+
+    // Lien direct vers ce profil (QOL #13, ?host=<nom>) - même geste que 🔗 dans la modale
+    // d'un événement (copie, ou repli sur window.prompt si le presse-papiers est indisponible).
+    document.getElementById('btn-organizer-copy-link').addEventListener('click', async (e) => {
+        if (!currentOrganizerHostName) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set('host', currentOrganizerHostName);
+        const btn = e.currentTarget;
+        try {
+            await navigator.clipboard.writeText(url.href);
+            const original = btn.innerHTML;
+            btn.innerHTML = '✅';
+            setTimeout(() => { btn.innerHTML = original; }, 1500);
+        } catch {
+            window.prompt("Copiez ce lien :", url.href);
+        }
     });
 
     // Délégation de clic sur le "Top organisateurs" de la sidebar (voir renderDashboardStats).
@@ -1136,6 +1654,119 @@ function openEventFromUrl() {
     if (ev) ModalView.open(ev);
 }
 
+// Lien partageable direct vers un profil organisateur (QOL #13, ?host=<nom>, voir
+// openOrganizerProfile) : rouvre son profil au chargement si le paramètre est présent.
+function openOrganizerProfileFromUrl() {
+    const host = new URLSearchParams(window.location.search).get('host');
+    if (host) openOrganizerProfile(host);
+}
+
+// Image récap partageable d'un profil organisateur (QOL #12) : dessinée sur un <canvas> (pas de
+// dépendance externe façon html2canvas, cohérent avec le reste de l'app qui n'a aucune étape de
+// build - voir package.json) puis téléchargée en PNG. Format carré (1080×1080), lisible aussi
+// bien en aperçu Discord qu'en story/post réseaux sociaux.
+function generateOrganizerRecapImage(hostName, facts) {
+    const SIZE = 1080;
+    const canvas = document.createElement('canvas');
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+    const ctx = canvas.getContext('2d');
+    const FONT = "'Plus Jakarta Sans', sans-serif";
+
+    // Fond : même dégradé que le corps de l'app (voir index.html body { background: radial-gradient(...) }).
+    const bgGrad = ctx.createRadialGradient(SIZE / 2, 0, 0, SIZE / 2, 0, SIZE);
+    bgGrad.addColorStop(0, '#111827');
+    bgGrad.addColorStop(1, '#06080c');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    // En-tête marque.
+    ctx.fillStyle = '#6366f1';
+    ctx.font = `800 32px ${FONT}`;
+    ctx.textAlign = 'left';
+    ctx.fillText('2GELOG', 64, 96);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `600 26px ${FONT}`;
+    ctx.fillText('PROFIL ORGANISATEUR', 64, 130);
+
+    // Nom.
+    ctx.fillStyle = '#f0f6fc';
+    ctx.font = `900 76px ${FONT}`;
+    ctx.fillText(hostName, 64, 250, SIZE - 128);
+
+    if (facts.topWeekday) {
+        ctx.fillStyle = '#a5b4fc';
+        ctx.font = `700 30px ${FONT}`;
+        ctx.fillText(`📆 Organise surtout le ${facts.topWeekday === 'Lun' ? 'lundi' : facts.topWeekday}`, 64, 300);
+    }
+
+    // Tuiles de stats (2 colonnes x 2 lignes).
+    const tiles = [
+        { value: String(facts.totalSessions), label: 'SESSIONS ORGANISÉES', color: '#f0f6fc' },
+        { value: formatMinutes(facts.totalTime), label: 'TEMPS ANIMÉ CUMULÉ', color: '#818cf8' },
+        { value: `${facts.reliabilityPct}%`, label: 'SESSIONS MAINTENUES', color: '#34d399' },
+        { value: String(facts.streak), label: "SEMAINES D'AFFILÉE (RECORD)", color: '#f0f6fc' }
+    ];
+    const tileW = (SIZE - 64 * 2 - 24) / 2;
+    const tileH = 190;
+    const tileTop = 380;
+    tiles.forEach((t, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const x = 64 + col * (tileW + 24);
+        const y = tileTop + row * (tileH + 24);
+        ctx.fillStyle = 'rgba(255,255,255,0.04)';
+        roundRect(ctx, x, y, tileW, tileH, 24);
+        ctx.fill();
+        ctx.fillStyle = t.color;
+        ctx.font = `900 64px ${FONT}`;
+        ctx.fillText(t.value, x + 32, y + 90, tileW - 64);
+        ctx.fillStyle = '#8b949e';
+        ctx.font = `700 22px ${FONT}`;
+        ctx.fillText(t.label, x + 32, y + 130, tileW - 64);
+    });
+
+    // Badges débloqués (emojis uniquement, en ligne).
+    const achieved = computeBadges(facts).filter(b => b.achieved);
+    if (achieved.length > 0) {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = `700 24px ${FONT}`;
+        ctx.fillText('BADGES DÉBLOQUÉS', 64, tileTop + 2 * (tileH + 24) + 40);
+        ctx.font = `56px ${FONT}`;
+        ctx.fillStyle = '#f0f6fc';
+        ctx.fillText(achieved.map(b => b.emoji).join('   '), 64, tileTop + 2 * (tileH + 24) + 110);
+    }
+
+    // Pied de page.
+    ctx.fillStyle = '#64748b';
+    ctx.font = `600 22px ${FONT}`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`Généré le ${new Date().toLocaleDateString('fr-FR')} · planning.2gether-asso.fr`, SIZE - 64, SIZE - 48);
+
+    canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `profil-${hostName.toLowerCase().replace(/\s+/g, '-')}-2gelog.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    }, 'image/png');
+}
+
+/** Rectangle aux coins arrondis, réutilisé par generateOrganizerRecapImage (pas de roundRect natif fiable sur tous les navigateurs ciblés). */
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+}
+
 // Affiche l'heure de la dernière synchronisation réussie (sur la pastille d'en-tête, déjà
 // existante) : utile en PWA hors-ligne, où le Service Worker (voir sw.js) peut servir la
 // dernière copie connue du CSV de façon totalement transparente pour ce code - impossible de
@@ -1173,11 +1804,13 @@ async function loadData() {
         updateTagsFilterBar(repo.getAll());
         renderTypeFilterBar();
         renderCategoryFilterBar();
+        renderHostFilterBar(repo.getAll());
         updateUIState();
         updateNextEventBanner();
         checkUpcomingNotifications();
         renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
         openEventFromUrl();
+        openOrganizerProfileFromUrl();
         localStorage.setItem(LAST_SYNCED_KEY, Date.now().toString());
         updateLastSyncedTooltip();
         loadingEl.classList.add('hidden');
@@ -1203,10 +1836,33 @@ function setupHelpOverlay() {
 // chaque frappe (recherche + rendu sur plus d'un millier d'événements), et le raccourci
 // clavier "/" y donne le focus directement (sauf si un autre champ est déjà en cours de
 // saisie), comme dans la plupart des apps web.
+// Historique des recherches (QOL #3) : les 8 dernières requêtes non vides, la plus récente en
+// tête, dédupliquées (une requête déjà présente remonte en tête plutôt que de créer un doublon).
+// Purement local (localStorage), comme les autres préférences de cet appareil.
+const SEARCH_HISTORY_KEY = 'ui:searchHistory';
+let searchHistory = [];
+
+function loadSearchHistory() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || '[]');
+        searchHistory = Array.isArray(raw) ? raw : [];
+    } catch {
+        searchHistory = [];
+    }
+}
+
+function pushSearchHistory(query) {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    searchHistory = [trimmed, ...searchHistory.filter(q => q.toLowerCase() !== trimmed.toLowerCase())].slice(0, 8);
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory));
+}
+
 function setupSearchInput() {
     const input = document.getElementById('recherche');
     const clearBtn = document.getElementById('btn-clear-search');
     const icon = document.getElementById('search-icon');
+    const suggestions = document.getElementById('search-suggestions');
     let debounceTimer = null;
 
     const toggleClearBtn = (hasValue) => {
@@ -1220,10 +1876,45 @@ function setupSearchInput() {
         updateUIState();
     };
 
+    const hideSuggestions = () => suggestions.classList.add('hidden');
+    const renderSuggestions = () => {
+        if (searchHistory.length === 0) { hideSuggestions(); return; }
+        suggestions.innerHTML = `
+            <div class="text-[9px] font-bold uppercase tracking-wider text-slate-500 px-2 pt-1 pb-1.5">🕓 Recherches récentes</div>
+            ${searchHistory.map(q => `<button data-query="${escapeHtml(q)}" class="w-full text-left text-xs text-slate-300 hover:text-white hover:bg-white/5 px-2 py-1.5 rounded-lg truncate transition-all">${escapeHtml(q)}</button>`).join('')}
+        `;
+        suggestions.classList.remove('hidden');
+    };
+
     input.addEventListener('input', (e) => {
         toggleClearBtn(e.target.value.length > 0);
+        hideSuggestions();
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => applyQuery(e.target.value), 200);
+    });
+
+    input.addEventListener('focus', () => {
+        if (!input.value) renderSuggestions();
+    });
+    // Délai avant de masquer : sans lui, le blur (déclenché par le mousedown sur une
+    // suggestion) masquerait la liste AVANT que son propre clic n'ait pu être traité.
+    input.addEventListener('blur', () => setTimeout(hideSuggestions, 150));
+
+    suggestions.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-query]');
+        if (!btn) return;
+        input.value = btn.dataset.query;
+        toggleClearBtn(true);
+        applyQuery(btn.dataset.query);
+        pushSearchHistory(btn.dataset.query);
+        hideSuggestions();
+    });
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && input.value.trim()) {
+            pushSearchHistory(input.value);
+            hideSuggestions();
+        }
     });
 
     clearBtn.addEventListener('click', () => {
@@ -1238,6 +1929,29 @@ function setupSearchInput() {
         if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
         e.preventDefault();
         input.focus();
+    });
+}
+
+// Raccourcis clavier supplémentaires (QOL #20), en plus de "/" (recherche, voir
+// setupSearchInput) et Échap (voir setupEscapeToClose) : T pour aujourd'hui, ←/→ pour
+// naviguer dans le calendrier - toujours désactivés pendant la frappe dans un champ, et les
+// flèches seulement quand le calendrier est bien la vue affichée (pas en recherche/Frise/Carte,
+// où elles n'auraient aucun sens et pourraient surprendre en cas de focus resté sur la page).
+function setupExtraKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const activeTag = document.activeElement?.tagName;
+        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
+
+        if (e.key === 't' || e.key === 'T') {
+            e.preventDefault();
+            goToTodayView();
+            return;
+        }
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (!calendarInstance || currentViewMode !== 'calendar' || currentSearchQuery) return;
+        e.preventDefault();
+        if (e.key === 'ArrowLeft') calendarInstance.prev(); else calendarInstance.next();
     });
 }
 
@@ -1289,6 +2003,10 @@ async function initApp() {
         // Restaure les filtres de la dernière visite avant le premier rendu, pour que
         // les barres de filtres et le calendrier reflètent directement le bon état.
         restoreFiltersFromStorage();
+        loadHiddenCategories();
+        loadSavedViews();
+        renderSavedViewsSelect();
+        loadSearchHistory();
         // ?today=1 (lien partageable) prime sur les filtres restaurés : intention explicite
         // de l'utilisateur qui a cliqué ce lien précis.
         openTodayViewFromUrl();
@@ -1300,7 +2018,7 @@ async function initApp() {
             document.getElementById('search-icon').classList.add('hidden');
             currentSearchQuery = `#${tag}`;
             updateUIState();
-        }, () => updateUIState(), (host) => openOrganizerProfile(host));
+        }, () => updateUIState(), (host) => openOrganizerProfile(host), () => repo.getAll());
 
         // Délégation de clic sur la sidebar "Prochainement" : ouvre la modale
         // avec l'objet événement complet (pas de lookup global requis).
@@ -1327,9 +2045,23 @@ async function initApp() {
                 updateUIState();
                 return;
             }
+            const yearBtn = e.target.closest('[data-timeline-year]');
+            if (yearBtn) {
+                timelineYear = Number(yearBtn.dataset.timelineYear);
+                updateUIState();
+                return;
+            }
             const card = e.target.closest('[data-idx]');
             if (!card) return;
             const ev = timelineCache[Number(card.dataset.idx)];
+            if (ev) ModalView.open(ev);
+        });
+
+        // Idem pour la vue "Aujourd'hui" (voir TodayView.js).
+        document.getElementById('today-view').addEventListener('click', (e) => {
+            const card = e.target.closest('[data-idx]');
+            if (!card) return;
+            const ev = todayViewCache[Number(card.dataset.idx)];
             if (ev) ModalView.open(ev);
         });
 
@@ -1339,7 +2071,13 @@ async function initApp() {
         const timelineBtn = document.getElementById('btn-toggle-timeline');
         const mapBtn = document.getElementById('btn-toggle-map');
         timelineBtn.addEventListener('click', () => {
-            currentViewMode = currentViewMode === 'timeline' ? 'calendar' : 'timeline';
+            const opening = currentViewMode !== 'timeline';
+            currentViewMode = opening ? 'timeline' : 'calendar';
+            // Recommence toujours sur l'année en cours à l'ouverture (pas seulement la toute
+            // première fois de la session) : "commence par défaut par aujourd'hui" doit rester
+            // vrai à chaque fois qu'on ouvre la Frise, même après être resté sur une année
+            // passée lors d'une visite précédente de cette vue.
+            if (opening) timelineYear = new Date().getFullYear();
             applyViewButtonStyles();
             updateUIState();
         });
@@ -1356,15 +2094,19 @@ async function initApp() {
             updateUIState();
         });
 
+        document.getElementById('btn-goto-today').addEventListener('click', goToTodayView);
+        setupDensityToggle();
+
         setupSidebarToggle();
         setupStatsToggle();
-        setupFiltersToggle();
+        setupFiltersSidebarToggle();
         setupAdminMode();
         setupRetrospective();
         setupOrganizerProfile();
         setupPatchNotes();
         setupHelpOverlay();
         setupEscapeToClose();
+        setupExtraKeyboardShortcuts();
         setupRemindersOverlay();
         setupKioskMode();
 
@@ -1422,13 +2164,36 @@ async function initApp() {
 
         setupSearchInput();
         setupDateRangeFilter();
+        setupSavedViews();
+        setupMiniCalendar();
 
         document.getElementById('filter-categories-container').addEventListener('click', (e) => {
-            const btn = e.target.closest('button');
+            const hideBtn = e.target.closest('button[data-hide-cat]');
+            if (hideBtn) {
+                const cat = hideBtn.dataset.hideCat;
+                if (hiddenCategories.has(cat)) hiddenCategories.delete(cat); else hiddenCategories.add(cat);
+                // Une catégorie qu'on vient de masquer ne doit pas rester le filtre actif affiché
+                // (sinon le calendrier se retrouve filtré sur une catégorie qu'on vient de dire
+                // vouloir ne plus jamais voir) - repli sur "Tous".
+                if (currentCategory === cat && hiddenCategories.has(cat)) currentCategory = 'all';
+                saveHiddenCategories();
+                renderCategoryFilterBar();
+                saveFiltersToStorage();
+                updateUIState();
+                return;
+            }
+            const btn = e.target.closest('button[data-cat]');
             if (!btn) return;
             setActiveCategoryButton(btn);
             currentCategory = btn.dataset.cat;
             saveFiltersToStorage();
+            updateUIState();
+        });
+
+        document.getElementById('btn-hidden-categories').addEventListener('click', () => {
+            hiddenCategories.clear();
+            saveHiddenCategories();
+            renderCategoryFilterBar();
             updateUIState();
         });
 
@@ -1448,6 +2213,16 @@ async function initApp() {
             const tag = btn.dataset.tag;
             currentTagFilter = (currentTagFilter === tag) ? null : tag;
             updateTagsFilterBar(repo.getAll());
+            saveFiltersToStorage();
+            updateUIState();
+        });
+
+        document.getElementById('filter-hosts-container').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-host]');
+            if (!btn) return;
+            const host = btn.dataset.host;
+            currentHostFilter = (currentHostFilter === host) ? null : host;
+            renderHostFilterBar(repo.getAll());
             saveFiltersToStorage();
             updateUIState();
         });

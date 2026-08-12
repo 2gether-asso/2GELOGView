@@ -35,6 +35,11 @@
         .glass-card { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.04); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
         .glass-card:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); }
 
+        /* Densité d'affichage (QOL #17, voir setupDensityToggle dans main.js) : en mode compact,
+           renderEventCard (EventCardTemplate.js) rend directement un gabarit différent - une
+           seule ligne (Icône/Type/Titre/Heure/Statut/Épisode) - plutôt qu'une variante réduite
+           au CSS du gabarit "confortable" habituel ; rien à surcharger ici. */
+
         /* Thème saisonnier (voir src/services/SeasonalTheme.js) : purement cosmétique, ne fait
            que teinter le fond et le liseré des panneaux via les variables --season-* posées
            sur <html>. Aucune règle ici ne modifie une mise en page ou un comportement. */
@@ -156,20 +161,22 @@
             .fc-timegrid-slot-label-cushion { font-size: 0.68rem; }
         }
 
-        /* Mode Kiosque : masque l'en-tête et la barre de filtres pour un affichage plein écran
+        /* Mode Kiosque : masque l'en-tête et la sidebar Filtres pour un affichage plein écran
            sans interaction, pensé pour un écran dédié (partagé dans un salon vocal par exemple). */
         body.kiosk-mode header,
-        body.kiosk-mode #filters-bar,
+        body.kiosk-mode #filters-sidebar,
         body.kiosk-mode #btn-toggle-sidebar,
-        body.kiosk-mode #btn-reopen-sidebar {
+        body.kiosk-mode #btn-reopen-sidebar,
+        body.kiosk-mode #btn-toggle-filters-sidebar,
+        body.kiosk-mode #btn-reopen-filters-sidebar {
             display: none !important;
         }
     </style>
 </head>
 <body class="h-dvh w-screen flex flex-col antialiased">
 
-    <header class="shrink-0 border-b border-white/5 bg-[#161b22]/40 backdrop-blur-xl flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-40">
-        <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer">
+    <header class="shrink-0 border-b border-white/5 bg-[#161b22]/40 backdrop-blur-xl flex flex-wrap items-center justify-between gap-3 px-3 sm:px-6 py-2.5 z-40 shadow-lg shadow-black/10">
+        <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer shrink-0">
             <div id="header-status-dot" class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
             <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
                 2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2</span>
@@ -177,56 +184,87 @@
             </h1>
         </div>
 
-        <div class="flex items-center gap-2 sm:space-x-3 flex-wrap w-full sm:w-auto order-3 sm:order-none">
-            <button id="btn-help" title="Aide et légende" aria-label="Aide et légende" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+        <!-- Regroupée en zones (Vues / Réglages / Export / Perso), séparées par un fin liseré sur
+             desktop (masqué sur mobile où tout repasse en icônes seules sur une grille resserrée,
+             un séparateur n'y ajouterait que du bruit visuel) plutôt qu'un unique alignement plat
+             de boutons tous identiques, pour rester lisible malgré leur nombre. -->
+        <div class="flex items-center gap-1.5 sm:gap-1 flex-wrap w-full sm:w-auto order-3 sm:order-none">
+            <button id="btn-help" title="Aide et légende" aria-label="Aide et légende" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 ❓
             </button>
+
+            <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
+
+            <button id="btn-goto-today" title="Aujourd'hui sur 2GETHER : le programme du jour (raccourci clavier T)" aria-label="Voir le programme d'aujourd'hui" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                📍<span class="hidden sm:inline"> Aujourd'hui</span>
+            </button>
+            <button id="btn-toggle-timeline" title="Vue Frise : la même sélection organisée par mois, séries regroupées en un seul bloc" aria-label="Vue Frise" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🗓️<span class="hidden sm:inline"> Frise</span>
+            </button>
+            <button id="btn-toggle-map" title="Carte des lieux IRL (meetups)" aria-label="Carte des lieux IRL" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🗺️<span class="hidden sm:inline"> Carte</span>
+            </button>
+
+            <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
+
+            <button id="btn-export-ics" title="Exporter le planning affiché en .ics (instantané ponctuel)" aria-label="Exporter le planning affiché en .ics" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                📅<span class="hidden sm:inline"> .ics</span>
+            </button>
+            <button id="btn-subscribe-ics" title="Copier le lien d'abonnement (webcal://) : se resynchronise tout seul dans votre appli calendrier" aria-label="Copier le lien d'abonnement au calendrier" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🔗<span class="hidden sm:inline"> S'abonner</span>
+            </button>
+
+            <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
+
+            <button id="btn-open-reminders" title="Gérer vos rappels de notification" aria-label="Gérer vos rappels de notification" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                🔔<span class="hidden sm:inline"> Rappels</span>
+            </button>
+            <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" aria-label="Rétrospective annuelle" class="text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
+                🎉<span class="hidden sm:inline"> Rétrospective</span>
+            </button>
+
+            <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
+
+            <button id="btn-toggle-density" title="Densité d'affichage des cartes : confortable" aria-label="Basculer la densité d'affichage" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                📐<span class="hidden sm:inline"> Confortable</span>
+            </button>
             <label for="theme-select" class="sr-only">Thème saisonnier</label>
-            <select id="theme-select" title="Choisir le thème saisonnier (par défaut : automatique selon la date)" class="text-[11px] font-bold text-slate-400 hover:text-white pl-2 pr-1 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <select id="theme-select" title="Choisir le thème saisonnier (par défaut : automatique selon la date)" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 pl-2 pr-1 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <option value="auto">🎨 Auto</option>
                 <option value="halloween">🎃 Halloween</option>
                 <option value="noel">🎄 Noël</option>
                 <option value="st-valentin">💖 St-Valentin</option>
                 <option value="none">◾ Aucun</option>
             </select>
-            <button id="btn-export-ics" title="Exporter le planning affiché en .ics (instantané ponctuel)" aria-label="Exporter le planning affiché en .ics" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                📅<span class="hidden sm:inline"> .ics</span>
-            </button>
-            <button id="btn-subscribe-ics" title="Copier le lien d'abonnement (webcal://) : se resynchronise tout seul dans votre appli calendrier" aria-label="Copier le lien d'abonnement au calendrier" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🔗<span class="hidden sm:inline"> S'abonner</span>
-            </button>
-            <button id="btn-toggle-timeline" title="Vue Frise : la même sélection organisée par mois, séries regroupées en un seul bloc" aria-label="Vue Frise" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🗓️<span class="hidden sm:inline"> Frise</span>
-            </button>
-            <button id="btn-toggle-map" title="Carte des lieux IRL (meetups)" aria-label="Carte des lieux IRL" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🗺️<span class="hidden sm:inline"> Carte</span>
-            </button>
-            <button id="btn-open-reminders" title="Gérer vos rappels de notification" aria-label="Gérer vos rappels de notification" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🔔<span class="hidden sm:inline"> Rappels</span>
-            </button>
-            <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" aria-label="Rétrospective annuelle" class="text-[11px] font-bold text-indigo-300 hover:text-white px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
-                🎉<span class="hidden sm:inline"> Rétrospective</span>
-            </button>
-            <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" aria-label="Copier un message Discord" class="hidden text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+
+            <!-- Outils d'organisateur (admin/kiosque/discord) : masqués par défaut (voir
+                 setupAdminMode dans main.js), pas de séparateur dédié tant qu'ils sont cachés -
+                 main.js en ajoute un dynamiquement en même temps qu'il les révèle. -->
+            <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" aria-label="Copier un message Discord" class="hidden text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 💬<span class="hidden sm:inline"> Discord</span>
             </button>
-            <a id="btn-trigger-webhook" href="https://github.com/2gether-asso/2GELOGView/actions/workflows/jekyll-gh-pages.yml" target="_blank" rel="noopener" title="Ouvre la page GitHub Actions : cliquez « Run workflow », cochez « Poster le programme de la semaine sur Discord », puis lancez." aria-label="Lancer le digest Discord" class="hidden text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <a id="btn-trigger-webhook" href="https://github.com/2gether-asso/2GELOGView/actions/workflows/jekyll-gh-pages.yml" target="_blank" rel="noopener" title="Ouvre la page GitHub Actions : cliquez « Run workflow », cochez « Poster le programme de la semaine sur Discord », puis lancez." aria-label="Lancer le digest Discord" class="hidden text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 🔗<span class="hidden sm:inline"> Lancer le digest Discord</span>
             </a>
-            <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" aria-label="Mode Kiosque" class="hidden text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" aria-label="Mode Kiosque" class="hidden text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 🖥️<span class="hidden sm:inline"> Kiosque</span>
             </button>
-            <button id="btn-admin-view" aria-label="Mode Admin" class="hidden text-[11px] font-bold text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
+            <button id="btn-admin-view" aria-label="Mode Admin" class="hidden text-[11px] font-bold text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
                 🛠️<span class="hidden sm:inline"> Admin</span>
             </button>
-            <button id="btn-clear-filters" aria-label="Annuler les filtres" class="text-[11px] font-bold text-rose-400 hover:text-rose-300 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
+
+            <button id="btn-clear-filters" aria-label="Annuler les filtres" class="text-[11px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
                 ✕<span class="hidden sm:inline"> Annuler les filtres</span>
             </button>
-            <div class="w-full sm:w-72 relative">
+
+            <div class="w-full sm:w-64 sm:ml-2 relative">
                 <label for="recherche" class="sr-only">Rechercher un événement</label>
-                <input type="text" id="recherche" placeholder="Rechercher un stream, jeu, tag... (/)" class="w-full bg-black/40 border border-white/5 rounded-xl pl-3 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all backdrop-blur-md">
+                <input type="text" id="recherche" autocomplete="off" placeholder="Rechercher un stream, jeu, tag... (/)" class="w-full bg-black/40 border border-white/5 rounded-xl pl-3 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all backdrop-blur-md">
                 <button id="btn-clear-search" type="button" title="Effacer la recherche" aria-label="Effacer la recherche" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs px-1">✕</button>
                 <span id="search-icon" class="absolute right-3 top-2.5 text-slate-600 text-xs pointer-events-none" aria-hidden="true">🔍</span>
+                <!-- Historique des dernières recherches (voir setupSearchInput dans main.js), affiché
+                     au focus du champ tant qu'il est vide. -->
+                <div id="search-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 z-30 glass-panel rounded-xl p-1.5 shadow-2xl text-left"></div>
             </div>
         </div>
     </header>
@@ -235,36 +273,13 @@
         ✕ Quitter le Kiosque
     </button>
 
-    <div id="filters-bar" class="border-b border-white/5 bg-[#161b22]/30 backdrop-blur-md shrink-0 text-xs text-slate-400">
-        <button id="btn-toggle-filters" class="w-full flex items-center justify-between px-3 sm:px-6 py-2 hover:bg-white/5 transition-all" aria-expanded="true" aria-controls="filters-bar-content">
-            <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-300">🔧 Filtres <span class="font-medium normal-case text-slate-500">— catégories, tags, types, période</span></span>
-            <span id="filters-chevron" class="text-slate-500 text-[10px]" aria-hidden="true">▾</span>
-        </button>
-        <div id="filters-bar-content" class="px-3 sm:px-6 pb-2.5 flex flex-col divide-y divide-white/5">
-            <div class="flex flex-wrap items-center gap-4 py-2 first:pt-0">
-                <div class="flex items-center gap-2">
-                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">🏷️ Catégories</span>
-                    <div class="flex gap-1.5 flex-wrap" id="filter-categories-container"></div>
-                </div>
-                <div class="h-4 w-px bg-white/10"></div>
-                <div class="flex items-center gap-2 flex-1 min-w-0">
-                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">#️⃣ Tags récurrents</span>
-                    <div id="filter-tags-container" class="flex gap-1.5 overflow-x-auto custom-scroll pb-1"></div>
-                </div>
-            </div>
-            <div class="flex items-center gap-2 flex-wrap gap-y-1.5 py-2">
-                <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">🎬 Types</span>
-                <div id="filter-types-container" class="flex gap-1.5 flex-wrap"></div>
-            </div>
-            <div class="flex items-center gap-2 flex-wrap gap-y-1.5 py-2 last:pb-0">
-                <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">📅 Période</span>
-                <input type="date" id="filter-date-from" aria-label="Du" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark]">
-                <span class="text-slate-500 text-[11px]" aria-hidden="true">→</span>
-                <input type="date" id="filter-date-to" aria-label="Au" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark]">
-                <button id="btn-clear-date-range" title="Réinitialiser la période" aria-label="Réinitialiser la période" class="hidden text-slate-500 hover:text-rose-300 text-xs px-1">✕</button>
-            </div>
-        </div>
-    </div>
+    <!-- Popover mini-calendrier (QOL #16, voir setupMiniCalendar dans main.js), positionné en
+         JS (position:fixed) et peuplé à l'ouverture. Enfant direct de <body>, PAS niché dans
+         #filters-sidebar : celle-ci a un backdrop-filter (Tailwind backdrop-blur-md), qui crée
+         un containing block pour les descendants position:fixed - niché dedans, ce popover se
+         retrouvait piégé dans le contexte d'empilement local de #filters-sidebar et passait donc
+         TOUJOURS derrière #main (peu importe son z-index), même en position:fixed. -->
+    <div id="mini-calendar-popover" class="hidden fixed z-40 glass-panel rounded-xl p-3 shadow-2xl w-56 text-left"></div>
 
     <div id="next-event-banner" tabindex="0" role="button" aria-label="Ouvrir le prochain événement" class="hidden shrink-0 border-b border-indigo-500/20 bg-indigo-500/[0.06] px-3 sm:px-6 py-2 text-xs items-center gap-2 cursor-pointer hover:bg-indigo-500/10 focus:outline-none focus:bg-indigo-500/10 transition-all">
         <span id="next-event-icon" class="shrink-0">⏳</span>
@@ -272,11 +287,75 @@
     </div>
 
     <main class="flex-1 flex overflow-hidden w-full relative">
+        <!-- Sidebar Filtres (repliable, même mécanique que #sidebar-panel à droite - voir
+             setupFiltersSidebarToggle/createCollapsiblePanel dans main.js) : anciennement une
+             barre horizontale sous l'en-tête, devenue une sidebar gauche pour rester lisible
+             malgré le nombre de sections (vues favorites, catégories, tags, types,
+             organisateurs, période) plutôt que de s'entasser sur une seule ligne qui déborde. -->
+        <section id="filters-sidebar" class="w-full sm:w-72 absolute sm:relative inset-y-0 left-0 z-20 sm:z-auto border-r border-white/5 bg-[#0d1117] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden backdrop-blur-sm transition-all shadow-2xl sm:shadow-none text-xs text-slate-400">
+            <div class="flex items-center justify-between px-4 py-3 shrink-0 border-b border-white/5">
+                <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-300">🔧 Filtres</span>
+                <button id="btn-toggle-filters-sidebar" title="Masquer le panneau" aria-label="Masquer le panneau de filtres" class="text-slate-500 hover:text-white text-xs p-1 rounded-md hover:bg-white/5 transition-all">✕</button>
+            </div>
+            <div id="filters-sidebar-content" class="flex-1 overflow-y-auto custom-scroll px-4 py-3 flex flex-col divide-y divide-white/5">
+                <div class="flex flex-col gap-2 pb-3 first:pt-0">
+                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">⭐ Vues favorites</span>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <label for="saved-views-select" class="sr-only">Choisir une vue favorite</label>
+                        <select id="saved-views-select" title="Rappeler un jeu de filtres enregistré" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 flex-1 min-w-0">
+                            <option value="">— Aucune —</option>
+                        </select>
+                        <button id="btn-save-view" title="Enregistrer les filtres actuels comme vue favorite" aria-label="Enregistrer la vue actuelle" class="text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1 rounded-lg border border-white/10 bg-white/5 transition-all shrink-0">💾</button>
+                        <button id="btn-delete-view" title="Supprimer la vue favorite sélectionnée" aria-label="Supprimer la vue favorite sélectionnée" class="hidden text-[11px] font-bold text-slate-500 hover:text-rose-300 px-1.5 py-1 rounded-lg transition-all shrink-0">🗑️</button>
+                    </div>
+                </div>
+                <div class="flex flex-col gap-2 py-3">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">🏷️ Catégories</span>
+                        <button id="btn-hidden-categories" title="Réafficher les catégories masquées" aria-label="Réafficher les catégories masquées" class="hidden text-[10px] font-bold text-amber-300 hover:text-amber-200 px-1.5 py-0.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all shrink-0"></button>
+                    </div>
+                    <div class="flex gap-1.5 flex-wrap" id="filter-categories-container"></div>
+                </div>
+                <div class="flex flex-col gap-2 py-3">
+                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">#️⃣ Tags récurrents</span>
+                    <div id="filter-tags-container" class="flex gap-1.5 flex-wrap"></div>
+                </div>
+                <div class="flex flex-col gap-2 py-3">
+                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">🎬 Types</span>
+                    <div id="filter-types-container" class="flex gap-1.5 flex-wrap"></div>
+                </div>
+                <div class="flex flex-col gap-2 py-3">
+                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">👤 Organisateurs</span>
+                    <div id="filter-hosts-container" class="flex gap-1.5 flex-wrap"></div>
+                </div>
+                <div class="flex flex-col gap-2 py-3 last:pb-0">
+                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">📅 Période</span>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <input type="date" id="filter-date-from" aria-label="Du" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
+                        <span class="text-slate-500 text-[11px]" aria-hidden="true">→</span>
+                        <input type="date" id="filter-date-to" aria-label="Au" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
+                        <button id="btn-clear-date-range" title="Réinitialiser la période" aria-label="Réinitialiser la période" class="hidden text-slate-500 hover:text-rose-300 text-xs px-1 shrink-0">✕</button>
+                    </div>
+                    <button id="btn-open-minical" title="Aller à une date précise" aria-label="Ouvrir le mini-calendrier de navigation" class="text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 transition-all w-full">
+                        🗓️ Aller à une date...
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <button id="btn-reopen-filters-sidebar" title="Afficher les filtres" aria-label="Afficher le panneau de filtres" class="hidden fixed left-0 top-1/2 -translate-y-1/2 z-30 bg-[#161b22]/90 border border-white/10 border-l-0 rounded-r-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">🔧</button>
+
         <section class="flex-1 p-4 h-full relative overflow-y-auto overflow-x-hidden custom-scroll bg-black/[0.05]">
             <div id="calendar" class="w-full min-h-full"></div>
             <div id="search-results" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
             <div id="timeline-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
-            <div id="map-view" class="hidden w-full h-full">
+            <div id="today-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
+            <!-- isolate : Leaflet pose ses propres z-index internes (jusqu'à 700 pour ses panes/
+                 popups) sur des éléments sans quoi contenir ce sous-arbre dans son propre contexte
+                 d'empilement - ces 700 finiraient comparés directement à la modale d'événement
+                 (z-50, voir #custom-modal-container) au niveau racine et passeraient TOUJOURS
+                 devant elle (même bug de fond que le popover du mini-calendrier, voir plus haut). -->
+            <div id="map-view" class="hidden w-full h-full isolate">
                 <div id="meetup-map" class="w-full h-full rounded-xl overflow-hidden"></div>
             </div>
         </section>
@@ -335,7 +414,11 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                    <button id="modal-copy-link-btn" title="Copier le lien de cet événement" aria-label="Copier le lien de cet événement" class="p-1.5 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all font-bold text-sm">🔗</button>
+                    <button id="modal-add-to-cal-btn" title="Ajouter cet événement à mon calendrier (.ics)" aria-label="Ajouter cet événement à mon calendrier" class="p-1.5 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all font-bold text-sm">📅</button>
+                    <!-- Partage natif (Web Share API) si le navigateur le permet (surtout mobile),
+                         sinon repli sur la copie presse-papiers - voir modal-copy-link-btn dans
+                         ModalView.js (même bouton, comportement choisi au clic). -->
+                    <button id="modal-copy-link-btn" title="Partager / copier le lien de cet événement" aria-label="Partager ou copier le lien de cet événement" class="p-1.5 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all font-bold text-sm">🔗</button>
                     <button id="modal-close-btn" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
                 </div>
             </div>
@@ -388,6 +471,13 @@
             <div class="flex flex-col space-y-1.5">
                 <div class="text-slate-400 font-bold text-[9px] uppercase tracking-wider">🏷️ Tags indexés (Cliquables)</div>
                 <div id="modal-event-tags" class="flex flex-wrap gap-1.5"></div>
+            </div>
+
+            <!-- Suggestions "événements similaires" (même tag/organisateur/type), voir
+                 renderSimilarEvents dans ModalView.js - masqué si aucun événement apparenté trouvé. -->
+            <div id="modal-similar-container" class="hidden flex-col space-y-1.5"><!-- flex ajouté/retiré en JS avec hidden, voir _toggleModalLink dans ModalView.js -->
+                <div class="text-slate-400 font-bold text-[9px] uppercase tracking-wider">✨ Vous aimerez peut-être</div>
+                <div id="modal-similar-events" class="flex flex-col gap-1.5"></div>
             </div>
 
             <div class="flex flex-col gap-2">
@@ -443,6 +533,22 @@
                         <div>🔔 Rappels — sur n'importe quel événement, "M'envoyer un rappel" (dans sa modale) prévient par notification navigateur avant son début. Pour une série à plusieurs dates (hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion. Le bouton 🔔 Rappels de l'en-tête ouvre la liste de vos abonnements et un interrupteur global pour tout activer d'un coup.</div>
                         <div>📆 Période (Du/Au) — filtre le calendrier sur une plage de dates ; le lien <code>?today=1</code> n'affiche que les sessions du jour.</div>
                         <div>🎉 Rétrospective — bilan visuel de l'année (temps passé ensemble, catégories, MVP organisateur, mois le plus actif...), une année à la fois.</div>
+                        <div>☀️ Aujourd'hui — page dédiée au programme du jour (raccourci clavier <b>T</b>), avec repère "maintenant" sur la session en cours ou à venir.</div>
+                        <div>🗓️ Frise — la même sélection filtrée organisée en frise chronologique verticale, une année à la fois (sélecteur en haut), démarre sur l'année en cours avec un repère "Aujourd'hui".</div>
+                        <div>🗺️ Carte — localise les événements IRL (meetups) par ville reconnue ; cliquez un marqueur pour la liste de ses événements, cliquez-en un pour l'ouvrir.</div>
+                        <div>👤 Profil organisateur — cliquez un nom ("Top Organisateurs" ou "Organisé par") pour son détail complet : répartition, jour préféré, mur des affiches, export .ics/image dédiés.</div>
+                        <div>⭐ Vues favorites — enregistrez un jeu de filtres actuel (catégories, types, tags, organisateur) sous un nom, pour le rappeler en un clic depuis le sélecteur de la sidebar Filtres.</div>
+                        <div>👁 Masquer une catégorie — le petit bouton à côté de chaque catégorie l'exclut durablement de toutes les vues (pas juste "filtrer dessus") ; réaffichable via le badge 🙈 qui apparaît à côté.</div>
+                        <div>📐 Densité — bascule les cartes d'événements entre affichage confortable et compact, pour en voir davantage à l'écran sans défiler.</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Raccourcis clavier</div>
+                    <div class="space-y-1 text-xs">
+                        <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">/</kbd> — focus sur la recherche</div>
+                        <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">T</kbd> — ouvre la page "☀️ Aujourd'hui"</div>
+                        <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">←</kbd> / <kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">→</kbd> — période précédente/suivante (vue calendrier)</div>
+                        <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">Échap</kbd> — ferme la fenêtre au premier plan</div>
                     </div>
                 </div>
             </div>
@@ -456,12 +562,48 @@
                 <button id="btn-close-reminders" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
             </div>
 
-            <div class="glass-panel rounded-xl p-3 flex items-center justify-between gap-3 mb-4">
+            <div class="glass-panel rounded-xl p-3 flex items-center justify-between gap-3 mb-3">
                 <div class="text-xs text-slate-300 min-w-0">
                     <div class="font-bold text-slate-200">Tout activer</div>
-                    <div class="text-slate-500">Être prévenu 15 min avant chaque session à venir, sans avoir à suivre chaque série individuellement.</div>
+                    <div id="reminders-blanket-desc" class="text-slate-500">Être prévenu avant chaque session à venir, sans avoir à suivre chaque série individuellement.</div>
                 </div>
                 <button id="btn-toggle-all-reminders" aria-pressed="false" class="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
+            </div>
+
+            <div class="glass-panel rounded-xl p-3 flex items-center justify-between gap-3 mb-3">
+                <div class="text-xs text-slate-300 min-w-0">
+                    <label for="reminder-lead-select" class="font-bold text-slate-200 block">⏱️ Délai de rappel</label>
+                    <div class="text-slate-500">Combien de temps avant le début de la session.</div>
+                </div>
+                <select id="reminder-lead-select" title="Délai de rappel avant chaque session" class="shrink-0 bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500">
+                    <option value="5">5 min avant</option>
+                    <option value="15">15 min avant</option>
+                    <option value="30">30 min avant</option>
+                    <option value="60">1 heure avant</option>
+                </select>
+            </div>
+
+            <div class="glass-panel rounded-xl p-3 flex items-center justify-between gap-3 mb-3">
+                <div class="text-xs text-slate-300 min-w-0">
+                    <div class="font-bold text-slate-200">🌅 Résumé quotidien</div>
+                    <div class="text-slate-500">Une notification chaque matin avec le programme du jour, s'il y en a un.</div>
+                </div>
+                <button id="btn-toggle-daily-digest" aria-pressed="false" class="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
+            </div>
+
+            <div class="glass-panel rounded-xl p-3 mb-4">
+                <div class="flex items-center justify-between gap-3">
+                    <div class="text-xs text-slate-300 min-w-0">
+                        <div class="font-bold text-slate-200">🌙 Ne pas déranger</div>
+                        <div id="reminders-dnd-desc" class="text-slate-500">Met en pause tous les rappels temporairement, sans rien désabonner.</div>
+                    </div>
+                    <button id="btn-clear-dnd" class="hidden shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 transition-all">Réactiver</button>
+                </div>
+                <div id="dnd-options" class="flex flex-wrap gap-1.5 mt-2.5">
+                    <button data-dnd-hours="1" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">1h</button>
+                    <button data-dnd-hours="8" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">Ce soir (8h)</button>
+                    <button data-dnd-hours="24" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">24h</button>
+                </div>
             </div>
 
             <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Suivis individuellement</div>
@@ -497,9 +639,14 @@
     <!-- Mini-profil d'un organisateur, ouvert au clic sur son nom (sidebar "Top organisateurs"
          ou champ "Organisé par" de la modale) - voir openOrganizerProfile() dans main.js. -->
     <div id="organizer-profile-overlay" class="fixed inset-0 z-[64] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-10">
-        <div class="max-w-2xl mx-auto flex items-center justify-between mb-4">
+        <div class="max-w-2xl mx-auto flex items-center justify-between mb-1 gap-2">
             <h3 id="organizer-profile-title" class="text-lg font-black text-white"></h3>
-            <button id="btn-close-organizer-profile" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">✕ Fermer</button>
+            <div class="flex items-center gap-1 shrink-0">
+                <button id="btn-organizer-export-ics" title="Exporter les sessions de cet organisateur en .ics" aria-label="Exporter les sessions de cet organisateur en .ics" class="p-2 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all font-bold text-sm">📅</button>
+                <button id="btn-organizer-export-image" title="Générer une image récap partageable" aria-label="Générer une image récap partageable" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all font-bold text-sm">🖼️</button>
+                <button id="btn-organizer-copy-link" title="Copier le lien direct vers ce profil" aria-label="Copier le lien direct vers ce profil" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all font-bold text-sm">🔗</button>
+                <button id="btn-close-organizer-profile" title="Fermer" aria-label="Fermer" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">✕</button>
+            </div>
         </div>
         <div id="organizer-profile-summary" class="max-w-2xl mx-auto mb-4"></div>
         <div id="organizer-profile-sections" class="max-w-2xl mx-auto space-y-4 mb-4"></div>

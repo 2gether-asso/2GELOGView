@@ -5,75 +5,140 @@ const MONTH_LABELS_LONG = [
     'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
 ];
 
+/** Un "nœud" de la frise : pastille sur l'axe vertical + contenu à droite, reliés par un
+ * segment de trait qui s'enchaîne naturellement d'un nœud au suivant (bordure de la colonne
+ * d'axe, pas un positionnement absolu à coordonnées magiques). */
+function axisNode(dotHtml, contentHtml) {
+    return `
+        <div class="flex gap-3">
+            <div class="flex flex-col items-center w-5 shrink-0">
+                ${dotHtml}
+                <div class="w-px flex-1 bg-white/10 my-1"></div>
+            </div>
+            <div class="flex-1 min-w-0 pb-5 -mt-0.5">${contentHtml}</div>
+        </div>
+    `;
+}
+
+function monthDot() {
+    return `<span class="w-3 h-3 rounded-full bg-indigo-400 ring-4 ring-[#06080c] shrink-0 mt-0.5"></span>`;
+}
+
+function eventDot() {
+    return `<span class="w-2 h-2 rounded-full bg-white/25 ring-4 ring-[#06080c] shrink-0 mt-2.5"></span>`;
+}
+
+function todayDot() {
+    return `<span class="relative flex w-3 h-3 shrink-0 mt-0.5" aria-hidden="true">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75"></span>
+        <span class="relative inline-flex rounded-full w-3 h-3 bg-rose-500 ring-4 ring-[#06080c]"></span>
+    </span>`;
+}
+
+function renderYearNav(year) {
+    const currentYear = new Date().getFullYear();
+    return `
+        <div class="flex items-center justify-center gap-3 sm:gap-4 mb-2">
+            <button data-timeline-year="${year - 1}" aria-label="Année précédente" class="text-slate-400 hover:text-white text-xl px-2 transition-all">‹</button>
+            <h2 class="text-xl sm:text-2xl font-black text-white">Frise ${year}</h2>
+            ${year !== currentYear ? `<button data-timeline-year="${currentYear}" title="Revenir à l'année en cours" class="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md uppercase tracking-wider">Aujourd'hui</button>` : ''}
+            <button data-timeline-year="${year + 1}" aria-label="Année suivante" class="text-slate-400 hover:text-white text-xl px-2 transition-all">›</button>
+        </div>
+    `;
+}
+
 /**
- * Vue "Frise" : les mêmes événements filtrés que le calendrier, organisés en frise
- * chronologique groupée par mois - à la différence de la vue Planning de FullCalendar (une
- * liste plate, une ligne par occurrence), une série qui s'étale sur plusieurs semaines (ex:
- * une saison diffusée chaque semaine) apparaît comme UN SEUL bloc continu (même regroupement
- * que la vue Recherche, voir SearchResultsView.js - réutilisé tel quel ici), ancré sous le mois
- * de sa première occurrence plutôt que dispersée en autant d'entrées que de diffusions.
+ * Vue "Frise" : une vraie frise chronologique verticale (axe + pastilles reliées par un trait,
+ * pas une simple liste groupée par mois) des événements filtrés, sur UNE année à la fois
+ * (sélecteur d'année, comme la Rétrospective) - par défaut l'année en cours, avec un repère
+ * "Aujourd'hui" animé inséré à sa vraie position chronologique dans l'axe et un défilement
+ * automatique jusqu'à lui à l'ouverture (voir `scrollToToday`, positionné par l'appelant au
+ * moment où la vue devient visible - pas à chaque changement de filtre/tri une fois déjà ouverte,
+ * pour ne pas arracher l'utilisateur d'un endroit où il aurait déjà fait défiler manuellement).
+ * Les occurrences répétées d'un même titre (saison, soirée hebdo) restent regroupées en un seul
+ * nœud (même logique que la vue Recherche, voir SearchResultsView.js), ancré sous le mois de sa
+ * première occurrence.
  * @param {HTMLElement} container
- * @param {Array<Object>} events - Déjà filtrés par l'appelant (comme renderSearchResults)
- * @param {'asc'|'desc'} order - Sens d'affichage (mois ET séries dans chaque mois) ; le bouton
- * de bascule est rendu ici, son clic est délégué par l'appelant (voir data-timeline-order-toggle).
+ * @param {Array<Object>} events - Déjà filtrés par l'appelant (comme renderSearchResults), TOUTES années confondues
+ * @param {'asc'|'desc'} order
+ * @param {number} year - Année actuellement affichée
+ * @param {boolean} scrollToToday - Défile jusqu'au repère "Aujourd'hui" une fois rendu
+ * @returns {Array<Object>} Les événements réellement affichés (année sélectionnée), pour que
+ *   l'appelant puisse retrouver l'objet complet au clic (délégation par data-idx).
  */
-export function renderTimeline(container, events, order = 'asc') {
-    if (!events || events.length === 0) {
-        container.innerHTML = `<div class="text-center text-sm text-slate-500 py-24">Aucun événement à afficher pour ces filtres.</div>`;
-        return;
+export function renderTimeline(container, events, order = 'asc', year = new Date().getFullYear(), scrollToToday = false) {
+    const yearEvents = events.filter(e => new Date(e.start).getFullYear() === year);
+    const headerHtml = `
+        <div class="max-w-2xl mx-auto mb-2">
+            ${renderYearNav(year)}
+            <div class="flex justify-end">
+                <button data-timeline-order-toggle title="Inverser l'ordre chronologique de la frise" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                    ${order === 'asc' ? '⬇️ Plus ancien d\'abord' : '⬆️ Plus récent d\'abord'}
+                </button>
+            </div>
+        </div>
+    `;
+
+    if (yearEvents.length === 0) {
+        container.innerHTML = `${headerHtml}<div class="text-center text-sm text-slate-500 py-20">Aucun événement à afficher pour ${year} avec ces filtres.</div>`;
+        return [];
     }
 
     const indexOf = (() => {
-        const map = new Map(events.map((e, i) => [e, i]));
+        const map = new Map(yearEvents.map((e, i) => [e, i]));
         return (e) => map.get(e);
     })();
 
     const cmp = (a, b) => order === 'asc' ? a.start.localeCompare(b.start) : b.start.localeCompare(a.start);
-    const sorted = [...events].sort(cmp);
-    // groupByTitle suit l'ordre de première rencontre dans le tableau donné : comme `sorted`
-    // est déjà dans le sens demandé, chaque groupe hérite naturellement de ce même sens sans
-    // retri supplémentaire (aucun besoin de re-classer les groupes ni les compartiments mensuels
-    // séparément ci-dessous).
+    const sorted = [...yearEvents].sort(cmp);
+    // groupByTitle suit l'ordre de première rencontre : comme `sorted` est déjà dans le sens
+    // demandé, chaque groupe hérite naturellement de ce même sens sans retri supplémentaire.
     const groups = groupByTitle(sorted);
 
     // Ancre chaque groupe sur sa PREMIÈRE occurrence CHRONOLOGIQUE (toujours la plus ancienne,
     // quel que soit le sens d'affichage) : une série qui s'étale sur plusieurs mois n'apparaît
     // qu'une fois, sous son mois de départ - jamais dupliquée.
-    const byMonth = new Map(); // "2026-03" -> [group, ...]
+    const byMonth = new Map(); // month index (0-11) -> [group, ...]
     groups.forEach(group => {
         const first = [...group].sort((a, b) => a.start.localeCompare(b.start))[0];
-        const d = new Date(first.start);
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        if (!byMonth.has(key)) byMonth.set(key, []);
-        byMonth.get(key).push(group);
+        const m = new Date(first.start).getMonth();
+        if (!byMonth.has(m)) byMonth.set(m, []);
+        byMonth.get(m).push(group);
     });
 
-    const monthKeys = [...byMonth.keys()].sort();
-    if (order === 'desc') monthKeys.reverse();
+    const monthOrder = [...byMonth.keys()].sort((a, b) => order === 'asc' ? a - b : b - a);
 
-    const sectionsHtml = monthKeys.map(key => {
-        const [year, month] = key.split('-').map(Number);
-        const rowsHtml = byMonth.get(key)
-            .map(group => group.length > 1 ? renderGroupRow(group, indexOf) : renderRow(group[0], indexOf(group[0])))
-            .join('');
-        return `
-            <div class="mb-6">
-                <div class="sticky top-0 z-10 -mx-1 px-1 py-2 mb-2 bg-black/40 backdrop-blur-sm">
-                    <h3 class="text-sm font-black uppercase tracking-widest text-indigo-400">${MONTH_LABELS_LONG[month - 1]} ${year}</h3>
-                </div>
-                <div class="space-y-2">${rowsHtml}</div>
-            </div>
-        `;
-    }).join('');
+    // Repère "Aujourd'hui" : seulement pertinent pour l'année en cours, inséré au bon mois selon
+    // le sens d'affichage plutôt que systématiquement en haut ou en bas.
+    const now = new Date();
+    const showTodayMarker = year === now.getFullYear();
+    const todayMonth = now.getMonth();
 
-    const orderToggleHtml = `
-        <div class="max-w-3xl mx-auto mb-4 flex justify-end">
-            <button data-timeline-order-toggle title="Inverser l'ordre chronologique de la frise" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                ${order === 'asc' ? '⬇️ Plus ancien d\'abord' : '⬆️ Plus récent d\'abord'}
-            </button>
-        </div>
-    `;
+    let nodesHtml = '';
+    monthOrder.forEach(m => {
+        // Repère "Aujourd'hui" inséré juste avant le bloc du mois en cours (approximation au
+        // mois près, pas au jour près - suffisant pour "démarrer sur aujourd'hui" sans la
+        // complexité d'interclasser un repère non-événement au jour exact parmi les nœuds).
+        if (showTodayMarker && todayMonth === m) {
+            nodesHtml += axisNode(todayDot(), `<div id="timeline-today-marker" class="text-[11px] font-black text-rose-400 uppercase tracking-widest pt-0.5">📍 Aujourd'hui — ${now.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</div>`);
+        }
+        nodesHtml += axisNode(monthDot(), `<h3 class="text-sm font-black uppercase tracking-widest text-indigo-300">${MONTH_LABELS_LONG[m]}</h3>`);
+        // Chaque occurrence/groupe du mois obtient sa propre pastille (nœud) sur l'axe.
+        byMonth.get(m).forEach(group => {
+            const rowHtml = group.length > 1 ? renderGroupRow(group, indexOf) : renderRow(group[0], indexOf(group[0]));
+            nodesHtml += axisNode(eventDot(), rowHtml);
+        });
+    });
 
-    container.innerHTML = `${orderToggleHtml}<div class="max-w-3xl mx-auto">${sectionsHtml}</div>`;
+    container.innerHTML = `${headerHtml}<div class="max-w-2xl mx-auto">${nodesHtml}</div>`;
     wireGroupToggle(container);
+
+    if (scrollToToday) {
+        // scrollIntoView cible l'ancêtre scrollable réel (le conteneur #timeline-view a son
+        // propre overflow-y-auto) : { block: 'center' } centre le repère dans CE conteneur,
+        // pas dans la fenêtre entière.
+        container.querySelector('#timeline-today-marker')?.scrollIntoView({ block: 'center', behavior: 'auto' });
+    }
+
+    return yearEvents;
 }

@@ -1,8 +1,9 @@
 import { CONFIG } from '../config.js';
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
-import { renderStatusBadge, getOvernightSuffix } from './EventCardTemplate.js';
+import { renderStatusBadge, getOvernightSuffix, getIconSrc } from './EventCardTemplate.js';
 import { ReminderService } from '../services/ReminderService.js';
 import { embedFileName } from '../utils/EmbedId.js';
+import { IcsExporter } from '../services/IcsExporter.js';
 
 const REMINDER_IDLE_CLASS = "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200";
 const REMINDER_ACTIVE_CLASS = "bg-indigo-600/80 border-indigo-400 text-white";
@@ -18,13 +19,15 @@ export class ModalView {
      * @param {Function} onTagClick - Callback appelé avec le tag (sans #) cliqué dans la modale
      * @param {Function} onReminderChange - Callback appelé (sans argument) après un changement d'abonnement rappel
      * @param {Function} onHostClick - Callback appelé avec le nom (non normalisé) de l'organisateur cliqué
+     * @param {Function} getAllEvents - Renvoie le dépôt complet (pour les suggestions "événements similaires")
      */
-    static init(onTagClick = null, onReminderChange = null, onHostClick = null) {
+    static init(onTagClick = null, onReminderChange = null, onHostClick = null, getAllEvents = null) {
         if (this._initialized) return;
         this._initialized = true;
         this._onTagClick = onTagClick;
         this._onReminderChange = onReminderChange;
         this._onHostClick = onHostClick;
+        this._getAllEvents = getAllEvents;
 
         const container = document.getElementById('custom-modal-container');
         const closeBtn = document.getElementById('modal-close-btn');
@@ -83,11 +86,24 @@ export class ModalView {
         // robot ne lit que le HTML statique ; un vrai visiteur y est aussitôt redirigé vers
         // l'app (?event=<id>) sans rien y voir. embedFileName() doit rester identique à celui
         // utilisé côté génération pour que le lien retombe sur le bon fichier.
+        // Partage natif (QOL #11) si le navigateur le permet (surtout mobile, feuille de
+        // partage vers n'importe quelle appli) ; repli sur la copie presse-papiers sinon
+        // (desktop, ou navigateur sans Web Share API) - même bouton, comportement choisi au clic.
         document.getElementById('modal-copy-link-btn').addEventListener('click', async (e) => {
             if (!this._currentEventId) return;
             const base = new URL('.', window.location.href);
             const url = new URL(`e/${embedFileName(this._currentEventId)}.html`, base);
             const btn = e.currentTarget;
+
+            if (navigator.share) {
+                try {
+                    await navigator.share({ title: this._currentEventTitle || '2GELOG', url: url.href });
+                    return;
+                } catch {
+                    // Partage annulé par l'utilisateur (ou échec) : repli silencieux sur la copie
+                    // ci-dessous plutôt que de laisser croire que rien ne s'est passé.
+                }
+            }
             try {
                 await navigator.clipboard.writeText(url.href);
                 const original = btn.textContent;
@@ -96,6 +112,22 @@ export class ModalView {
             } catch {
                 window.prompt("Copiez ce lien :", url.href);
             }
+        });
+
+        // Ajout au calendrier (QOL #5) : un seul événement exporté en .ics, distinct de
+        // l'export global de l'en-tête (tout le planning affiché) ou du profil organisateur
+        // (toutes ses sessions) - réutilise IcsExporter telle quelle sur un lot d'un seul élément.
+        document.getElementById('modal-add-to-cal-btn').addEventListener('click', () => {
+            if (!this._currentEvent) return;
+            const filename = `${(this._currentEvent.title || 'evenement').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-2gelog.ics`;
+            IcsExporter.download([this._currentEvent], filename);
+        });
+
+        document.getElementById('modal-similar-events').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-similar-id]');
+            if (!btn || !this._getAllEvents) return;
+            const found = this._getAllEvents().find(ev => ev.id === btn.dataset.similarId);
+            if (found) this.open(found);
         });
     }
 
@@ -107,6 +139,7 @@ export class ModalView {
         this.init();
         if (!event) return;
 
+        this._currentEvent = event;
         this._currentEventId = event.id || null;
         this._currentEventTitle = event.title || null;
         // Rend l'URL partageable (?event=<id>) sans recharger la page ni polluer
@@ -210,6 +243,8 @@ export class ModalView {
             tagsBox.innerHTML = `<span class="text-slate-600 text-xs italic">Aucun tag</span>`;
         }
 
+        this._renderSimilarEvents(event);
+
         const modalContainer = document.getElementById('custom-modal-container');
         const modalBox = document.getElementById('custom-modal-box');
         modalContainer.classList.remove('opacity-0', 'pointer-events-none');
@@ -218,6 +253,58 @@ export class ModalView {
         // Accessibilité clavier : mémorise l'élément d'origine et déplace le focus dans la modale.
         this._lastFocused = document.activeElement;
         document.getElementById('modal-close-btn').focus();
+    }
+
+    /**
+     * Suggestions "événements similaires" (QOL #14) : mêmes tags (le plus significatif, x2),
+     * même organisateur, même type - exclut l'événement lui-même ET les autres occurrences du
+     * MÊME titre (déjà couvertes par le rappel par titre, voir ReminderService - suggérer "la
+     * même série à une autre date" n'apporterait rien de nouveau ici). Uniquement des sessions
+     * À VENIR (progressStatus "Prévu") : suggérer un événement déjà terminé (ou même "En Cours",
+     * pas encore fini mais déjà entamé) n'aiderait pas à planifier la suite.
+     */
+    static _renderSimilarEvents(event) {
+        const wrap = document.getElementById('modal-similar-container');
+        const container = document.getElementById('modal-similar-events');
+        const all = this._getAllEvents ? this._getAllEvents() : [];
+        const host = event.meta?.host || event.meta?.orga || CONFIG.DEFAULT_HOST;
+        const tags = new Set((event.tags || []).map(t => t.toLowerCase()));
+
+        const scored = all
+            .filter(e => e.id !== event.id && e.title !== event.title && !e.isCanceled && !e.isPlanned && e.progressStatus === 'Prévu')
+            .map(e => {
+                let score = 0;
+                if (e.type === event.type) score += 1;
+                if ((e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST) === host) score += 1;
+                score += (e.tags || []).filter(t => tags.has(t.toLowerCase())).length * 2;
+                return { e, score };
+            })
+            .filter(x => x.score > 0)
+            // À score égal, la session la plus proche dans le temps d'abord (plutôt que la plus
+            // lointaine) : plus utile pour "planifier la suite" que ce qui n'arrivera que dans
+            // plusieurs mois.
+            .sort((a, b) => b.score - a.score || new Date(a.e.start) - new Date(b.e.start))
+            .slice(0, 4);
+
+        if (scored.length === 0) {
+            wrap.classList.add('hidden');
+            wrap.classList.remove('flex');
+            return;
+        }
+
+        container.innerHTML = scored.map(({ e }) => {
+            const dateLabel = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+            return `
+                <button data-similar-id="${escapeHtml(e.id)}" class="w-full flex items-center gap-2 text-left p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 transition-all">
+                    <img src="${getIconSrc(e)}" alt="" class="w-8 aspect-[8/9] rounded object-cover shrink-0" onerror="this.style.display='none'">
+                    <div class="min-w-0 flex-1">
+                        <div class="text-xs font-bold text-slate-200 truncate">${escapeHtml(e.title)}</div>
+                        <div class="text-[10px] text-slate-500">${dateLabel}${e.heure ? ' · ' + e.heure : ''}</div>
+                    </div>
+                </button>`;
+        }).join('');
+        wrap.classList.remove('hidden');
+        wrap.classList.add('flex');
     }
 
     /** Applique le style actif/inactif au bouton de rappel selon l'abonnement de CE titre. */
@@ -252,6 +339,7 @@ export class ModalView {
             url.searchParams.delete('event');
             window.history.replaceState(null, '', url);
         }
+        this._currentEvent = null;
         this._currentEventId = null;
         this._currentEventTitle = null;
         this._currentEventHost = null;
