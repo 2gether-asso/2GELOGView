@@ -19,7 +19,11 @@ import { escapeHtml } from './utils/Html.js';
 import { formatMinutes, topN, formatCategoryLabel } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
 import { ReminderService } from './services/ReminderService.js';
-import { renderRetrospective, getAvailableYears, getBucketEvents, computeOrganizerFacts, renderBadgeShelf } from './ui/RetrospectiveView.js';
+import {
+    renderRetrospective, getAvailableYears, getBucketEvents, computeOrganizerFacts, renderBadgeShelf,
+    renderCategoryBreakdown, renderTopTags, renderTimeOfDayBreakdown, renderPosterWall,
+    renderMostRecurringEvent, renderBookendCards, renderHoverBarChart, WEEKDAY_LABELS
+} from './ui/RetrospectiveView.js';
 import { computeBadges } from './services/BadgeService.js';
 import { applySeasonalTheme, resolveActiveSeason, getManualOverride, setManualOverride } from './services/SeasonalTheme.js';
 
@@ -55,7 +59,7 @@ const FILTERS_STORAGE_KEY = 'ui:activeFilters';
 const SEEN_EVENTS_KEY = 'seen:upcomingEventIds';
 
 const CATEGORY_BTN_ACTIVE = "px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold shadow-[0_0_15px_rgba(99,102,241,0.4)]";
-const CATEGORY_BTN_INACTIVE = "px-3 py-1 rounded-lg bg-white/5 border border-white/5 text-slate-400 hover:text-slate-200 transition-all";
+const CATEGORY_BTN_INACTIVE = "px-3 py-1 rounded-lg bg-white/5 border border-white/5 text-slate-300 hover:text-white hover:bg-white/10 transition-all";
 
 function setActiveCategoryButton(selectedBtn) {
     document.querySelectorAll('#filter-categories-container button').forEach(b => {
@@ -135,7 +139,7 @@ function updateTagsFilterBar(events) {
     container.innerHTML = sortedTags.map(([tag, count]) => {
         const isSelected = currentTagFilter === tag;
         const safeTag = escapeHtml(tag);
-        return `<button data-tag="${safeTag}" class="px-3 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all backdrop-blur-md ${isSelected ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-white/10'}" >#${safeTag} <span class="text-[9px] opacity-60 ml-0.5">(${count})</span></button>`;
+        return `<button data-tag="${safeTag}" class="px-3 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all backdrop-blur-md ${isSelected ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}" >#${safeTag} <span class="text-[9px] opacity-70 ml-0.5">(${count})</span></button>`;
     }).join('');
 }
 
@@ -145,13 +149,18 @@ function renderTypeFilterBar() {
     const container = document.getElementById('filter-types-container');
     const types = Object.keys(CONFIG.THEMES).filter(name => name !== 'default');
 
-    const allBtn = `<button data-type="" class="px-2.5 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${!currentTypeFilter ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-white/10'}">Tous les types</button>`;
+    const allBtn = `<button data-type="" class="px-2.5 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${!currentTypeFilter ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}">Tous les types</button>`;
 
+    // Chaque pastille inactive garde un liseré de la couleur propre à son type (voir
+    // EventCardTemplate/CalendarView, qui utilisent la même teinte) : un repère visuel pour
+    // repérer un type au coup d'œil dans cette liste, sans attendre de le sélectionner.
     const typeBtns = types.map(name => {
         const theme = CONFIG.THEMES[name];
         const isSelected = currentTypeFilter === name;
-        const style = isSelected ? `background:${theme.col}33; border-color:${theme.col}; color:#fff;` : '';
-        return `<button data-type="${name}" class="px-2.5 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${isSelected ? 'font-bold' : 'bg-white/5 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-white/10'}" style="${style}">${name}</button>`;
+        const style = isSelected
+            ? `background:${theme.col}33; border-color:${theme.col}; color:#fff;`
+            : `border-left: 3px solid ${theme.col}99;`;
+        return `<button data-type="${name}" class="px-2.5 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${isSelected ? 'font-bold' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}" style="${style}">${name}</button>`;
     }).join('');
 
     container.innerHTML = allBtn + typeBtns;
@@ -866,9 +875,11 @@ function setupAdminMode() {
     const content = document.getElementById('admin-content');
 
     btnAdmin.classList.remove('hidden');
-    // Export Discord et mode Kiosque : plutôt des outils d'organisateur que d'usage courant,
-    // regroupés avec le mode Admin pour ne pas encombrer l'en-tête des visiteurs classiques.
+    // Export Discord, lien de déclenchement du digest webhook, et mode Kiosque : plutôt des
+    // outils d'organisateur que d'usage courant, regroupés avec le mode Admin pour ne pas
+    // encombrer l'en-tête des visiteurs classiques.
     document.getElementById('btn-export-discord').classList.remove('hidden');
+    document.getElementById('btn-trigger-webhook').classList.remove('hidden');
     document.getElementById('btn-kiosk-mode').classList.remove('hidden');
 
     const openAdmin = () => {
@@ -925,12 +936,17 @@ function openBucketDetail(kind, label, index) {
 // Sessions du dernier organisateur ouvert en profil (voir openOrganizerProfile) : indexé de la
 // même façon que le rendu, pour retrouver l'objet complet au clic sur une carte.
 let organizerProfileCache = [];
+// Mêmes sessions que organizerProfileCache mais non triées (juste facts.realSessions) : source
+// pour le filtrage par jour de semaine du graphique "hostWeekday" (voir openOrganizerWeekdayDetail).
+let organizerWeekdayCache = [];
 
 /**
  * Mini-profil d'un organisateur (toutes années confondues) : total de sessions/temps animé,
- * badges personnels (réutilise BadgeService/computeOrganizerFacts - même mécanique que la
- * rétrospective annuelle), et la liste complète de ses sessions. Ouvert depuis le "Top
- * organisateurs" de la sidebar ou le champ "Organisé par" de la modale d'un événement.
+ * répartition par catégorie/tags/moment de la journée, jour de semaine préféré, événement qui
+ * revient le plus, premier/dernier moment, mur des affiches, badges personnels (réutilise
+ * BadgeService/computeOrganizerFacts - même mécanique que la rétrospective annuelle), et la
+ * liste complète de ses sessions. Ouvert depuis le "Top organisateurs" de la sidebar ou le
+ * champ "Organisé par" de la modale d'un événement.
  * @param {string} hostName - Nom tel que cliqué (pas forcément déjà normalisé)
  */
 function openOrganizerProfile(hostName) {
@@ -940,6 +956,7 @@ function openOrganizerProfile(hostName) {
     const facts = computeOrganizerFacts(allEvents, normalized);
 
     organizerProfileCache = [...facts.realSessions].sort((a, b) => new Date(b.start) - new Date(a.start));
+    organizerWeekdayCache = facts.realSessions;
 
     const currentYear = new Date().getFullYear();
     const yearStats = StatsService.compute(allEvents.filter(e => new Date(e.start).getFullYear() === currentYear));
@@ -947,7 +964,7 @@ function openOrganizerProfile(hostName) {
 
     document.getElementById('organizer-profile-title').innerHTML = `👤 <span class="capitalize">${escapeHtml(hostName)}</span>`;
     document.getElementById('organizer-profile-summary').innerHTML = `
-        <div class="grid grid-cols-3 gap-3 mb-3">
+        <div class="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-3">
             <div class="glass-panel rounded-xl p-3 text-center">
                 <div class="text-xl font-black text-white">${facts.totalSessions}</div>
                 <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Sessions organisées</div>
@@ -960,16 +977,72 @@ function openOrganizerProfile(hostName) {
                 <div class="text-xl font-black text-white">${facts.distinctTypes}</div>
                 <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Types différents</div>
             </div>
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-emerald-400">${facts.reliabilityPct}%</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Sessions maintenues</div>
+            </div>
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-white">${facts.streak}</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">${facts.streak > 1 ? "Semaines d'affilée (record)" : 'Semaine active'}</div>
+            </div>
         </div>
         ${isTopHostThisYear ? `<div class="text-center text-xs font-bold text-amber-300 mb-3">👑 MVP de ${currentYear}</div>` : ''}
         ${renderBadgeShelf(computeBadges(facts))}
     `;
+
+    // Sections enrichies : mêmes briques que la rétrospective annuelle (voir RetrospectiveView.js),
+    // réutilisées telles quelles mais recentrées sur les seules sessions de CET organisateur.
+    // "hostWeekday" (au lieu de "weekday") distingue ce graphique de celui de la rétrospective
+    // annuelle : son clic doit filtrer organizerWeekdayCache, pas rouvrir getBucketEvents (qui
+    // ne connaît qu'une année et tous organisateurs confondus).
+    const weekdayChart = facts.weekdayBuckets.some(b => b.count > 0)
+        ? renderHoverBarChart(WEEKDAY_LABELS, facts.weekdayBuckets, '📆', (peak) => `Jour préféré pour organiser : ${peak}`, 'hostWeekday')
+        : '';
+    document.getElementById('organizer-profile-sections').innerHTML = [
+        renderCategoryBreakdown(facts.stats.byCategory),
+        weekdayChart,
+        renderTimeOfDayBreakdown(facts.realSessions),
+        renderMostRecurringEvent(facts.realSessions),
+        renderTopTags(facts.stats.byTag),
+        renderBookendCards(facts.realSessions, {
+            first: 'Premier moment organisé',
+            last: 'Dernier moment organisé',
+            only: 'Le seul moment organisé',
+            showYear: true
+        }),
+        renderPosterWall(facts.realSessions)
+    ].filter(Boolean).join('');
+
     document.getElementById('organizer-profile-content').innerHTML = organizerProfileCache.map((e, idx) => {
         const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
         return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
     }).join('');
 
     document.getElementById('organizer-profile-overlay').classList.remove('hidden');
+}
+
+// Sessions du dernier jour de semaine ouvert en détail depuis LE PROFIL D'UN ORGANISATEUR (pas
+// depuis la rétrospective annuelle, voir openBucketDetail) : toutes années confondues, propres
+// à ce seul organisateur - un compartiment que getBucketEvents() ne sait pas produire (année +
+// tous organisateurs confondus).
+function openOrganizerWeekdayDetail(label, index) {
+    bucketDetailCache = organizerWeekdayCache
+        .filter(e => (new Date(e.start).getDay() + 6) % 7 === index)
+        .sort((a, b) => new Date(b.start) - new Date(a.start));
+
+    const title = document.getElementById('bucket-detail-title');
+    const content = document.getElementById('bucket-detail-content');
+    const count = bucketDetailCache.length;
+    title.textContent = `${label} · ${count} session${count > 1 ? 's' : ''}`;
+    content.innerHTML = bucketDetailCache.map((e, idx) => {
+        const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+    }).join('');
+
+    // Ferme le profil avant d'ouvrir le détail (même raison que openBucketDetail plus haut :
+    // ModalView/bucket-detail-overlay ne sont pas empilables par z-index avec ce panneau).
+    document.getElementById('organizer-profile-overlay').classList.add('hidden');
+    document.getElementById('bucket-detail-overlay').classList.remove('hidden');
 }
 
 function setupOrganizerProfile() {
@@ -979,6 +1052,8 @@ function setupOrganizerProfile() {
     document.getElementById('btn-close-organizer-profile').addEventListener('click', close);
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) { close(); return; }
+        const bar = e.target.closest('[data-bucket-kind="hostWeekday"]');
+        if (bar) { openOrganizerWeekdayDetail(bar.dataset.bucketLabel, Number(bar.dataset.bucketIndex)); return; }
         const card = e.target.closest('[data-idx]');
         if (!card) return;
         const ev = organizerProfileCache[Number(card.dataset.idx)];
@@ -1180,13 +1255,18 @@ function setupEscapeToClose() {
     ];
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
+        // Si plusieurs de ces panneaux sont visibles à la fois (ex: Détail ouvert par-dessus
+        // Rétrospective), Échap doit fermer celui du DESSUS (le plus grand z-index), pas le
+        // premier trouvé dans une liste figée — sinon il "ne se passe rien" à l'écran : le
+        // panneau du dessous se ferme bien mais reste invisible derrière celui resté ouvert.
+        let topMost = null;
         for (const [overlayId, btnId] of overlayCloseButtons) {
             const overlay = document.getElementById(overlayId);
-            if (!overlay.classList.contains('hidden')) {
-                document.getElementById(btnId).click();
-                return;
-            }
+            if (overlay.classList.contains('hidden')) continue;
+            const z = parseInt(getComputedStyle(overlay).zIndex, 10) || 0;
+            if (!topMost || z > topMost.z) topMost = { btnId, z };
         }
+        if (topMost) document.getElementById(topMost.btnId).click();
     });
 }
 
@@ -1318,9 +1398,9 @@ async function initApp() {
             const btn = e.currentTarget;
             try {
                 await navigator.clipboard.writeText(webcalUrl);
-                const original = btn.textContent;
-                btn.textContent = '✅ Copié !';
-                setTimeout(() => { btn.textContent = original; }, 1500);
+                const original = btn.innerHTML;
+                btn.innerHTML = '✅ Copié !';
+                setTimeout(() => { btn.innerHTML = original; }, 1500);
             } catch {
                 window.prompt("Copiez ce lien d'abonnement dans votre appli calendrier :", webcalUrl);
             }

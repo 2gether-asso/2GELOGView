@@ -5,8 +5,8 @@ import { CONFIG } from '../config.js';
 import { renderEventCard } from './EventCardTemplate.js';
 import { computeBadges } from '../services/BadgeService.js';
 
-const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
-const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+export const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
+export const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
 // Répartition par tranche horaire : donnée ordinale (matin → nuit), pas catégorielle - une
 // seule teinte du plus clair au plus foncé plutôt que des couleurs distinctes (voir skill
@@ -58,7 +58,7 @@ function sectionHeading(emoji, title) {
     return `<h3 class="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">${emoji} ${escapeHtml(title)}</h3>`;
 }
 
-function renderCategoryBreakdown(byCategory) {
+export function renderCategoryBreakdown(byCategory) {
     // Une catégorie à 0 min (ex: Gazette, événements "instantanés" sans durée réelle propre -
     // voir EventGenerator) n'apporte rien à un classement par temps passé : juste un bruit
     // visuel (barre quasi invisible) dans une vue pensée pour célébrer, pas pour l'exhaustivité.
@@ -92,7 +92,7 @@ function renderCategoryBreakdown(byCategory) {
  * tuile du calendrier (image/affiche, icône, badges, tags...) plutôt que de réinventer un
  * rendu dédié — c'est la même carte que partout ailleurs dans l'app, juste triée par durée.
  */
-function renderEventCarousel(events) {
+export function renderEventCarousel(events) {
     const top = [...events]
         .filter(e => (e.dur || 0) > 0)
         .sort((a, b) => (b.dur || 0) - (a.dur || 0))
@@ -129,7 +129,7 @@ function summarizeEventGroup(bucketEvents) {
 }
 
 /** Répartit une liste d'événements dans `bucketCount` compartiments (mois, jour de semaine...) via `keyFn`. */
-function bucketEvents(events, keyFn, bucketCount) {
+export function bucketEvents(events, keyFn, bucketCount) {
     const buckets = Array.from({ length: bucketCount }, () => ({ count: 0, duration: 0, events: [] }));
     events.forEach(e => {
         const b = buckets[keyFn(e)];
@@ -140,7 +140,7 @@ function bucketEvents(events, keyFn, bucketCount) {
     return buckets;
 }
 
-const BUCKET_KEY_FN = {
+export const BUCKET_KEY_FN = {
     month: e => new Date(e.start).getMonth(),
     weekday: e => (new Date(e.start).getDay() + 6) % 7 // 0 = Lundi
 };
@@ -175,7 +175,7 @@ export function getBucketEvents(events, year, kind, index) {
  * @param {(peakLabel:string) => string} headingFor
  * @param {'month'|'weekday'} kind
  */
-function renderHoverBarChart(labels, buckets, emoji, headingFor, kind) {
+export function renderHoverBarChart(labels, buckets, emoji, headingFor, kind) {
     const maxCount = Math.max(...buckets.map(b => b.count), 1);
     const peakIndex = buckets.reduce((best, b, i) => (b.count > buckets[best].count ? i : best), 0);
 
@@ -229,7 +229,7 @@ function renderHoverBarChart(labels, buckets, emoji, headingFor, kind) {
  * types sans @image propre (qui partagent tous la même bannière par défaut) n'apparaissent
  * qu'une fois, ce qui laisse surtout ressortir les vraies affiches saisies au cas par cas.
  */
-function renderPosterWall(events) {
+export function renderPosterWall(events) {
     const seen = new Map(); // url -> titre (garde le premier événement rencontré pour l'alt)
     events.forEach(e => {
         const url = sanitizeUrl(e.image);
@@ -253,25 +253,36 @@ function renderPosterWall(events) {
 }
 
 /**
- * Premier et dernier moment de l'année, façon "bookends" - réutilise la tuile calendrier
- * telle quelle. Exclut les sessions encore "Prévu" (à venir) : une rétrospective regarde en
+ * Premier et dernier moment (par défaut "de l'année"), façon "bookends" - réutilise la tuile
+ * calendrier telle quelle. Exclut les sessions encore "Prévu" (à venir) : on regarde en
  * arrière ("ce qu'on a vécu ensemble"), le dernier moment mis en avant ne doit jamais être un
- * événement qui n'a pas encore eu lieu (repli sur toutes les sessions si l'année n'a encore
+ * événement qui n'a pas encore eu lieu (repli sur toutes les sessions si la période n'a encore
  * connu aucun événement passé, ex: année en cours tout juste commencée).
+ * @param {Array<Object>} realSessions
+ * @param {{first?: string, last?: string, only?: string, showYear?: boolean}} [labels] -
+ *   Intitulés à personnaliser hors contexte "année" (ex: profil organisateur, toutes années
+ *   confondues) ; showYear affiche aussi l'année sur la date de chaque tuile dans ce cas.
  */
-function renderBookendCards(realSessions) {
+export function renderBookendCards(realSessions, labels = {}) {
+    const {
+        first: firstLabel = "Premier moment de l'année",
+        last: lastLabel = "Dernier moment de l'année",
+        only: onlyLabel = "Le seul moment de l'année",
+        showYear = false
+    } = labels;
+
     const happened = realSessions.filter(e => e.progressStatus !== 'Prévu');
     const pool = happened.length > 0 ? happened : realSessions;
     if (pool.length === 0) return '';
     const sorted = [...pool].sort((a, b) => new Date(a.start) - new Date(b.start));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    const dateOf = (e) => new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+    const dateOf = (e) => new Date(e.start).toLocaleDateString('fr-FR', showYear ? { day: '2-digit', month: '2-digit', year: 'numeric' } : { day: '2-digit', month: '2-digit' });
 
     if (first === last) {
         return `
             <div class="glass-panel rounded-2xl p-4 space-y-2">
-                ${sectionHeading('🎬', "Le seul moment de l'année")}
+                ${sectionHeading('🎬', onlyLabel)}
                 ${renderEventCard(first, dateOf(first))}
             </div>
         `;
@@ -280,11 +291,11 @@ function renderBookendCards(realSessions) {
     return `
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="glass-panel rounded-2xl p-4 space-y-2">
-                ${sectionHeading('🎬', "Premier moment de l'année")}
+                ${sectionHeading('🎬', firstLabel)}
                 ${renderEventCard(first, dateOf(first))}
             </div>
             <div class="glass-panel rounded-2xl p-4 space-y-2">
-                ${sectionHeading('🏁', "Dernier moment de l'année")}
+                ${sectionHeading('🏁', lastLabel)}
                 ${renderEventCard(last, dateOf(last))}
             </div>
         </div>
@@ -298,7 +309,7 @@ function renderBookendCards(realSessions) {
  * elles, classées par nombre de retours plutôt que par durée cumulée (un rendez-vous à petits
  * épisodes fréquents doit primer sur un film unique très long, déjà mis en avant ailleurs).
  */
-function renderMostRecurringEvent(realSessions) {
+export function renderMostRecurringEvent(realSessions) {
     const byTitle = new Map();
     realSessions.forEach(e => {
         const entry = byTitle.get(e.title) || { count: 0, dur: 0, sample: e };
@@ -340,7 +351,7 @@ function timeOfDayBucketIndex(heure) {
 }
 
 /** Répartition des sessions par tranche horaire (matin/après-midi/soirée/nuit), via `event.heure`. */
-function renderTimeOfDayBreakdown(events) {
+export function renderTimeOfDayBreakdown(events) {
     const withHeure = events.filter(e => e.heure);
     if (withHeure.length === 0) return '';
 
@@ -412,11 +423,24 @@ export function computeOrganizerFacts(events, hostName) {
     const distinctWatched = new Set(realSessions.filter(e => e.category === 'visionnage').map(e => e.title)).size;
     const reliabilityPct = (totalSessions + canceled) > 0 ? Math.round((totalSessions / (totalSessions + canceled)) * 100) : 100;
     const streak = longestWeekStreak(realSessions);
+    // Répartition par catégorie/tag/plateforme propre à CET organisateur (mêmes calculs que la
+    // rétrospective annuelle, voir StatsService.compute) : permet de réutiliser telles quelles
+    // renderCategoryBreakdown/renderTopTags dans le profil plutôt que de dupliquer cette logique.
+    const stats = StatsService.compute(hostEvents);
+    // Premières lettres d'un aperçu "quand" ce profil organise le plus (jour de semaine
+    // préféré) : calculé ici pour être disponible aussi bien pour l'affichage que pour un
+    // futur badge, sans dépendre du rendu du graphique correspondant.
+    const weekdayBuckets = bucketEvents(realSessions, BUCKET_KEY_FN.weekday, 7);
+    const peakWeekdayIndex = weekdayBuckets.reduce((best, b, i) => (b.count > weekdayBuckets[best].count ? i : best), 0);
+    const topWeekday = weekdayBuckets[peakWeekdayIndex].count > 0 ? WEEKDAY_LABELS[peakWeekdayIndex] : null;
 
-    return { realSessions, totalSessions, totalTime, distinctTypes, distinctGames, distinctWatched, canceled, reliabilityPct, streak };
+    return {
+        realSessions, totalSessions, totalTime, distinctTypes, distinctGames, distinctWatched,
+        canceled, reliabilityPct, streak, stats, weekdayBuckets, topWeekday
+    };
 }
 
-function renderTopTags(byTag) {
+export function renderTopTags(byTag) {
     const tags = topN(byTag, 8);
     if (tags.length === 0) return '';
     return `

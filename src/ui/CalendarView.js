@@ -14,16 +14,19 @@ export class CalendarView {
             return null;
         }
 
-        // Sur mobile, les vues en grille (Mois/Semaine) sont peu lisibles sur un petit
-        // écran : on verrouille la vue Planning (liste) en masquant les boutons qui
-        // permettraient de basculer vers les autres vues.
+        // Sur mobile, la grille 7 colonnes de la vue Semaine est illisible sur un petit
+        // écran : on propose à la place Planning (liste, par défaut) et Jour (grille
+        // horaire à une seule colonne, tout aussi précise mais qui tient dans la largeur).
         const isMobile = window.matchMedia('(max-width: 639px)').matches;
 
-        // Sur desktop, on rouvre l'app sur la dernière vue utilisée plutôt que de
-        // toujours retomber sur "Mois" (non applicable sur mobile, verrouillé sur Planning).
-        const savedView = !isMobile && localStorage.getItem('ui:calendarView');
-        const validViews = ['dayGridMonth', 'timeGridWeek', 'listMonth'];
-        const initialView = isMobile ? 'listMonth' : (validViews.includes(savedView) ? savedView : 'dayGridMonth');
+        // Rouvre l'app sur la dernière vue utilisée plutôt que de toujours retomber sur le
+        // même défaut, mais seulement si cette vue a du sens pour le type d'écran actuel
+        // (ex: "Semaine" mémorisée sur desktop ne doit pas s'appliquer en rouvrant sur mobile).
+        const desktopViews = ['dayGridMonth', 'timeGridWeek', 'listMonth'];
+        const mobileViews = ['listMonth', 'timeGridDay'];
+        const validViews = isMobile ? mobileViews : desktopViews;
+        const savedView = localStorage.getItem('ui:calendarView');
+        const initialView = validViews.includes(savedView) ? savedView : (isMobile ? 'listMonth' : 'dayGridMonth');
 
         const calendar = new FullCalendar.Calendar(calendarEl, {
             initialView,
@@ -32,14 +35,51 @@ export class CalendarView {
             headerToolbar: {
                 left: 'prev,next today',
                 center: 'title',
-                right: isMobile ? '' : 'dayGridMonth,timeGridWeek,listMonth'
+                right: isMobile ? 'listMonth,timeGridDay' : 'dayGridMonth,timeGridWeek,listMonth'
             },
             buttonText: {
-                today: "Aujourd'hui",
-                month: "Mois",
-                week: "Semaine",
-                list: "Planning"
+                today: "📍 Aujourd'hui",
+                month: "🗓️ Mois",
+                week: "📆 Semaine",
+                day: "☀️ Jour",
+                list: "📋 Planning"
             },
+            // Vue Semaine/Jour : "14h30" plutôt que "14:30", plus naturel en français et
+            // cohérent avec le reste de l'UI (aucune donnée n'utilise le format 24h à deux
+            // points ailleurs dans l'app).
+            slotLabelContent: (arg) => {
+                const h = arg.date.getHours();
+                const m = arg.date.getMinutes();
+                return h + 'h' + (m ? String(m).padStart(2, '0') : '');
+            },
+            // En-tête de colonne des vues à créneaux horaires (Semaine/Jour) : jour abrégé +
+            // numéro dans un badge rond, mis en évidence pour "aujourd'hui" — plus lisible et
+            // plus rapide à repérer que le texte plat par défaut de FullCalendar. Les autres
+            // vues (Mois) gardent leur rendu par défaut via `arg.text`.
+            dayHeaderContent: (arg) => {
+                if (!arg.view.type.startsWith('timeGrid')) return arg.text;
+                const weekday = arg.date.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '');
+                const wrapper = document.createElement('div');
+                wrapper.className = 'flex flex-col items-center gap-1 py-1';
+                wrapper.innerHTML = `
+                    <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">${weekday}</span>
+                    <span class="flex items-center justify-center w-7 h-7 rounded-full text-sm font-black ${arg.isToday ? 'bg-indigo-500 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'text-slate-200'}">${arg.date.getDate()}</span>
+                `;
+                return { domNodes: [wrapper] };
+            },
+            // Vue Planning : un seul intitulé par jour ("mercredi 12 août" via CSS
+            // text-transform:capitalize) plutôt que le texte secondaire par défaut
+            // (abréviation du jour) redondant avec l'intitulé principal.
+            listDayFormat: { weekday: 'long', month: 'long', day: 'numeric' },
+            listDaySideFormat: false,
+            // Le calendrier n'a pas son propre scroller interne (height:'auto' → tout défile
+            // dans la section parente), donc le mécanisme natif "en-têtes collants" de
+            // FullCalendar viserait cette même section, en concurrence directe avec notre barre
+            // d'outils déjà sticky (voir CSS .fc-header-toolbar) et sur un fond transparent
+            // (--fc-page-bg-color) : désactivé pour éviter un chevauchement visuel, notre
+            // propre design d'en-tête de jour (voir CSS .fc-list-day-cushion) reste lisible
+            // sans avoir besoin d'être collant.
+            stickyHeaderDates: false,
             // Filet de sécurité : le placeholder "No events to display" de la vue Planning
             // n'est pas toujours traduit malgré locale:'fr' (dépend du chargement effectif
             // du pack de langue) — explicite ici pour ne jamais l'afficher en anglais.
@@ -51,14 +91,13 @@ export class CalendarView {
             height: 'auto',
             themeSystem: 'standard',
 
-            // Vues à créneaux horaires : plage resserrée à la fenêtre réellement utilisée
-            // (les sessions ont toujours lieu entre ~14h et ~2h du matin) plutôt que 00h-24h.
-            // Sans ça, un événement tardif (23h50 → 01h50) se retrouvait tout en bas d'une
-            // colonne de 24h à faire défiler, presque invisible sans défiler énormément — il
-            // ne "manquait" pas de place, mais fallait défiler bien plus que ce qui semblait
-            // nécessaire pour l'atteindre. `slotMaxTime` dépasse volontairement minuit (26h =
-            // 2h du matin) pour que ces événements de fin de soirée restent bien dans la
-            // colonne de leur jour de départ.
+            // Vues à créneaux horaires : plage resserrée à la fenêtre réellement utilisée plutôt
+            // que 00h-24h, sans quoi un événement tardif (23h50 → 01h50) se retrouvait tout en
+            // bas d'une colonne de 24h à faire défiler, presque invisible sans défiler
+            // énormément. Simples valeurs de démarrage ici : recalculées dynamiquement à partir
+            // des heures min/max réellement présentes dans les données dès le premier
+            // sync() (voir _computeSlotRange), pour ne jamais couper un événement hors-norme
+            // (très tôt ou très tard) qui déborderait de cette plage par défaut.
             slotMinTime: '14:00:00',
             slotMaxTime: '26:00:00',
             slotDuration: '00:30:00',
@@ -96,12 +135,13 @@ export class CalendarView {
                 }
             },
 
-            // Mémorise la vue active (desktop uniquement, mobile reste verrouillé sur Planning),
-            // et reconstruit les événements FullCalendar : le bornage anti-débordement (voir
-            // _buildFcEvents) dépend de la vue affichée, donc change de vue seul (sans que les
-            // données filtrées elles-mêmes changent) doit aussi redéclencher ce calcul.
+            // Mémorise la vue active (séparément valide pour mobile et desktop, voir
+            // validViews plus haut) et reconstruit les événements FullCalendar : le bornage
+            // anti-débordement (voir _buildFcEvents) dépend de la vue affichée, donc changer
+            // de vue seul (sans que les données filtrées elles-mêmes changent) doit aussi
+            // redéclencher ce calcul.
             datesSet: function(info) {
-                if (!isMobile) localStorage.setItem('ui:calendarView', info.view.type);
+                localStorage.setItem('ui:calendarView', info.view.type);
                 CalendarView._applyEvents(info.view.calendar, CalendarView._lastEvents);
             }
         });
@@ -122,6 +162,18 @@ export class CalendarView {
     static _applyEvents(calendarInstance, customEvents) {
         if (!calendarInstance) return;
         calendarInstance.removeAllEvents();
+
+        // Plage horaire des vues Semaine/Jour recalculée sur les données réellement affichées
+        // (voir _computeSlotRange) : évite de couper un événement qui commence avant ou finit
+        // après la fenêtre par défaut. setOption ne redéclenche un re-rendu de la grille que si
+        // la plage a réellement changé (évite un recalcul inutile à chaque changement de vue).
+        const range = CalendarView._computeSlotRange(customEvents) || { min: '14:00:00', max: '26:00:00' };
+        const cachedRange = CalendarView._lastSlotRange;
+        if (!cachedRange || cachedRange.min !== range.min || cachedRange.max !== range.max) {
+            calendarInstance.setOption('slotMinTime', range.min);
+            calendarInstance.setOption('slotMaxTime', range.max);
+            CalendarView._lastSlotRange = range;
+        }
 
         // Seule la vue Mois (dayGridMonth) a besoin d'un événement borné à une seule journée :
         // chaque jour y est une case de hauteur variable, et un segment de continuation qui
@@ -165,6 +217,59 @@ export class CalendarView {
 
         calendarInstance.addEventSource(fullCalendarEvents);
     }
+
+    /**
+     * Calcule la plage [début, fin] à couvrir par les vues Semaine/Jour à partir des heures de
+     * diffusion réellement présentes dans les événements affichés (marge d'1h de chaque côté),
+     * plutôt qu'une fenêtre fixe qui pouvait couper un événement démarrant tôt ou finissant tard.
+     * @param {Array<Object>} customEvents
+     * @returns {{min: string, max: string}|null} Durées "HH:MM:SS" pour slotMinTime/slotMaxTime, ou
+     *   null si aucun événement horodaté (tous en "toute la journée"/sans heure) dans le lot.
+     */
+    static _computeSlotRange(customEvents) {
+        let minStart = null;
+        let maxEnd = null;
+
+        customEvents.forEach(evt => {
+            // Les événements "toute la journée" (bandeaux IRL multi-jours, ou sans heure connue)
+            // n'ont pas d'heure exploitable : ils s'affichent dans la ligne dédiée des vues à
+            // créneaux horaires, indépendamment de slotMinTime/slotMaxTime.
+            if (evt.allDay || !evt.start || !evt.start.includes('T')) return;
+
+            const [sh, sm] = evt.start.split('T')[1].split(':').map(Number);
+            const startMin = sh * 60 + sm;
+            if (minStart === null || startMin < minStart) minStart = startMin;
+
+            // Sans heure de fin connue, on ne réserve au moins que la place jusqu'à l'heure de
+            // début (la marge d'1h ajoutée plus bas laisse quand même de quoi afficher le bloc).
+            let endMin = startMin;
+            if (evt.end && evt.end.includes('T')) {
+                const [eh, em] = evt.end.split('T')[1].split(':').map(Number);
+                endMin = eh * 60 + em;
+                // Chevauche minuit (voir isMultiDay dans EventGenerator) : l'heure de fin se lit
+                // "après minuit" dans le référentiel de la grille (01:50 le lendemain → 25:50),
+                // plutôt que comme si elle finissait avant même d'avoir commencé.
+                if (evt.end.split('T')[0] !== evt.start.split('T')[0]) endMin += 24 * 60;
+            }
+            if (maxEnd === null || endMin > maxEnd) maxEnd = endMin;
+        });
+
+        if (minStart === null || maxEnd === null) return null;
+
+        minStart = Math.max(0, minStart - 60);
+        maxEnd = maxEnd + 60;
+        if (maxEnd <= minStart) maxEnd = minStart + 60; // Filet de sécurité pour un cas dégénéré.
+
+        return { min: CalendarView._minutesToDuration(minStart), max: CalendarView._minutesToDuration(maxEnd) };
+    }
+
+    /** Convertit un nombre de minutes (peut dépasser 1440 pour une heure "après minuit") en durée "HH:MM:SS". */
+    static _minutesToDuration(totalMinutes) {
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+    }
 }
 
 CalendarView._lastEvents = [];
+CalendarView._lastSlotRange = null;

@@ -121,7 +121,7 @@ export function renderEventCard(e, readableDate = null) {
         : '';
 
     return `
-        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 rounded-xl ${e.isCanceled ? 'opacity-30 line-through' : ''}">
+        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 my-1 rounded-xl ${e.isCanceled ? 'opacity-30 line-through' : ''}">
             ${posterLayer}
             <div class="relative z-10 flex flex-col">
                 <div class="flex items-start justify-between space-x-1.5 w-full">

@@ -1,8 +1,10 @@
-// Poste automatiquement le programme de la semaine dans un salon Discord via webhook (voir
-// .github/workflows/jekyll-gh-pages.yml, déclenchement hebdomadaire séparé du rafraîchissement
-// horaire des pages d'aperçu). Réutilise DiscordExporter.generateLinkDigest() (100% portable en
-// Node) : plutôt que du texte, un lien nu par événement vers sa page d'aperçu — Discord les
-// déplie en cartes enrichies (affiche, titre, date), bien plus épuré qu'un mur de texte.
+// Poste le programme de la semaine dans un salon Discord via webhook - UNIQUEMENT sur un
+// lancement manuel du workflow (voir .github/workflows/jekyll-gh-pages.yml, case à cocher
+// "post_discord_digest" du workflow_dispatch), jamais automatiquement : le bouton "🔗 Lancer le
+// digest Discord" du mode Admin du site (index.html) ouvre la page Actions du dépôt, où cette
+// case doit être cochée avant de lancer. Réutilise DiscordExporter.generateLinkDigest() (100%
+// portable en Node) : plutôt que du texte, un lien nu par événement vers sa page d'aperçu —
+// Discord les déplie en cartes enrichies (affiche, titre, date), bien plus épuré qu'un mur de texte.
 //
 // Nécessite un secret GitHub Actions DISCORD_WEBHOOK_URL (créé manuellement par un
 // organisateur : Discord → Paramètres du salon → Intégrations → Webhooks → Nouveau webhook,
