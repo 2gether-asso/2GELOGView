@@ -1,15 +1,18 @@
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
 import { ReminderService } from '../services/ReminderService.js';
+import { Icons } from './Icons.js';
 
 // Les visuels sources sont en format portrait (~8:9). On force ce ratio sur les
 // vignettes plutôt qu'un cadre carré pour éviter le crop "object-cover" sur un carré.
 const ICON_ASPECT_CLASS = "aspect-[8/9]";
 
+// Pastille pleine plutôt qu'un emoji rond (🔵🟢⚪) : rendu identique quel que soit l'OS/
+// navigateur (V2.5, voir Icons.js pour la même logique côté icônes SVG).
 const STATUS_STYLES = {
-    "Prévu": { icon: "🔵", classes: "text-sky-400 bg-sky-500/10 border-sky-500/20" },
-    "En Cours": { icon: "🟢", classes: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
-    "Terminé": { icon: "⚪", classes: "text-slate-400 bg-white/5 border-white/10" }
+    "Prévu": { dot: "bg-sky-400", classes: "text-sky-400 bg-sky-500/10 border-sky-500/20" },
+    "En Cours": { dot: "bg-emerald-400", classes: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+    "Terminé": { dot: "bg-slate-400", classes: "text-slate-400 bg-white/5 border-white/10" }
 };
 
 /**
@@ -19,7 +22,7 @@ const STATUS_STYLES = {
 export function renderStatusBadge(status) {
     const style = STATUS_STYLES[status];
     if (!style) return '';
-    return `<span class="text-[11px] font-bold px-2 py-0.5 rounded-md border ${style.classes}">${style.icon} ${escapeHtml(status)}</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md border ${style.classes}"><span class="w-1.5 h-1.5 rounded-full ${style.dot} shrink-0" aria-hidden="true"></span>${escapeHtml(status)}</span>`;
 }
 
 /**
@@ -84,16 +87,16 @@ function renderLiveDot(e) {
     `;
 }
 
-/** Badge "🆕 Nouveau" pour un événement ajouté au tableur depuis la dernière visite (voir main.js). */
+/** Badge "Nouveau" pour un événement ajouté au tableur depuis la dernière visite (voir main.js). */
 function renderNewBadge(e) {
     if (!e.isNew) return '';
-    return `<span class="text-[11px] font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🆕 Nouveau</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.badgePlus('w-3 h-3 shrink-0')}Nouveau</span>`;
 }
 
-/** Badge "🔔 Rappel activé" si ce titre (série entière) est suivi, voir ReminderService/ModalView. */
+/** Badge "Rappel activé" si ce titre (série entière) est suivi, voir ReminderService/ModalView. */
 function renderReminderBadge(e) {
     if (!ReminderService.isSet(e.title)) return '';
-    return `<span class="text-[11px] font-bold text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">🔔 Rappel activé</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">${Icons.bell('w-3 h-3 shrink-0')}Rappel activé</span>`;
 }
 
 /**
@@ -117,12 +120,12 @@ function renderCompactRow(e, readableDate) {
                 <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
                     ${renderLiveDot(e)}
                     <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
-                    ${e.heure ? `<span class="text-[11px] font-extrabold text-indigo-400 shrink-0">🕒 ${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
+                    ${e.heure ? `<span class="inline-flex items-center gap-1 text-[11px] font-extrabold text-indigo-400 shrink-0">${Icons.clock('w-3 h-3 shrink-0')}${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
                     <span class="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded border border-white/5 bg-black/20" style="color: ${e.col}" title="${type}">${type}</span>
                     ${renderStatusBadge(e.progressStatus)}
-                    ${detailsEpisode ? `<span class="text-[11px] font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">📺 ${detailsEpisode}</span>` : ''}
+                    ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
                     ${readableDate ? `<span class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</span>` : ''}
                 </div>
             </div>
@@ -172,7 +175,7 @@ export function renderEventCard(e, readableDate = null) {
                             </div>
                             <div class="text-[11px] font-bold text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
                                 <span class="text-[11px] tracking-wide text-indigo-400 bg-indigo-500/5 border border-indigo-500/10 px-1.5 py-0.5 rounded-md" style="color: ${e.col}">${type}</span>
-                                ${e.heure ? `<span class="text-indigo-400 font-extrabold">🕒 ${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
+                                ${e.heure ? `<span class="inline-flex items-center gap-1 text-indigo-400 font-extrabold">${Icons.clock('w-3 h-3 shrink-0')}${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
                             </div>
                         </div>
                     </div>
@@ -183,8 +186,8 @@ export function renderEventCard(e, readableDate = null) {
                     ${renderStatusBadge(e.progressStatus)}
                     ${renderNewBadge(e)}
                     ${renderReminderBadge(e)}
-                    ${detailsEpisode ? `<span class="text-[11px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">📺 ${detailsEpisode}</span>` : ''}
-                    ${location ? `<span class="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">📍 ${location}</span>` : ''}
+                    ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
+                    ${location ? `<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
                 </div>
 
                 ${tagsRender}

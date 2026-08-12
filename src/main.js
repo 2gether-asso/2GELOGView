@@ -8,7 +8,7 @@ import { renderEventCard, isGenuinelyLive } from './ui/EventCardTemplate.js';
 import { renderSearchResults } from './ui/SearchResultsView.js';
 import { renderTimeline } from './ui/TimelineView.js';
 import { renderTodayView } from './ui/TodayView.js';
-import { initMeetupMap, updateMeetupMap } from './ui/MeetupMapView.js';
+import { initMeetupMap, updateMeetupMap, groupEventsByCity, cityLabel } from './ui/MeetupMapView.js';
 import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
 import { SearchEngine } from './services/SearchEngine.js';
@@ -16,7 +16,7 @@ import { IcsExporter } from './services/IcsExporter.js';
 import { DiscordExporter } from './services/DiscordExporter.js';
 import { renderActivityHeatmap } from './ui/ActivityHeatmap.js';
 import { DateUtils } from './utils/DateUtils.js';
-import { escapeHtml } from './utils/Html.js';
+import { escapeHtml, sanitizeUrl } from './utils/Html.js';
 import { formatMinutes, topN, formatCategoryLabel } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
 import { ReminderService } from './services/ReminderService.js';
@@ -27,6 +27,7 @@ import {
 } from './ui/RetrospectiveView.js';
 import { computeBadges } from './services/BadgeService.js';
 import { applySeasonalTheme, resolveActiveSeason, getManualOverride, setManualOverride } from './services/SeasonalTheme.js';
+import { Icons } from './ui/Icons.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -65,7 +66,15 @@ let timelineSortOrder = 'asc'; // 'asc' | 'desc'
 let timelineYear = new Date().getFullYear();
 // La recherche (isSearching) prime toujours sur ce mode : basculer en Frise/Carte/Aujourd'hui
 // n'empêche pas de chercher, ça change juste ce qui s'affiche quand la recherche est vide.
-let currentViewMode = 'calendar'; // 'calendar' | 'timeline' | 'map' | 'today'
+// Sur mobile, la grille du calendrier (Mois) est étroite et peu confortable au doigt : la Frise
+// (liste verticale, scroll naturel) est un bien meilleur point d'entrée par défaut - inline plutôt
+// que via isMobileWidth() (définie plus bas dans le fichier, pas encore accessible ici vu l'ordre
+// d'exécution des `let`/`const` de haut en bas).
+let currentViewMode = window.matchMedia('(max-width: 639px)').matches ? 'timeline' : 'calendar'; // 'calendar' | 'timeline' | 'map' | 'today'
+// Dernière vue principale réellement affichée (voir updateUIState) : sert uniquement à savoir
+// si la vue affichée à CET appel diffère du précédent, pour ne jouer l'animation .view-fade-in
+// (V2.5, voir index.html) que lors d'une vraie bascule de vue, pas à chaque filtre/recherche.
+let lastVisiblePaneId = null;
 // Dernier ensemble filtré affiché (calendrier ou recherche) : utilisé par l'export .ics
 // pour exporter "ce que l'utilisateur voit" plutôt que tout le dépôt.
 let lastFilteredEvents = [];
@@ -106,7 +115,11 @@ function updateHiddenCategoriesBadge() {
         btn.classList.add('hidden');
         return;
     }
-    btn.textContent = `🙈 ${hiddenCategories.size} masquée${hiddenCategories.size > 1 ? 's' : ''}`;
+    // btn passe de `hidden` à visible via classList.remove('hidden') uniquement (pas de classe
+    // flex ajoutée en JS) : l'icône reste donc `inline` (alignée à la ligne de base via
+    // align-middle) plutôt que dans un wrapper inline-flex, pour ne pas dépendre de l'ordre de
+    // génération CSS entre les utilitaires `hidden` et `inline-flex` du CDN Tailwind (JIT).
+    btn.innerHTML = `${Icons.eyeOff('inline w-3 h-3 align-middle mr-0.5')}${hiddenCategories.size} masquée${hiddenCategories.size > 1 ? 's' : ''}`;
     btn.classList.remove('hidden');
 }
 
@@ -129,7 +142,7 @@ function renderCategoryFilterBar() {
         return `
             <span class="inline-flex items-center gap-0.5 ${isHidden ? 'opacity-40' : ''}">
                 <button data-cat="${escapeHtml(cat)}" class="${currentCategory === cat ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE} ${isHidden ? 'line-through' : ''}">${label}</button>
-                <button data-hide-cat="${escapeHtml(cat)}" title="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" aria-label="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" class="text-[11px] text-slate-500 hover:text-amber-300 px-1 py-1 rounded-md hover:bg-white/5 transition-all">${isHidden ? '🙈' : '👁'}</button>
+                <button data-hide-cat="${escapeHtml(cat)}" title="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" aria-label="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" class="text-slate-500 hover:text-amber-300 px-1 py-1 rounded-md hover:bg-white/5 transition-all">${isHidden ? Icons.eyeOff('w-3 h-3') : Icons.eye('w-3 h-3')}</button>
             </span>`;
     }).join('');
 
@@ -399,14 +412,64 @@ function setupSavedViews() {
     });
 }
 
-// Mini-calendrier de navigation rapide (QOL #16) : popover avec un mois cliquable pour sauter
-// directement à une date précise, plus rapide que d'enchaîner les boutons prev/next de
-// FullCalendar quand la cible est éloignée (ex: dans 3 mois). Pure navigation (comme prev/next),
-// ne touche à aucun filtre - juste la date affichée par le calendrier.
+// Mini-calendrier (QOL #16) : intégré en permanence en haut de la sidebar Statistiques (V2.5,
+// remplace l'ancien popover ouvert depuis "Aller à une date..." dans la sidebar Filtres) - un
+// coup d'oeil suffit pour voir le mois entier ET sauter directement à une date précise, plus
+// rapide que d'enchaîner les boutons prev/next de FullCalendar quand la cible est éloignée (ex:
+// dans 3 mois). Pure navigation (comme prev/next), ne touche à aucun filtre - juste la date
+// affichée par le calendrier.
 let miniCalendarDate = new Date();
 
+/**
+ * Pour un mois donné : quels jours ont au moins un événement (pastille), et pour lesquels
+ * peut-on afficher en fond la vignette d'un de ses événements (@image de l'événement, ou celle
+ * par défaut du type - voir sanitizeUrl/getIconSrc) ? Toujours calculé sur TOUT le dépôt
+ * (repo.getAll(), pas les événements filtrés) : comme "Aujourd'hui" ou le bandeau "Prochain
+ * événement", ce calendrier reste une photo fidèle du programme réel, pas de ce qui est
+ * actuellement filtré ailleurs dans l'appli - annuler un filtre ne doit pas faire "apparaître"
+ * des pastilles qui semblaient absentes.
+ * @param {number} year
+ * @param {number} month - 0-11
+ * @param {Array<Object>} events
+ * @returns {{ hasEvent: Set<number>, images: Map<number, string> }}
+ */
+function computeMiniCalendarDayInfo(year, month, events) {
+    const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const hasEvent = new Set();
+    const images = new Map();
+    events
+        .filter(e => !e.isCanceled && e.start.startsWith(monthPrefix))
+        .sort((a, b) => a.start.localeCompare(b.start))
+        .forEach(e => {
+            const day = parseInt(e.start.split('T')[0].split('-')[2], 10);
+            hasEvent.add(day);
+            if (!images.has(day)) {
+                const url = sanitizeUrl(e.image);
+                if (url) images.set(day, url);
+            }
+        });
+    return { hasEvent, images };
+}
+
+/** Une case-jour : vignette (fond assombri en dégradé pour garder le numéro lisible) si un
+ * événement de ce jour en a une, sinon une simple pastille s'il y a au moins un événement. */
+function renderMiniCalendarDay(dateStr, day, isToday, imageUrl, hasEvent) {
+    const bgAttr = imageUrl ? ` style="background-image:url('${imageUrl}')"` : '';
+    const todayRing = isToday ? 'ring-2 ring-indigo-400 ring-inset' : '';
+    const colorClasses = imageUrl
+        ? 'text-white hover:brightness-125'
+        : (isToday ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-300 hover:bg-white/10');
+    return `
+        <button data-minical-date="${dateStr}"${bgAttr} aria-label="${day}" class="relative aspect-square w-full rounded-md text-[11px] font-bold transition-all overflow-hidden bg-cover bg-center ${todayRing} ${colorClasses}">
+            ${imageUrl ? '<span class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" aria-hidden="true"></span>' : ''}
+            <span class="relative z-10">${day}</span>
+            ${hasEvent && !imageUrl ? '<span class="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-400" aria-hidden="true"></span>' : ''}
+        </button>`;
+}
+
 function renderMiniCalendar() {
-    const popover = document.getElementById('mini-calendar-popover');
+    const container = document.getElementById('sidebar-minical');
+    if (!container) return;
     const year = miniCalendarDate.getFullYear();
     const month = miniCalendarDate.getMonth();
     const monthLabel = miniCalendarDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
@@ -415,58 +478,41 @@ function renderMiniCalendar() {
     const startOffset = (firstOfMonth.getDay() + 6) % 7; // 0 = Lundi
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const todayStr = DateUtils.toLocalDateStr(new Date());
+    const { hasEvent, images } = computeMiniCalendarDayInfo(year, month, repo.getAll());
 
     let cells = '';
     for (let i = 0; i < startOffset; i++) cells += `<span></span>`;
     for (let d = 1; d <= daysInMonth; d++) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const isToday = dateStr === todayStr;
-        cells += `<button data-minical-date="${dateStr}" class="w-7 h-7 rounded-md text-[11px] font-bold transition-all ${isToday ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:bg-white/10'}">${d}</button>`;
+        cells += renderMiniCalendarDay(dateStr, d, dateStr === todayStr, images.get(d), hasEvent.has(d));
     }
 
-    popover.innerHTML = `
-        <div class="flex items-center justify-between mb-2">
-            <button id="minical-prev" aria-label="Mois précédent" class="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/10 transition-all">‹</button>
-            <span class="text-[11px] font-bold text-slate-200 capitalize">${monthLabel}</span>
-            <button id="minical-next" aria-label="Mois suivant" class="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/10 transition-all">›</button>
+    container.innerHTML = `
+        <div class="rounded-xl border border-white/5 bg-black/20 p-3">
+            <div class="flex items-center justify-between mb-2">
+                <button id="minical-prev" aria-label="Mois précédent" class="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10 transition-all">${Icons.chevronLeft('w-3.5 h-3.5')}</button>
+                <span class="text-[11px] font-bold text-slate-200 capitalize">${monthLabel}</span>
+                <button id="minical-next" aria-label="Mois suivant" class="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10 transition-all">${Icons.chevronRight('w-3.5 h-3.5')}</button>
+            </div>
+            <div class="grid grid-cols-7 gap-1 text-center text-[9px] font-bold text-slate-500 mb-1.5">
+                ${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => `<span>${d}</span>`).join('')}
+            </div>
+            <div class="grid grid-cols-7 gap-1">${cells}</div>
         </div>
-        <div class="grid grid-cols-7 gap-1 text-center text-[9px] font-bold text-slate-500 mb-1">
-            ${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => `<span>${d}</span>`).join('')}
-        </div>
-        <div class="grid grid-cols-7 gap-1 place-items-center">${cells}</div>
     `;
 }
 
 function setupMiniCalendar() {
-    const btn = document.getElementById('btn-open-minical');
-    const popover = document.getElementById('mini-calendar-popover');
+    const container = document.getElementById('sidebar-minical');
 
-    const openPopover = () => {
-        miniCalendarDate = new Date();
-        renderMiniCalendar();
-        // position:fixed (voir index.html) : calculée ici plutôt que par un simple `absolute`
-        // CSS, pour échapper à tout contexte d'empilement ambigu avec la barre d'outils sticky
-        // du calendrier plus bas dans la page.
-        const rect = btn.getBoundingClientRect();
-        popover.style.left = `${Math.round(rect.left)}px`;
-        popover.style.top = `${Math.round(rect.bottom + 8)}px`;
-        popover.classList.remove('hidden');
-    };
-    const closePopover = () => popover.classList.add('hidden');
-
-    btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (popover.classList.contains('hidden')) openPopover(); else closePopover();
-    });
-
-    popover.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (e.target.id === 'minical-prev') { miniCalendarDate.setMonth(miniCalendarDate.getMonth() - 1); renderMiniCalendar(); return; }
-        if (e.target.id === 'minical-next') { miniCalendarDate.setMonth(miniCalendarDate.getMonth() + 1); renderMiniCalendar(); return; }
+    container.addEventListener('click', (e) => {
+        // .closest() (pas e.target.id direct) : ces boutons contiennent une icône SVG - un clic
+        // sur l'icône fait de e.target un <svg>/<path> sans id, jamais le bouton lui-même.
+        if (e.target.closest('#minical-prev')) { miniCalendarDate.setMonth(miniCalendarDate.getMonth() - 1); renderMiniCalendar(); return; }
+        if (e.target.closest('#minical-next')) { miniCalendarDate.setMonth(miniCalendarDate.getMonth() + 1); renderMiniCalendar(); return; }
         const dateBtn = e.target.closest('button[data-minical-date]');
         if (!dateBtn) return;
         const dateStr = dateBtn.dataset.minicalDate;
-        closePopover();
 
         if (currentSearchQuery) {
             currentSearchQuery = "";
@@ -477,13 +523,30 @@ function setupMiniCalendar() {
         currentViewMode = 'calendar';
         applyViewButtonStyles();
         updateUIState();
-        if (calendarInstance) calendarInstance.gotoDate(dateStr);
+        if (calendarInstance) {
+            calendarInstance.gotoDate(dateStr);
+            // Laisse FullCalendar terminer son propre re-rendu (gotoDate ne met pas le DOM à
+            // jour de façon synchrone) avant de chercher la case à faire briller.
+            setTimeout(() => highlightCalendarDate(dateStr), 50);
+        }
     });
+}
 
-    // Clic en dehors du popover : le referme, comme n'importe quel menu déroulant standard.
-    document.addEventListener('click', (e) => {
-        if (!popover.classList.contains('hidden') && !popover.contains(e.target) && e.target !== btn) closePopover();
-    });
+/**
+ * Fait "briller" brièvement la case correspondant à `dateStr` dans la vue calendrier actuelle
+ * (Mois/Semaine/Jour/Planning), sans ouvrir sa modale - juste un repère visuel confirmant "on est
+ * arrivé ici" après un saut depuis le mini-calendrier. `[data-date]` est posé par FullCalendar
+ * lui-même sur l'élément pertinent quelle que soit la vue (case du mois, colonne de la semaine/
+ * jour, ligne d'en-tête de jour en Planning), donc un seul sélecteur générique suffit.
+ * @param {string} dateStr - "YYYY-MM-DD"
+ */
+function highlightCalendarDate(dateStr) {
+    const el = document.querySelector(`#calendar [data-date="${dateStr}"]`);
+    if (!el) return;
+    el.classList.remove('jump-highlight');
+    void el.offsetWidth; // reflow : relance l'animation même si la case venait déjà de briller
+    el.classList.add('jump-highlight');
+    setTimeout(() => el.classList.remove('jump-highlight'), 1300);
 }
 
 // La période (Du/Au) n'est volontairement PAS mémorisée d'une visite à l'autre (contrairement
@@ -590,10 +653,12 @@ function updateNextEventBanner() {
     banner.classList.add('flex');
 
     if (result.isLive) {
-        icon.textContent = '🔴';
+        // Même pastille animée que sur les cartes (isGenuinelyLive/renderLiveDot) plutôt qu'un
+        // emoji 🔴 statique, pour une cohérence visuelle "live" à travers toute l'app.
+        icon.innerHTML = `<span class="relative flex h-2.5 w-2.5" aria-hidden="true"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span></span>`;
         text.innerHTML = `<b>En direct :</b> ${escapeHtml(result.event.title)}${result.event.heure ? ' · depuis ' + escapeHtml(result.event.heure) : ''}`;
     } else {
-        icon.textContent = '⏳';
+        icon.innerHTML = Icons.clock('w-3.5 h-3.5');
         text.innerHTML = `<b>Prochain :</b> ${escapeHtml(result.event.title)} — ${formatCountdown(new Date(result.event.start))}`;
     }
 }
@@ -637,9 +702,10 @@ function applyDensity(compact) {
     document.documentElement.classList.toggle('density-compact', compact);
     const btn = document.getElementById('btn-toggle-density');
     btn.title = `Densité d'affichage des cartes : ${compact ? 'compacte' : 'confortable'}`;
-    btn.innerHTML = compact
-        ? '📐<span class="hidden sm:inline"> Compact</span>'
-        : '📐<span class="hidden sm:inline"> Confortable</span>';
+    // innerHTML (icône SVG + libellé) réécrit ici à chaque bascule : doit reprendre exactement
+    // le même gabarit que le bouton statique dans index.html (icône Icons.sliders), sans quoi
+    // le premier clic remplacerait l'icône par du texte brut.
+    btn.innerHTML = `${Icons.sliders('w-4 h-4 shrink-0')}<span class="hidden sm:inline">${compact ? 'Compact' : 'Confortable'}</span>`;
 }
 function setupDensityToggle() {
     const compact = localStorage.getItem(DENSITY_KEY) === '1';
@@ -743,13 +809,20 @@ function updateUIState() {
         // Défile jusqu'au repère "Aujourd'hui" seulement quand la Frise vient de devenir
         // visible (pas à chaque changement de filtre/tri une fois déjà ouverte, sans quoi
         // basculer l'ordre d'affichage arracherait l'utilisateur d'un endroit où il aurait
-        // déjà fait défiler manuellement).
-        const justOpened = timelineEl.classList.contains('hidden');
+        // déjà fait défiler manuellement) - y compris au tout premier chargement de l'appli
+        // (mobile démarre directement en Frise, voir currentViewMode plus haut).
+        // `timelineEl.classList.contains('hidden')` ne marche PAS ici : les 5 vues viennent
+        // TOUTES d'être masquées inconditionnellement juste au-dessus (voir le bloc juste avant
+        // ce if), donc cette classe vaut toujours "hidden" à ce stade, qu'on vienne vraiment
+        // d'ouvrir la Frise ou qu'on soit juste en train de retoucher un filtre en restant
+        // dessus. `lastVisiblePaneId` (posé par le tout dernier rendu, pas encore mis à jour à ce
+        // point de la fonction) donne la vraie réponse.
+        const justOpened = lastVisiblePaneId !== 'timeline-view';
         timelineEl.classList.remove('hidden');
         timelineCache = renderTimeline(timelineEl, filtered, timelineSortOrder, timelineYear, justOpened);
     } else if (currentViewMode === 'map') {
         mapEl.classList.remove('hidden');
-        updateMeetupMap(filtered, (ev) => ModalView.open(ev));
+        updateMeetupMap(filtered, (ev) => ModalView.open(ev), (cityKey) => openLocationProfile(cityKey));
     } else if (currentViewMode === 'today') {
         todayEl.classList.remove('hidden');
         todayViewCache = renderTodayView(todayEl, eventsForToday);
@@ -758,16 +831,37 @@ function updateUIState() {
         CalendarView.sync(calendarInstance, filtered);
     }
 
+    // Anime seulement une vraie bascule de vue (voir lastVisiblePaneId plus haut), pas ce même
+    // appel qui masque/réaffiche systématiquement la vue déjà active à chaque filtre/recherche.
+    const activePaneId = isSearching ? 'search-results'
+        : currentViewMode === 'timeline' ? 'timeline-view'
+        : currentViewMode === 'map' ? 'map-view'
+        : currentViewMode === 'today' ? 'today-view'
+        : 'calendar';
+    if (activePaneId !== lastVisiblePaneId) {
+        const activePaneEl = document.getElementById(activePaneId);
+        activePaneEl.classList.remove('view-fade-in');
+        void activePaneEl.offsetWidth; // force un reflow : relance l'animation même si la classe était déjà retirée au repaint précédent
+        activePaneEl.classList.add('view-fade-in');
+        lastVisiblePaneId = activePaneId;
+    }
+
     renderDashboardStats(filtered);
     renderUpcomingSidebar(filtered);
+    // Indépendant des filtres (voir computeMiniCalendarDayInfo) : se rafraîchit ici simplement
+    // pour rester à jour à chaque rechargement des données, comme le reste de la sidebar.
+    renderMiniCalendar();
     lastFilteredEvents = filtered;
 
     const clearBtn = document.getElementById('btn-clear-filters');
-    if (currentCategory !== "all" || currentTypeFilter || currentTagFilter || currentDateFrom || currentDateTo || isSearching) {
-        clearBtn.classList.remove('hidden');
-    } else {
-        clearBtn.classList.add('hidden');
-    }
+    // currentHostFilter manquait ici : le bouton "Annuler les filtres" restait caché quand seul
+    // le filtre Organisateur était actif, alors qu'il narrowait bien la sélection affichée.
+    const anyFilterActive = currentCategory !== "all" || currentTypeFilter || currentTagFilter
+        || currentHostFilter || currentDateFrom || currentDateTo || isSearching;
+    clearBtn.classList.toggle('hidden', !anyFilterActive);
+    // Navigation calendrier qui saute les mois/semaines vides (voir CalendarView.js) : seulement
+    // pertinente quand un filtre restreint réellement ce qui s'affiche, jamais par défaut.
+    CalendarView.setFilterActive(anyFilterActive);
 }
 
 /**
@@ -835,7 +929,28 @@ function setupStatsToggle() {
 
     const panelCtrl = createCollapsiblePanel('ui:statsCollapsed', (collapsed) => {
         content.classList.toggle('hidden', collapsed);
-        chevron.textContent = collapsed ? '▸' : '▾';
+        // Rotation CSS (-90deg) plutôt qu'un second glyphe ▸ : un seul SVG qui pivote en douceur
+        // (transition déjà posée dans index.html) au lieu d'un changement de caractère instantané.
+        chevron.classList.toggle('-rotate-90', collapsed);
+        btnToggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+
+    btnToggle.addEventListener('click', () => {
+        panelCtrl.toggle(content.classList.contains('hidden'));
+    });
+}
+
+// Panneau "Prochainement" repliable (V2.5) : même mécanique que setupStatsToggle juste au-dessus -
+// utile une fois qu'on a déjà repéré ce qui vient, pour laisser plus de place au mini-calendrier/
+// aux stats sans avoir à tout refermer d'un coup via #btn-toggle-sidebar.
+function setupUpcomingToggle() {
+    const content = document.getElementById('upcoming-content');
+    const btnToggle = document.getElementById('btn-toggle-upcoming');
+    const chevron = document.getElementById('upcoming-chevron');
+
+    const panelCtrl = createCollapsiblePanel('ui:upcomingCollapsed', (collapsed) => {
+        content.classList.toggle('hidden', collapsed);
+        chevron.classList.toggle('-rotate-90', collapsed);
         btnToggle.setAttribute('aria-expanded', String(!collapsed));
     });
 
@@ -937,6 +1052,7 @@ function setupPatchNotes() {
 
     const close = () => {
         overlay.classList.add('hidden');
+        overlay.classList.remove('flex');
         localStorage.setItem('patchnotes:seenVersion', PATCH_NOTES.version);
     };
 
@@ -945,7 +1061,12 @@ function setupPatchNotes() {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
     if (localStorage.getItem('patchnotes:seenVersion') !== PATCH_NOTES.version) {
+        // classList.add('flex') en plus de remove('hidden') : sans ça, l'overlay retombe en
+        // display:block par défaut (aucune classe flex/grid statique) et "items-center
+        // justify-center" n'a plus aucun effet - la carte se retrouve collée en haut à gauche
+        // au lieu d'être centrée (même mécanique que reminders-overlay/help-overlay).
         overlay.classList.remove('hidden');
+        overlay.classList.add('flex');
     }
 }
 
@@ -991,7 +1112,7 @@ function shouldRemindFor(event) {
 function updateBlanketReminderButton() {
     const btn = document.getElementById('btn-toggle-all-reminders');
     const enabled = isBlanketRemindersEnabled();
-    btn.innerHTML = enabled ? '🔔 Activé' : '🔕 Désactivé';
+    btn.innerHTML = `<span class="inline-flex items-center gap-1.5">${enabled ? Icons.bell('w-3.5 h-3.5 shrink-0') : Icons.bellOff('w-3.5 h-3.5 shrink-0')}${enabled ? 'Activé' : 'Désactivé'}</span>`;
     btn.setAttribute('aria-pressed', String(enabled));
     btn.className = `shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
 }
@@ -999,7 +1120,7 @@ function updateBlanketReminderButton() {
 function updateDailyDigestButton() {
     const btn = document.getElementById('btn-toggle-daily-digest');
     const enabled = hasNotificationPermission() && localStorage.getItem(DAILY_DIGEST_ENABLED_KEY) === '1';
-    btn.innerHTML = enabled ? '🔔 Activé' : '🔕 Désactivé';
+    btn.innerHTML = `<span class="inline-flex items-center gap-1.5">${enabled ? Icons.bell('w-3.5 h-3.5 shrink-0') : Icons.bellOff('w-3.5 h-3.5 shrink-0')}${enabled ? 'Activé' : 'Désactivé'}</span>`;
     btn.setAttribute('aria-pressed', String(enabled));
     btn.className = `shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
 }
@@ -1080,7 +1201,7 @@ function renderRemindersList() {
     const reminders = ReminderService.getAll();
 
     if (reminders.length === 0) {
-        container.innerHTML = `<div class="text-[11px] text-slate-600 italic">Aucun événement suivi individuellement pour l'instant. Ouvrez-en un et cliquez sur "🔔 M'envoyer un rappel".</div>`;
+        container.innerHTML = `<div class="text-[11px] text-slate-600 italic">Aucun événement suivi individuellement pour l'instant. Ouvrez-en un et cliquez sur "M'envoyer un rappel".</div>`;
         return;
     }
 
@@ -1331,6 +1452,35 @@ async function sha256Hex(text) {
     return [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Menu déroulant "⋯" regroupant les outils d'organisateur (V2.5, voir #admin-tools-menu dans
+// index.html) — même mécanique clic-dehors-pour-fermer que le popover du mini-calendrier
+// (setupMiniCalendar) : pas un vrai overlay géré par setupEscapeToClose(), juste un petit menu.
+function setupAdminToolsMenu() {
+    const toggle = document.getElementById('btn-admin-tools-toggle');
+    const dropdown = document.getElementById('admin-tools-dropdown');
+
+    const closeDropdown = () => {
+        dropdown.classList.add('hidden');
+        toggle.setAttribute('aria-expanded', 'false');
+    };
+    const openDropdown = () => {
+        dropdown.classList.remove('hidden');
+        toggle.setAttribute('aria-expanded', 'true');
+    };
+
+    toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (dropdown.classList.contains('hidden')) openDropdown(); else closeDropdown();
+    });
+    dropdown.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', (e) => {
+        if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== toggle) closeDropdown();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !dropdown.classList.contains('hidden')) closeDropdown();
+    });
+}
+
 // Verrou du mode admin : protection côté client uniquement (site 100% statique,
 // sans backend possible). Ça décourage un visiteur curieux, pas un attaquant
 // déterminé qui lirait le code source — voir le commentaire dans config.js.
@@ -1342,13 +1492,11 @@ function setupAdminMode() {
     const overlay = document.getElementById('admin-overlay');
     const content = document.getElementById('admin-content');
 
-    btnAdmin.classList.remove('hidden');
-    // Export Discord, lien de déclenchement du digest webhook, et mode Kiosque : plutôt des
-    // outils d'organisateur que d'usage courant, regroupés avec le mode Admin pour ne pas
-    // encombrer l'en-tête des visiteurs classiques.
-    document.getElementById('btn-export-discord').classList.remove('hidden');
-    document.getElementById('btn-trigger-webhook').classList.remove('hidden');
-    document.getElementById('btn-kiosk-mode').classList.remove('hidden');
+    // Export Discord, lien de déclenchement du digest webhook, mode Kiosque et Admin : plutôt
+    // des outils d'organisateur que d'usage courant, regroupés derrière le menu "⋯" (voir
+    // #admin-tools-menu dans index.html / setupAdminToolsMenu() plus bas) pour ne pas encombrer
+    // l'en-tête des visiteurs classiques.
+    document.getElementById('admin-tools-menu').classList.remove('hidden');
 
     const openAdmin = () => {
         renderAdminView(content, repo.getAll(), dataAnomalies);
@@ -1412,6 +1560,13 @@ let organizerWeekdayCache = [];
 let currentOrganizerHostName = null;
 let currentOrganizerFacts = null;
 
+// Fiche de lieu (vue Carte, voir openLocationProfile) : même idée que le profil organisateur
+// ci-dessus, mais deux caches séparés (à venir / historique) puisque ce sont deux sections
+// distinctes de la fiche plutôt qu'une seule liste unique.
+let locationProfileUpcomingCache = [];
+let locationProfileHistoryCache = [];
+let currentLocationKey = null;
+
 /**
  * Mini-profil d'un organisateur (toutes années confondues) : total de sessions/temps animé,
  * répartition par catégorie/tags/moment de la journée, jour de semaine préféré, événement qui
@@ -1442,7 +1597,7 @@ function openOrganizerProfile(hostName) {
     const yearStats = StatsService.compute(allEvents.filter(e => new Date(e.start).getFullYear() === currentYear));
     const isTopHostThisYear = (topN(yearStats.byHost, 1)[0] || [])[0] === normalized;
 
-    document.getElementById('organizer-profile-title').innerHTML = `👤 <span class="capitalize">${escapeHtml(hostName)}</span>`;
+    document.getElementById('organizer-profile-title').innerHTML = `<span class="inline-flex items-center gap-2">${Icons.user('w-4 h-4 shrink-0 text-slate-400')}<span class="capitalize">${escapeHtml(hostName)}</span></span>`;
     document.getElementById('organizer-profile-summary').innerHTML = `
         <div class="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-3">
             <div class="glass-panel rounded-xl p-3 text-center">
@@ -1466,7 +1621,7 @@ function openOrganizerProfile(hostName) {
                 <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">${facts.streak > 1 ? "Semaines d'affilée (record)" : 'Semaine active'}</div>
             </div>
         </div>
-        ${isTopHostThisYear ? `<div class="text-center text-xs font-bold text-amber-300 mb-3">👑 MVP de ${currentYear}</div>` : ''}
+        ${isTopHostThisYear ? `<div class="inline-flex items-center gap-1.5 w-full justify-center text-xs font-bold text-amber-300 mb-3">${Icons.crown('w-3.5 h-3.5 shrink-0')}MVP de ${currentYear}</div>` : ''}
         ${renderBadgeShelf(computeBadges(facts))}
     `;
 
@@ -1476,7 +1631,7 @@ function openOrganizerProfile(hostName) {
     // annuelle : son clic doit filtrer organizerWeekdayCache, pas rouvrir getBucketEvents (qui
     // ne connaît qu'une année et tous organisateurs confondus).
     const weekdayChart = facts.weekdayBuckets.some(b => b.count > 0)
-        ? renderHoverBarChart(WEEKDAY_LABELS, facts.weekdayBuckets, '📆', (peak) => `Jour préféré pour organiser : ${peak}`, 'hostWeekday')
+        ? renderHoverBarChart(WEEKDAY_LABELS, facts.weekdayBuckets, Icons.calendarDays('w-4 h-4 shrink-0'), (peak) => `Jour préféré pour organiser : ${peak}`, 'hostWeekday')
         : '';
     document.getElementById('organizer-profile-sections').innerHTML = [
         renderCategoryBreakdown(facts.stats.byCategory),
@@ -1583,6 +1738,130 @@ function setupOrganizerProfile() {
         const row = e.target.closest('[data-host]');
         if (row) openOrganizerProfile(row.dataset.host);
     });
+}
+
+/**
+ * Fiche d'un lieu de meetup IRL (vue Carte, refonte V2.5) : résumé + sessions à venir + tout
+ * l'historique - toujours calculée sur TOUT le dépôt (comme le profil organisateur), pas les
+ * événements actuellement filtrés à l'écran, pour rester une vraie mémoire du lieu.
+ * @param {string} cityKey - Clé ville normalisée (voir CityCoordinates.js), ex: "montpellier"
+ */
+function openLocationProfile(cityKey) {
+    if (!cityKey) return;
+    const byCity = groupEventsByCity(repo.getAll());
+    const cityEvents = byCity.get(cityKey) || [];
+    const todayStr = DateUtils.toLocalDateStr(new Date());
+
+    const upcoming = cityEvents
+        .filter(e => !e.isCanceled && e.start.split('T')[0] >= todayStr)
+        .sort((a, b) => a.start.localeCompare(b.start));
+    const history = cityEvents
+        .filter(e => e.isCanceled || e.start.split('T')[0] < todayStr)
+        .sort((a, b) => new Date(b.start) - new Date(a.start));
+
+    locationProfileUpcomingCache = upcoming;
+    locationProfileHistoryCache = history;
+    currentLocationKey = cityKey;
+
+    // Lien direct partageable (?lieu=<clé>), même mécanique que ?host= pour le profil organisateur.
+    const url = new URL(window.location.href);
+    url.searchParams.set('lieu', cityKey);
+    window.history.replaceState(null, '', url);
+
+    document.querySelector('#location-profile-title span').textContent = cityLabel(cityKey);
+
+    const realHistory = history.filter(e => !e.isCanceled);
+    const first = [...realHistory].sort((a, b) => a.start.localeCompare(b.start))[0];
+    document.getElementById('location-profile-summary').innerHTML = `
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-1">
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-white">${cityEvents.length}</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Sessions au total</div>
+            </div>
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-indigo-400">${upcoming.length}</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">À venir</div>
+            </div>
+            <div class="glass-panel rounded-xl p-3 text-center">
+                <div class="text-xl font-black text-white">${first ? new Date(first.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}</div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Premier meetup ici</div>
+            </div>
+        </div>
+    `;
+
+    const upcomingSection = document.getElementById('location-profile-upcoming-section');
+    upcomingSection.classList.toggle('hidden', upcoming.length === 0);
+    document.getElementById('location-profile-upcoming').innerHTML = upcoming.map((e, idx) => {
+        const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        return `<div class="cursor-pointer" data-upcoming-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+    }).join('');
+
+    const historyContent = document.getElementById('location-profile-content');
+    historyContent.innerHTML = history.length > 0
+        ? history.map((e, idx) => {
+            const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            return `<div class="cursor-pointer" data-history-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+        }).join('')
+        : `<div class="text-center text-xs text-slate-600 py-8">Aucune session passée pour l'instant.</div>`;
+
+    document.getElementById('location-profile-overlay').classList.remove('hidden');
+}
+
+function setupLocationProfile() {
+    const overlay = document.getElementById('location-profile-overlay');
+    const close = () => {
+        overlay.classList.add('hidden');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('lieu');
+        window.history.replaceState(null, '', url);
+        currentLocationKey = null;
+    };
+
+    document.getElementById('btn-close-location-profile').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) { close(); return; }
+        const upcomingCard = e.target.closest('[data-upcoming-idx]');
+        if (upcomingCard) {
+            const ev = locationProfileUpcomingCache[Number(upcomingCard.dataset.upcomingIdx)];
+            if (ev) { close(); ModalView.open(ev); }
+            return;
+        }
+        const historyCard = e.target.closest('[data-history-idx]');
+        if (historyCard) {
+            const ev = locationProfileHistoryCache[Number(historyCard.dataset.historyIdx)];
+            if (ev) { close(); ModalView.open(ev); }
+        }
+    });
+
+    // Export .ics des seules sessions (passées + à venir) de ce lieu.
+    document.getElementById('btn-location-export-ics').addEventListener('click', () => {
+        if (!currentLocationKey) return;
+        const filename = `planning-${currentLocationKey}-2gelog.ics`;
+        IcsExporter.download([...locationProfileUpcomingCache, ...locationProfileHistoryCache], filename);
+    });
+
+    // Lien direct vers cette fiche (?lieu=<clé>) - même geste que pour le profil organisateur.
+    document.getElementById('btn-location-copy-link').addEventListener('click', async (e) => {
+        if (!currentLocationKey) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set('lieu', currentLocationKey);
+        const btn = e.currentTarget;
+        try {
+            await navigator.clipboard.writeText(url.href);
+            const original = btn.innerHTML;
+            btn.innerHTML = '✅';
+            setTimeout(() => { btn.innerHTML = original; }, 1500);
+        } catch {
+            window.prompt("Copiez ce lien :", url.href);
+        }
+    });
+}
+
+/** Ouvre directement une fiche de lieu depuis l'URL (?lieu=<clé>), même mécanique que
+ * openOrganizerProfileFromUrl pour ?host=. */
+function openLocationProfileFromUrl() {
+    const cityKey = new URLSearchParams(window.location.search).get('lieu');
+    if (cityKey) openLocationProfile(cityKey);
 }
 
 // Rétrospective annuelle "vitrine" (voir RetrospectiveView.js) : accessible à tous, contrairement
@@ -1805,12 +2084,17 @@ async function loadData() {
         renderTypeFilterBar();
         renderCategoryFilterBar();
         renderHostFilterBar(repo.getAll());
+        // currentViewMode peut déjà valoir 'timeline' au tout premier rendu (défaut mobile, voir
+        // sa déclaration plus haut) : sans cet appel ici, le bouton Frise de l'en-tête ne
+        // recevrait sa mise en surbrillance "actif" qu'au premier clic, pas dès le chargement.
+        applyViewButtonStyles();
         updateUIState();
         updateNextEventBanner();
         checkUpcomingNotifications();
         renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
         openEventFromUrl();
         openOrganizerProfileFromUrl();
+        openLocationProfileFromUrl();
         localStorage.setItem(LAST_SYNCED_KEY, Date.now().toString());
         updateLastSyncedTooltip();
         loadingEl.classList.add('hidden');
@@ -1951,7 +2235,7 @@ function setupExtraKeyboardShortcuts() {
         if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
         if (!calendarInstance || currentViewMode !== 'calendar' || currentSearchQuery) return;
         e.preventDefault();
-        if (e.key === 'ArrowLeft') calendarInstance.prev(); else calendarInstance.next();
+        if (e.key === 'ArrowLeft') CalendarView.goPrev(calendarInstance); else CalendarView.goNext(calendarInstance);
     });
 }
 
@@ -1964,6 +2248,7 @@ function setupEscapeToClose() {
         ['reminders-overlay', 'btn-close-reminders'],
         ['bucket-detail-overlay', 'btn-close-bucket-detail'],
         ['organizer-profile-overlay', 'btn-close-organizer-profile'],
+        ['location-profile-overlay', 'btn-close-location-profile'],
         ['retrospective-overlay', 'btn-close-retrospective'],
         ['admin-overlay', 'btn-close-admin']
     ];
@@ -2099,10 +2384,13 @@ async function initApp() {
 
         setupSidebarToggle();
         setupStatsToggle();
+        setupUpcomingToggle();
         setupFiltersSidebarToggle();
+        setupAdminToolsMenu();
         setupAdminMode();
         setupRetrospective();
         setupOrganizerProfile();
+        setupLocationProfile();
         setupPatchNotes();
         setupHelpOverlay();
         setupEscapeToClose();

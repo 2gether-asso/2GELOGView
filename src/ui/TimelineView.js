@@ -1,4 +1,6 @@
 import { groupByTitle, renderRow, renderGroupRow, wireGroupToggle } from './SearchResultsView.js';
+import { Icons } from './Icons.js';
+import { DateUtils } from '../utils/DateUtils.js';
 
 const MONTH_LABELS_LONG = [
     'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -21,17 +23,17 @@ function axisNode(dotHtml, contentHtml) {
 }
 
 function monthDot() {
-    return `<span class="w-3 h-3 rounded-full bg-indigo-400 ring-4 ring-[#06080c] shrink-0 mt-0.5"></span>`;
+    return `<span class="w-3 h-3 rounded-full bg-indigo-400 ring-4 ring-[var(--surface-0)] shrink-0 mt-0.5"></span>`;
 }
 
 function eventDot() {
-    return `<span class="w-2 h-2 rounded-full bg-white/25 ring-4 ring-[#06080c] shrink-0 mt-2.5"></span>`;
+    return `<span class="w-2 h-2 rounded-full bg-white/25 ring-4 ring-[var(--surface-0)] shrink-0 mt-2.5"></span>`;
 }
 
 function todayDot() {
     return `<span class="relative flex w-3 h-3 shrink-0 mt-0.5" aria-hidden="true">
         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75"></span>
-        <span class="relative inline-flex rounded-full w-3 h-3 bg-rose-500 ring-4 ring-[#06080c]"></span>
+        <span class="relative inline-flex rounded-full w-3 h-3 bg-rose-500 ring-4 ring-[var(--surface-0)]"></span>
     </span>`;
 }
 
@@ -39,10 +41,10 @@ function renderYearNav(year) {
     const currentYear = new Date().getFullYear();
     return `
         <div class="flex items-center justify-center gap-3 sm:gap-4 mb-2">
-            <button data-timeline-year="${year - 1}" aria-label="Année précédente" class="text-slate-400 hover:text-white text-xl px-2 transition-all">‹</button>
+            <button data-timeline-year="${year - 1}" aria-label="Année précédente" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronLeft('w-5 h-5')}</button>
             <h2 class="text-xl sm:text-2xl font-black text-white">Frise ${year}</h2>
             ${year !== currentYear ? `<button data-timeline-year="${currentYear}" title="Revenir à l'année en cours" class="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md uppercase tracking-wider">Aujourd'hui</button>` : ''}
-            <button data-timeline-year="${year + 1}" aria-label="Année suivante" class="text-slate-400 hover:text-white text-xl px-2 transition-all">›</button>
+            <button data-timeline-year="${year + 1}" aria-label="Année suivante" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronRight('w-5 h-5')}</button>
         </div>
     `;
 }
@@ -72,8 +74,8 @@ export function renderTimeline(container, events, order = 'asc', year = new Date
         <div class="max-w-2xl mx-auto mb-2">
             ${renderYearNav(year)}
             <div class="flex justify-end">
-                <button data-timeline-order-toggle title="Inverser l'ordre chronologique de la frise" class="text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                    ${order === 'asc' ? '⬇️ Plus ancien d\'abord' : '⬆️ Plus récent d\'abord'}
+                <button data-timeline-order-toggle title="Inverser l'ordre chronologique de la frise" class="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                    ${order === 'asc' ? `${Icons.arrowDown('w-3.5 h-3.5 shrink-0')}Plus ancien d'abord` : `${Icons.arrowUp('w-3.5 h-3.5 shrink-0')}Plus récent d'abord`}
                 </button>
             </div>
         </div>
@@ -97,37 +99,56 @@ export function renderTimeline(container, events, order = 'asc', year = new Date
 
     // Ancre chaque groupe sur sa PREMIÈRE occurrence CHRONOLOGIQUE (toujours la plus ancienne,
     // quel que soit le sens d'affichage) : une série qui s'étale sur plusieurs mois n'apparaît
-    // qu'une fois, sous son mois de départ - jamais dupliquée.
-    const byMonth = new Map(); // month index (0-11) -> [group, ...]
+    // qu'une fois, sous son mois de départ - jamais dupliquée. `anchorDate` est aussi réutilisée
+    // plus bas pour intercaler le repère "Aujourd'hui" au bon endroit PARMI les nœuds du mois
+    // (pas juste avant le mois entier).
+    const byMonth = new Map(); // month index (0-11) -> [{ group, anchorDate }, ...]
     groups.forEach(group => {
         const first = [...group].sort((a, b) => a.start.localeCompare(b.start))[0];
+        const anchorDate = first.start.split('T')[0];
         const m = new Date(first.start).getMonth();
         if (!byMonth.has(m)) byMonth.set(m, []);
-        byMonth.get(m).push(group);
+        byMonth.get(m).push({ group, anchorDate });
     });
 
-    const monthOrder = [...byMonth.keys()].sort((a, b) => order === 'asc' ? a - b : b - a);
-
-    // Repère "Aujourd'hui" : seulement pertinent pour l'année en cours, inséré au bon mois selon
-    // le sens d'affichage plutôt que systématiquement en haut ou en bas.
+    // Repère "Aujourd'hui" : seulement pertinent pour l'année en cours. Un mois sans le moindre
+    // événement (donc absent de byMonth) doit quand même apparaître dans la frise s'il s'agit du
+    // mois en cours, pour que le repère "Aujourd'hui" ne disparaisse jamais purement parce que
+    // rien n'est prévu ce mois-ci.
     const now = new Date();
+    const todayStr = DateUtils.toLocalDateStr(now);
     const showTodayMarker = year === now.getFullYear();
     const todayMonth = now.getMonth();
+    if (showTodayMarker && !byMonth.has(todayMonth)) byMonth.set(todayMonth, []);
+
+    const monthOrder = [...byMonth.keys()].sort((a, b) => order === 'asc' ? a - b : b - a);
+    const todayMarkerHtml = `<div id="timeline-today-marker" class="inline-flex items-center gap-1 text-[11px] font-black text-rose-400 uppercase tracking-widest pt-0.5">${Icons.mapPin('w-3 h-3 shrink-0')}Aujourd'hui — ${now.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</div>`;
 
     let nodesHtml = '';
     monthOrder.forEach(m => {
-        // Repère "Aujourd'hui" inséré juste avant le bloc du mois en cours (approximation au
-        // mois près, pas au jour près - suffisant pour "démarrer sur aujourd'hui" sans la
-        // complexité d'interclasser un repère non-événement au jour exact parmi les nœuds).
-        if (showTodayMarker && todayMonth === m) {
-            nodesHtml += axisNode(todayDot(), `<div id="timeline-today-marker" class="text-[11px] font-black text-rose-400 uppercase tracking-widest pt-0.5">📍 Aujourd'hui — ${now.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</div>`);
-        }
         nodesHtml += axisNode(monthDot(), `<h3 class="text-sm font-black uppercase tracking-widest text-indigo-300">${MONTH_LABELS_LONG[m]}</h3>`);
-        // Chaque occurrence/groupe du mois obtient sa propre pastille (nœud) sur l'axe.
-        byMonth.get(m).forEach(group => {
+
+        // Intercale "Aujourd'hui" à sa vraie place chronologique PARMI les nœuds du mois en
+        // cours (pas systématiquement avant tous ses événements) : dès qu'un groupe est passé
+        // de l'autre côté d'aujourd'hui selon le sens d'affichage, le repère se glisse juste avant.
+        const insertTodayInThisMonth = showTodayMarker && todayMonth === m;
+        let todayInserted = false;
+        byMonth.get(m).forEach(({ group, anchorDate }) => {
+            if (insertTodayInThisMonth && !todayInserted) {
+                const pastToday = order === 'asc' ? anchorDate > todayStr : anchorDate < todayStr;
+                if (pastToday) {
+                    nodesHtml += axisNode(todayDot(), todayMarkerHtml);
+                    todayInserted = true;
+                }
+            }
             const rowHtml = group.length > 1 ? renderGroupRow(group, indexOf) : renderRow(group[0], indexOf(group[0]));
             nodesHtml += axisNode(eventDot(), rowHtml);
         });
+        // Aujourd'hui est après TOUS les événements déjà listés ce mois-ci (ou le mois n'en a
+        // aucun) : le repère ferme le bloc du mois plutôt que de rester non-inséré.
+        if (insertTodayInThisMonth && !todayInserted) {
+            nodesHtml += axisNode(todayDot(), todayMarkerHtml);
+        }
     });
 
     container.innerHTML = `${headerHtml}<div class="max-w-2xl mx-auto">${nodesHtml}</div>`;

@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2GELOG V2 - UwU</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%236366f1'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white' font-family='Arial'%3E2G%3C/text%3E%3C/svg%3E">
+    <title>2GELOG V2.5 - UwU</title>
+    <link rel="icon" type="image/png" href="./assets/img/icon.png">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="apple-touch-icon" href="./assets/img/pwa/icon-192.png">
     <meta name="theme-color" content="#161b22">
@@ -17,14 +17,47 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
-        :root { 
-            --bg-deep: #06080c; 
+        :root {
+            --bg-deep: #06080c;
             --glass-bg: rgba(22, 27, 34, 0.45);
             --glass-border: rgba(255, 255, 255, 0.06);
-            --accent: #6366f1; 
-            --text-main: #f0f6fc; 
+            --accent: #6366f1;
+            --text-main: #f0f6fc;
+
+            /* Échelle d'élévation (V2.5) : remplace 3 noirs quasi-identiques utilisés jusque-là
+               au hasard (#06080c / #0d1117 / #161b22) par une hiérarchie nommée à une seule
+               source de vérité. Plus une surface est "au-dessus" du fond, plus son niveau est
+               élevé. */
+            --surface-0: #06080c;              /* fond de page (base du dégradé radial) */
+            --surface-1: #0d1117;               /* chrome ancré : sidebars (mobile), base de l'en-tête */
+            --surface-2: #161b22;               /* surélevé : cartes des modales/overlays */
+            --surface-3: rgba(255, 255, 255, .04); /* cartes/lignes à l'intérieur des panneaux (glass-card) */
+
+            /* Rôles de couleur sémantiques (V2.5) : documente une règle explicite pour savoir
+               quand un bouton "mérite" une couleur, plutôt que de la choisir au cas par cas.
+                 - slate/neutre = action par défaut, non destructive.
+                 - accent (indigo) = action phare (max. 1-2 par surface : Rétrospective, Aujourd'hui).
+                 - danger (rose)  = destructeur/annuler/effacer/live uniquement.
+                 - warning (amber)= réservé aux outils Admin/organisateur (verrouillés par ?admin).
+               Le bleu-violet de marque Discord (#5865F2) reste réservé au seul CTA "Rejoindre le
+               salon" de la modale d'événement (lien sortant vers Discord) - pas aux outils admin. */
+            --role-accent: #6366f1;
+            --role-danger: #f43f5e;
+            --role-warning: #f59e0b;
+            --role-success: #34d399;
         }
-        body { 
+        /* Empilement (z-index) de l'appli, documenté ici en un seul endroit plutôt qu'éparpillé :
+           les valeurs numériques restent inchangées (certaines ont un ordre relatif volontaire,
+           voir setupEscapeToClose() dans main.js) - ceci ne fait que nommer les paliers pour que
+           la prochaine fonctionnalité sache où se glisser au lieu de deviner.
+             15 barre d'outils calendrier (sticky)   50 modale d'événement       66 aide
+             30 suggestions/menus déroulants          60 admin                   67 rappels
+             40 en-tête                               61 fiche de lieu           70 chargement/erreur
+                                                       62 rétrospective           80 quitter le kiosque
+                                                       63 détail (bucket)
+                                                       64 profil organisateur
+                                                       65 notes de version */
+        body {
             font-family: 'Plus Jakarta Sans', sans-serif; 
             background: radial-gradient(circle at 50% 0%, #111827 0%, var(--bg-deep) 70%); 
             color: var(--text-main); 
@@ -34,6 +67,40 @@
         .glass-panel { background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border); }
         .glass-card { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.04); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
         .glass-card:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); }
+
+        /* Micro-interaction globale (V2.5) : un léger tassement au clic sur n'importe quel
+           bouton natif de l'appli donne un retour tactile immédiat, sans avoir à l'ajouter
+           bouton par bouton. Ignoré pour un utilisateur qui préfère moins de mouvement. */
+        @media (prefers-reduced-motion: no-preference) {
+            button:not(:disabled) { transition: transform 0.1s ease, background-color 0.2s, color 0.2s, border-color 0.2s; }
+            button:not(:disabled):active { transform: scale(0.96); }
+        }
+
+        /* Petit fondu-glissé (V2.5) au moment où l'utilisateur bascule vers une AUTRE vue
+           principale (Calendrier/Recherche/Frise/Aujourd'hui/Carte) - classe posée explicitement
+           par updateUIState() dans main.js, uniquement quand la vue affichée change réellement.
+           PAS un simple `:not(.hidden)` : updateUIState() masque puis réaffiche systématiquement
+           la même vue à chaque filtre/recherche (même quand elle était déjà celle affichée), ce
+           qui aurait rejoué l'animation en boucle au moindre clic au lieu de la réserver aux
+           vraies bascules de vue. */
+        @media (prefers-reduced-motion: no-preference) {
+            .view-fade-in { animation: viewFadeIn 0.25s ease; }
+        }
+        @keyframes viewFadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Repère visuel "on est arrivé ici" (V2.5) après un saut de date depuis le mini-calendrier
+           (voir highlightCalendarDate dans main.js) - un flash qui s'estompe sur la case ciblée,
+           sans ouvrir sa modale. box-shadow inset plutôt que background : reste contenu dans les
+           bords de la case quelle que soit la vue (mois/semaine/jour/liste) sans entrer en
+           conflit avec les couleurs de fond que FullCalendar impose déjà en !important. */
+        .jump-highlight { animation: jumpHighlight 1.2s ease-out; }
+        @keyframes jumpHighlight {
+            0% { box-shadow: inset 0 0 0 9999px rgba(99, 102, 241, 0.35); }
+            100% { box-shadow: inset 0 0 0 9999px rgba(99, 102, 241, 0); }
+        }
 
         /* Densité d'affichage (QOL #17, voir setupDensityToggle dans main.js) : en mode compact,
            renderEventCard (EventCardTemplate.js) rend directement un gabarit différent - une
@@ -150,16 +217,62 @@
         .fc-list-empty-cushion { color: #64748b !important; font-style: italic; font-size: 0.85rem; padding: 4rem 1rem !important; }
 
         /* Petits écrans : la barre d'outils FullCalendar (prev/next/vues) passe sur
-           plusieurs lignes plutôt que de déborder ou d'écraser le titre. */
+           plusieurs lignes plutôt que de déborder ou d'écraser le titre. Refonte Planning V2.5 :
+           cibles de clic agrandies (~40px de haut, zone tactile confortable au pouce plutôt que
+           les 4px de padding d'origine hérités du desktop) et en-têtes de jour resserrés pour
+           laisser plus de place aux cartes d'événements elles-mêmes à l'écran. */
         @media (max-width: 639px) {
+            .fc .fc-header-toolbar { padding: 2px 0 4px; margin-bottom: 4px !important; }
             .fc .fc-toolbar { flex-wrap: wrap; gap: 8px; row-gap: 8px; }
             .fc .fc-toolbar-title { font-size: 1rem; }
-            .fc .fc-button-primary { font-size: 0.7rem; padding: 4px 8px; }
+            .fc .fc-button-primary { font-size: 0.75rem; padding: 7px 14px; min-height: 38px; }
             /* La vue Jour (grille horaire mono-colonne) doit rester lisible et manipulable au
                doigt : créneaux et police légèrement agrandis par rapport au desktop. */
             .fc-timegrid-slot { height: 2.9em !important; }
             .fc-timegrid-slot-label-cushion { font-size: 0.68rem; }
+            /* Vue Planning : en-tête de jour et espacement entre jours resserrés (un peu de la
+               hauteur gagnée en enlevant "today" de la barre d'outils, voir CalendarView.js). */
+            .fc-list-day-cushion { padding: 7px 10px !important; margin-top: 10px; }
+            .fc-list-day-cushion .fc-list-day-text { font-size: 0.75rem; }
         }
+
+        /* Modale d'événement en feuille ancrée en bas sur mobile (V2.5), plutôt que centrée comme
+           sur desktop : plus naturelle à atteindre/refermer au pouce, pattern reconnaissable
+           (identique aux feuilles d'action iOS/Android). Ne touche à AUCUNE classe posée en JS -
+           ModalView.js continue de basculer exactement les mêmes classes `opacity-0
+           pointer-events-none` (conteneur) / `scale-95` (boîte) qu'avant ; ces règles redéfinissent
+           juste ce que "fermée" (scale-95) veut dire visuellement à cette largeur d'écran, en CSS
+           pur (spécificité du sélecteur #id.class supérieure à l'utilitaire Tailwind `.scale-95`
+           seul, donc pas besoin de !important). */
+        @media (max-width: 639px) {
+            #custom-modal-container { align-items: flex-end; padding: 0; }
+            #custom-modal-box { max-width: 100%; max-height: 88vh; border-radius: 1.25rem 1.25rem 0 0; }
+            #custom-modal-box.scale-95 { transform: translateY(100%); }
+            /* Le bas de la feuille peut se retrouver sous l'encoche/barre d'accueil d'un mobile
+               (iPhone à encoche notamment) une fois collée au bord de l'écran : marge de sécurité
+               ajoutée au padding existant plutôt qu'en le remplaçant (0px de repli sur un appareil
+               qui ne connaît pas cette zone, donc aucun changement ailleurs). */
+            #modal-scroll-body { padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px)); }
+        }
+
+        /* Vue Carte (Leaflet) : refonte du popup, sombre et sans le chrome par défaut de
+           Leaflet (pensé pour un fond de carte clair) qui jurait complètement avec le thème sombre
+           de l'app - fond blanc, texte noir, coins carrés. Marqueurs personnalisés (voir
+           MeetupMapView.js, L.divIcon) : un pin plein indigo avec le nombre de sessions dedans,
+           plutôt que l'épingle bleue/rouge par défaut de Leaflet, sans rapport avec l'identité
+           visuelle du site. */
+        .leaflet-popup-content-wrapper { background: var(--surface-2); color: var(--text-main); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.75rem; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+        .leaflet-popup-tip { background: var(--surface-2); border: 1px solid rgba(255,255,255,0.1); }
+        .leaflet-popup-content { margin: 12px 14px; font-family: 'Plus Jakarta Sans', sans-serif; }
+        .leaflet-popup-close-button { color: #64748b !important; font-size: 18px !important; padding: 6px 8px 0 0 !important; }
+        .leaflet-popup-close-button:hover { color: #f0f6fc !important; }
+        .leaflet-container a.leaflet-popup-close-button:focus { outline: 2px solid #6366f1; }
+        .meetup-marker-pin { filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5)); }
+        /* Attribution OSM/CARTO en bas de carte : lisible sur fond sombre sans dominer visuellement. */
+        .leaflet-control-attribution { background: rgba(6,8,12,0.7) !important; color: #64748b !important; }
+        .leaflet-control-attribution a { color: #8b949e !important; }
+        .leaflet-control-zoom a { background: var(--surface-2) !important; color: #c9d1d9 !important; border-color: rgba(255,255,255,0.1) !important; }
+        .leaflet-control-zoom a:hover { background: rgba(255,255,255,0.08) !important; }
 
         /* Mode Kiosque : masque l'en-tête et la sidebar Filtres pour un affichage plein écran
            sans interaction, pensé pour un écran dédié (partagé dans un salon vocal par exemple). */
@@ -179,7 +292,7 @@
         <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer shrink-0">
             <div id="header-status-dot" class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
             <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
-                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2</span>
+                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.5</span>
                 <span id="seasonal-badge" class="hidden font-bold text-[10px] px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
             </h1>
         </div>
@@ -190,43 +303,51 @@
              de boutons tous identiques, pour rester lisible malgré leur nombre. -->
         <div class="flex items-center gap-1.5 sm:gap-1 flex-wrap w-full sm:w-auto order-3 sm:order-none">
             <button id="btn-help" title="Aide et légende" aria-label="Aide et légende" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                ❓
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.2 9a3 3 0 1 1 4.6 2.5c-1 0.6-1.8 1.1-1.8 2.5"></path><line x1="12" y1="17.2" x2="12" y2="17.3"></line></svg>
             </button>
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-goto-today" title="Aujourd'hui sur 2GETHER : le programme du jour (raccourci clavier T)" aria-label="Voir le programme d'aujourd'hui" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                📍<span class="hidden sm:inline"> Aujourd'hui</span>
+            <button id="btn-goto-today" title="Aujourd'hui sur 2GETHER : le programme du jour (raccourci clavier T)" aria-label="Voir le programme d'aujourd'hui" class="flex items-center gap-1.5 text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-2.5 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line><line x1="4.6" y1="4.6" x2="6.8" y2="6.8"></line><line x1="17.2" y1="17.2" x2="19.4" y2="19.4"></line><line x1="4.6" y1="19.4" x2="6.8" y2="17.2"></line><line x1="17.2" y1="6.8" x2="19.4" y2="4.6"></line></svg>
+                <span class="hidden sm:inline">Aujourd'hui</span>
             </button>
-            <button id="btn-toggle-timeline" title="Vue Frise : la même sélection organisée par mois, séries regroupées en un seul bloc" aria-label="Vue Frise" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🗓️<span class="hidden sm:inline"> Frise</span>
+            <button id="btn-toggle-timeline" title="Vue Frise : la même sélection organisée par mois, séries regroupées en un seul bloc" aria-label="Vue Frise" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="7" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="17" cy="12" r="1.6" fill="currentColor" stroke="none"></circle></svg>
+                <span class="hidden sm:inline">Frise</span>
             </button>
-            <button id="btn-toggle-map" title="Carte des lieux IRL (meetups)" aria-label="Carte des lieux IRL" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🗺️<span class="hidden sm:inline"> Carte</span>
-            </button>
-
-            <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
-
-            <button id="btn-export-ics" title="Exporter le planning affiché en .ics (instantané ponctuel)" aria-label="Exporter le planning affiché en .ics" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                📅<span class="hidden sm:inline"> .ics</span>
-            </button>
-            <button id="btn-subscribe-ics" title="Copier le lien d'abonnement (webcal://) : se resynchronise tout seul dans votre appli calendrier" aria-label="Copier le lien d'abonnement au calendrier" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🔗<span class="hidden sm:inline"> S'abonner</span>
+            <button id="btn-toggle-map" title="Carte des lieux IRL (meetups)" aria-label="Carte des lieux IRL" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 22s7-7.5 7-12a7 7 0 0 0-14 0c0 4.5 7 12 7 12z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
+                <span class="hidden sm:inline">Carte</span>
             </button>
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-open-reminders" title="Gérer vos rappels de notification" aria-label="Gérer vos rappels de notification" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🔔<span class="hidden sm:inline"> Rappels</span>
+            <button id="btn-export-ics" title="Exporter le planning affiché en .ics (instantané ponctuel)" aria-label="Exporter le planning affiché en .ics" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><line x1="12" y1="13" x2="12" y2="18"></line><line x1="9.5" y1="15.5" x2="14.5" y2="15.5"></line></svg>
+                <span class="hidden sm:inline">.ics</span>
             </button>
-            <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" aria-label="Rétrospective annuelle" class="text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
-                🎉<span class="hidden sm:inline"> Rétrospective</span>
+            <button id="btn-subscribe-ics" title="Copier le lien d'abonnement (webcal://) : se resynchronise tout seul dans votre appli calendrier" aria-label="Copier le lien d'abonnement au calendrier" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><circle cx="6" cy="18" r="1.8" fill="currentColor" stroke="none"></circle><path d="M5 11a8 8 0 0 1 8 8"></path><path d="M5 5a14 14 0 0 1 14 14"></path></svg>
+                <span class="hidden sm:inline">S'abonner</span>
             </button>
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-toggle-density" title="Densité d'affichage des cartes : confortable" aria-label="Basculer la densité d'affichage" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                📐<span class="hidden sm:inline"> Confortable</span>
+            <button id="btn-open-reminders" title="Gérer vos rappels de notification" aria-label="Gérer vos rappels de notification" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
+                <span class="hidden sm:inline">Rappels</span>
+            </button>
+            <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" aria-label="Rétrospective annuelle" class="flex items-center gap-1.5 text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"></path><path d="M19 3v4"></path><path d="M17 5h4"></path></svg>
+                <span class="hidden sm:inline">Rétrospective</span>
+            </button>
+
+            <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
+
+            <button id="btn-toggle-density" title="Densité d'affichage des cartes : confortable" aria-label="Basculer la densité d'affichage" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><circle cx="9" cy="6" r="2"></circle><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="15" cy="12" r="2"></circle><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="7" cy="18" r="2"></circle></svg>
+                <span class="hidden sm:inline">Confortable</span>
             </button>
             <label for="theme-select" class="sr-only">Thème saisonnier</label>
             <select id="theme-select" title="Choisir le thème saisonnier (par défaut : automatique selon la date)" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 pl-2 pr-1 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
@@ -237,31 +358,50 @@
                 <option value="none">◾ Aucun</option>
             </select>
 
-            <!-- Outils d'organisateur (admin/kiosque/discord) : masqués par défaut (voir
-                 setupAdminMode dans main.js), pas de séparateur dédié tant qu'ils sont cachés -
-                 main.js en ajoute un dynamiquement en même temps qu'il les révèle. -->
-            <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" aria-label="Copier un message Discord" class="hidden text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                💬<span class="hidden sm:inline"> Discord</span>
-            </button>
-            <a id="btn-trigger-webhook" href="https://github.com/2gether-asso/2GELOGView/actions/workflows/jekyll-gh-pages.yml" target="_blank" rel="noopener" title="Ouvre la page GitHub Actions : cliquez « Run workflow », cochez « Poster le programme de la semaine sur Discord », puis lancez." aria-label="Lancer le digest Discord" class="hidden text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🔗<span class="hidden sm:inline"> Lancer le digest Discord</span>
-            </a>
-            <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" aria-label="Mode Kiosque" class="hidden text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                🖥️<span class="hidden sm:inline"> Kiosque</span>
-            </button>
-            <button id="btn-admin-view" aria-label="Mode Admin" class="hidden text-[11px] font-bold text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
-                🛠️<span class="hidden sm:inline"> Admin</span>
-            </button>
+            <!-- Outils d'organisateur (admin/kiosque/discord) : regroupés derrière un seul menu
+                 "⋯" plutôt qu'en boutons séparés (V2.5) - masqué par défaut, révélé par
+                 setupAdminMode() dans main.js (?admin dans l'URL, pas une vraie sécurité, voir
+                 config.js). Les IDs/handlers de chaque outil sont inchangés, seul leur parent a
+                 changé (voir setupAdminToolsMenu() dans main.js pour l'ouverture/fermeture). -->
+            <div id="admin-tools-menu" class="hidden relative">
+                <button id="btn-admin-tools-toggle" title="Outils organisateur" aria-label="Outils organisateur" aria-haspopup="true" aria-expanded="false" class="text-[11px] font-bold text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 px-2.5 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle></svg>
+                </button>
+                <div id="admin-tools-dropdown" class="hidden absolute right-0 top-full mt-1 z-30 glass-panel rounded-xl p-1.5 shadow-2xl w-60 flex flex-col gap-0.5 text-left">
+                    <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" aria-label="Copier un message Discord" class="flex items-center gap-2 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M4 12a8 8 0 1 1 8 8H8l-4 3z"></path></svg>
+                        Copier un message Discord
+                    </button>
+                    <a id="btn-trigger-webhook" href="https://github.com/2gether-asso/2GELOGView/actions/workflows/jekyll-gh-pages.yml" target="_blank" rel="noopener" title="Ouvre la page GitHub Actions : cliquez « Run workflow », cochez « Poster le programme de la semaine sur Discord », puis lancez." aria-label="Lancer le digest Discord" class="flex items-center gap-2 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><polygon points="13 2 4 14 11 14 10 22 20 10 13 10"></polygon></svg>
+                        Lancer le digest Discord
+                    </a>
+                    <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" aria-label="Mode Kiosque" class="flex items-center gap-2 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"></rect><line x1="8" y1="20" x2="16" y2="20"></line><line x1="12" y1="16" x2="12" y2="20"></line></svg>
+                        Mode Kiosque
+                    </button>
+                    <div class="h-px bg-white/10 my-0.5" aria-hidden="true"></div>
+                    <button id="btn-admin-view" aria-label="Mode Admin" class="flex items-center gap-2 text-[11px] font-bold text-amber-300 hover:text-amber-200 hover:bg-amber-500/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3l7 3v6c0 5-3 8-7 9c-4-1-7-4-7-9V6z"></path><line x1="12" y1="9" x2="12" y2="13"></line><circle cx="12" cy="16" r="0.6" fill="currentColor" stroke="none"></circle></svg>
+                        Mode Admin
+                    </button>
+                </div>
+            </div>
 
-            <button id="btn-clear-filters" aria-label="Annuler les filtres" class="text-[11px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
-                ✕<span class="hidden sm:inline"> Annuler les filtres</span>
+            <button id="btn-clear-filters" aria-label="Annuler les filtres" class="flex items-center gap-1.5 text-[11px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M3 5h13"></path><path d="M3 5l6 7v7l3 1.5v-8.5l2-2.3"></path><line x1="17" y1="4" x2="22" y2="9"></line><line x1="22" y1="4" x2="17" y2="9"></line></svg>
+                <span class="hidden sm:inline">Annuler les filtres</span>
             </button>
 
             <div class="w-full sm:w-64 sm:ml-2 relative">
                 <label for="recherche" class="sr-only">Rechercher un événement</label>
                 <input type="text" id="recherche" autocomplete="off" placeholder="Rechercher un stream, jeu, tag... (/)" class="w-full bg-black/40 border border-white/5 rounded-xl pl-3 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all backdrop-blur-md">
-                <button id="btn-clear-search" type="button" title="Effacer la recherche" aria-label="Effacer la recherche" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs px-1">✕</button>
-                <span id="search-icon" class="absolute right-3 top-2.5 text-slate-600 text-xs pointer-events-none" aria-hidden="true">🔍</span>
+                <button id="btn-clear-search" type="button" title="Effacer la recherche" aria-label="Effacer la recherche" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs px-1">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-3.5 h-3.5" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+                </button>
+                <span id="search-icon" class="absolute right-3 top-2.5 text-slate-600 pointer-events-none" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><circle cx="10.5" cy="10.5" r="6.5"></circle><line x1="15.5" y1="15.5" x2="20" y2="20"></line></svg>
+                </span>
                 <!-- Historique des dernières recherches (voir setupSearchInput dans main.js), affiché
                      au focus du champ tant qu'il est vide. -->
                 <div id="search-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 z-30 glass-panel rounded-xl p-1.5 shadow-2xl text-left"></div>
@@ -273,16 +413,8 @@
         ✕ Quitter le Kiosque
     </button>
 
-    <!-- Popover mini-calendrier (QOL #16, voir setupMiniCalendar dans main.js), positionné en
-         JS (position:fixed) et peuplé à l'ouverture. Enfant direct de <body>, PAS niché dans
-         #filters-sidebar : celle-ci a un backdrop-filter (Tailwind backdrop-blur-md), qui crée
-         un containing block pour les descendants position:fixed - niché dedans, ce popover se
-         retrouvait piégé dans le contexte d'empilement local de #filters-sidebar et passait donc
-         TOUJOURS derrière #main (peu importe son z-index), même en position:fixed. -->
-    <div id="mini-calendar-popover" class="hidden fixed z-40 glass-panel rounded-xl p-3 shadow-2xl w-56 text-left"></div>
-
     <div id="next-event-banner" tabindex="0" role="button" aria-label="Ouvrir le prochain événement" class="hidden shrink-0 border-b border-indigo-500/20 bg-indigo-500/[0.06] px-3 sm:px-6 py-2 text-xs items-center gap-2 cursor-pointer hover:bg-indigo-500/10 focus:outline-none focus:bg-indigo-500/10 transition-all">
-        <span id="next-event-icon" class="shrink-0">⏳</span>
+        <span id="next-event-icon" class="shrink-0 text-indigo-400"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="7" x2="12" y2="12"></line><line x1="12" y1="12" x2="16" y2="14"></line></svg></span>
         <span id="next-event-text" class="text-slate-300 truncate flex-1 min-w-0"></span>
     </div>
 
@@ -292,58 +424,85 @@
              barre horizontale sous l'en-tête, devenue une sidebar gauche pour rester lisible
              malgré le nombre de sections (vues favorites, catégories, tags, types,
              organisateurs, période) plutôt que de s'entasser sur une seule ligne qui déborde. -->
-        <section id="filters-sidebar" class="w-full sm:w-72 absolute sm:relative inset-y-0 left-0 z-20 sm:z-auto border-r border-white/5 bg-[#0d1117] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden backdrop-blur-sm transition-all shadow-2xl sm:shadow-none text-xs text-slate-400">
+        <section id="filters-sidebar" class="w-full sm:w-72 absolute sm:relative inset-y-0 left-0 z-20 sm:z-auto border-r border-white/5 bg-[var(--surface-1)] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden backdrop-blur-sm transition-all shadow-2xl sm:shadow-none text-xs text-slate-400">
             <div class="flex items-center justify-between px-4 py-3 shrink-0 border-b border-white/5">
-                <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-300">🔧 Filtres</span>
+                <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-300">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><path d="M3 5h18"></path><path d="M7 5l5 7v7l4 2v-9l5-7"></path></svg>
+                    Filtres
+                </span>
                 <button id="btn-toggle-filters-sidebar" title="Masquer le panneau" aria-label="Masquer le panneau de filtres" class="text-slate-500 hover:text-white text-xs p-1 rounded-md hover:bg-white/5 transition-all">✕</button>
             </div>
             <div id="filters-sidebar-content" class="flex-1 overflow-y-auto custom-scroll px-4 py-3 flex flex-col divide-y divide-white/5">
                 <div class="flex flex-col gap-2 pb-3 first:pt-0">
-                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">⭐ Vues favorites</span>
+                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><path d="M12 3l2.7 5.9l6.3 0.7l-4.7 4.4l1.3 6.2L12 17l-5.6 3.2l1.3-6.2L3 9.6l6.3-0.7z"></path></svg>
+                        Vues favorites
+                    </span>
                     <div class="flex items-center gap-1.5 flex-wrap">
                         <label for="saved-views-select" class="sr-only">Choisir une vue favorite</label>
                         <select id="saved-views-select" title="Rappeler un jeu de filtres enregistré" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 flex-1 min-w-0">
                             <option value="">— Aucune —</option>
                         </select>
-                        <button id="btn-save-view" title="Enregistrer les filtres actuels comme vue favorite" aria-label="Enregistrer la vue actuelle" class="text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1 rounded-lg border border-white/10 bg-white/5 transition-all shrink-0">💾</button>
-                        <button id="btn-delete-view" title="Supprimer la vue favorite sélectionnée" aria-label="Supprimer la vue favorite sélectionnée" class="hidden text-[11px] font-bold text-slate-500 hover:text-rose-300 px-1.5 py-1 rounded-lg transition-all shrink-0">🗑️</button>
+                        <button id="btn-save-view" title="Enregistrer les filtres actuels comme vue favorite" aria-label="Enregistrer la vue actuelle" class="text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 transition-all shrink-0">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"></path><rect x="8" y="4" width="7" height="5"></rect><rect x="7" y="14" width="10" height="6"></rect></svg>
+                        </button>
+                        <button id="btn-delete-view" title="Supprimer la vue favorite sélectionnée" aria-label="Supprimer la vue favorite sélectionnée" class="hidden text-slate-500 hover:text-rose-300 px-1.5 py-1.5 rounded-lg transition-all shrink-0">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"></line><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path><line x1="9" y1="4" x2="15" y2="4"></line><line x1="9" y1="4" x2="9" y2="7"></line><line x1="15" y1="4" x2="15" y2="7"></line></svg>
+                        </button>
                     </div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
                     <div class="flex items-center justify-between gap-2">
-                        <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">🏷️ Catégories</span>
+                        <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><path d="M11 3h6a2 2 0 0 1 2 2v6l-9 9l-8-8z"></path><circle cx="15" cy="7" r="1.2" fill="currentColor" stroke="none"></circle></svg>
+                            Catégories
+                        </span>
                         <button id="btn-hidden-categories" title="Réafficher les catégories masquées" aria-label="Réafficher les catégories masquées" class="hidden text-[10px] font-bold text-amber-300 hover:text-amber-200 px-1.5 py-0.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all shrink-0"></button>
                     </div>
                     <div class="flex gap-1.5 flex-wrap" id="filter-categories-container"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
-                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">#️⃣ Tags récurrents</span>
+                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><line x1="5" y1="9" x2="19" y2="9"></line><line x1="5" y1="15" x2="19" y2="15"></line><line x1="9" y1="4" x2="7" y2="20"></line><line x1="17" y1="4" x2="15" y2="20"></line></svg>
+                        Tags récurrents
+                    </span>
                     <div id="filter-tags-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
-                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">🎬 Types</span>
+                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><line x1="8" y1="4" x2="8" y2="20"></line><line x1="16" y1="4" x2="16" y2="20"></line><line x1="3" y1="9" x2="8" y2="9"></line><line x1="3" y1="15" x2="8" y2="15"></line><line x1="16" y1="9" x2="21" y2="9"></line><line x1="16" y1="15" x2="21" y2="15"></line></svg>
+                        Types
+                    </span>
                     <div id="filter-types-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
-                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">👤 Organisateurs</span>
+                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
+                        Organisateurs
+                    </span>
                     <div id="filter-hosts-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3 last:pb-0">
-                    <span class="font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">📅 Période</span>
+                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><circle cx="8" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="16" cy="14" r="1" fill="currentColor" stroke="none"></circle></svg>
+                        Période
+                    </span>
+                    <!-- Navigation à une date précise : le mini-calendrier vit maintenant en
+                         permanence en haut de la sidebar Statistiques (V2.5, voir #sidebar-minical)
+                         plutôt qu'un popover ouvert depuis un bouton ici. -->
                     <div class="flex items-center gap-1.5 flex-wrap">
                         <input type="date" id="filter-date-from" aria-label="Du" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
                         <span class="text-slate-500 text-[11px]" aria-hidden="true">→</span>
                         <input type="date" id="filter-date-to" aria-label="Au" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
                         <button id="btn-clear-date-range" title="Réinitialiser la période" aria-label="Réinitialiser la période" class="hidden text-slate-500 hover:text-rose-300 text-xs px-1 shrink-0">✕</button>
                     </div>
-                    <button id="btn-open-minical" title="Aller à une date précise" aria-label="Ouvrir le mini-calendrier de navigation" class="text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 transition-all w-full">
-                        🗓️ Aller à une date...
-                    </button>
                 </div>
             </div>
         </section>
 
-        <button id="btn-reopen-filters-sidebar" title="Afficher les filtres" aria-label="Afficher le panneau de filtres" class="hidden fixed left-0 top-1/2 -translate-y-1/2 z-30 bg-[#161b22]/90 border border-white/10 border-l-0 rounded-r-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">🔧</button>
+        <button id="btn-reopen-filters-sidebar" title="Afficher les filtres" aria-label="Afficher le panneau de filtres" class="hidden fixed left-0 top-1/2 -translate-y-1/2 z-30 bg-[var(--surface-2)]/90 border border-white/10 border-l-0 rounded-r-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M3 5h18"></path><path d="M7 5l5 7v7l4 2v-9l5-7"></path></svg>
+        </button>
 
         <section class="flex-1 p-4 h-full relative overflow-y-auto overflow-x-hidden custom-scroll bg-black/[0.05]">
             <div id="calendar" class="w-full min-h-full"></div>
@@ -354,58 +513,104 @@
                  popups) sur des éléments sans quoi contenir ce sous-arbre dans son propre contexte
                  d'empilement - ces 700 finiraient comparés directement à la modale d'événement
                  (z-50, voir #custom-modal-container) au niveau racine et passeraient TOUJOURS
-                 devant elle (même bug de fond que le popover du mini-calendrier, voir plus haut). -->
+                 devant elle. -->
             <div id="map-view" class="hidden w-full h-full isolate">
                 <div id="meetup-map" class="w-full h-full rounded-xl overflow-hidden"></div>
             </div>
         </section>
 
-        <section id="sidebar-panel" class="w-full sm:w-80 absolute sm:relative inset-y-0 right-0 z-20 sm:z-auto border-l border-white/5 bg-[#0d1117] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden p-4 space-y-4 backdrop-blur-sm transition-all shadow-2xl sm:shadow-none">
-            <div class="space-y-2 shrink-0">
-                <div class="flex items-center justify-between px-1">
-                    <button id="btn-toggle-stats" class="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 hover:text-slate-200 uppercase tracking-widest transition-all" aria-expanded="true" aria-controls="stats-content">
-                        <span id="stats-chevron" aria-hidden="true">▾</span>
-                        <span>Statistiques <span id="stats-year-label"></span></span>
-                    </button>
-                    <button id="btn-toggle-sidebar" title="Masquer le panneau" aria-label="Masquer le panneau de statistiques" class="text-slate-500 hover:text-white text-xs p-1 rounded-md hover:bg-white/5 transition-all">✕</button>
-                </div>
-                <div id="stats-content" class="space-y-2">
-                    <div id="stat-categories-container" class="grid grid-cols-2 gap-2"></div>
-                    <div class="glass-panel rounded-xl p-2.5 shadow-sm">
-                        <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">👤 Top Organisateurs</div>
-                        <div id="stat-hosts-container" class="flex flex-col gap-1"></div>
-                    </div>
-                    <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-[11px] text-slate-400 shadow-sm">
-                        <span>🚫 Annulations & Reports</span>
-                        <span id="stat-canceled-count" class="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">0</span>
-                    </div>
-                </div>
-                <div class="glass-panel rounded-xl p-2.5 shadow-sm">
-                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">📈 Activité (13 sem.)</div>
-                    <div id="activity-heatmap"></div>
-                </div>
+        <section id="sidebar-panel" class="w-full sm:w-80 absolute sm:relative inset-y-0 right-0 z-20 sm:z-auto border-l border-white/5 bg-[var(--surface-1)] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden backdrop-blur-sm transition-all shadow-2xl sm:shadow-none text-xs text-slate-400">
+            <div class="flex items-center justify-between px-4 py-3 shrink-0 border-b border-white/5">
+                <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-300">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><line x1="4" y1="20" x2="20" y2="20"></line><rect x="6" y="12" width="3" height="8"></rect><rect x="11" y="7" width="3" height="13"></rect><rect x="16" y="10" width="3" height="10"></rect></svg>
+                    Tableau de bord
+                </span>
+                <button id="btn-toggle-sidebar" title="Masquer le panneau" aria-label="Masquer le panneau de statistiques" class="text-slate-500 hover:text-white text-xs p-1 rounded-md hover:bg-white/5 transition-all">✕</button>
             </div>
-
-            <div class="flex-1 flex flex-col min-h-0">
-                <div class="flex items-center justify-between px-1 mb-2 shrink-0">
-                    <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">🔮 Prochainement</h2>
-                    <span id="upcoming-count" class="text-[10px] font-bold bg-white/5 border border-white/5 text-slate-400 px-2 py-0.5 rounded-md">0</span>
+            <!-- Même rythme visuel que #filters-sidebar-content en face (V2.5) : un seul défilement
+                 partagé plutôt que la Rétrospective figée + Prochainement défilant séparément
+                 d'avant, et des sections délimitées par divide-y au lieu d'empilements space-y-4
+                 imbriqués - plus simple à lire d'un coup d'oeil. -->
+            <div id="sidebar-panel-content" class="flex-1 overflow-y-auto custom-scroll px-4 py-3 flex flex-col divide-y divide-white/5">
+                <!-- Mini-calendrier (QOL #16, V2.5) : intégré en permanence ici plutôt qu'un
+                     popover ouvert depuis un bouton dans la sidebar Filtres - toujours sous les
+                     yeux, et chaque jour affiche en fond la vignette d'un de ses événements quand
+                     il en a une (voir renderMiniCalendar dans main.js). -->
+                <div class="flex flex-col gap-2 pb-3 first:pt-0">
+                    <div id="sidebar-minical"></div>
                 </div>
-                <div id="upcoming-list" class="flex-1 overflow-y-auto space-y-2 pr-1 custom-scroll">
-                    <div class="text-center text-xs text-slate-600 py-12">Aucun événement planifié</div>
+                <div class="flex flex-col gap-2 py-3">
+                    <button id="btn-toggle-stats" class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-all" aria-expanded="true" aria-controls="stats-content">
+                        <svg id="stats-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0 transition-transform duration-200" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <span>Statistiques <span id="stats-year-label" class="normal-case tracking-normal text-slate-500"></span></span>
+                    </button>
+                    <!-- #activity-heatmap DANS #stats-content (pas un frère) : suit son repli/dépli,
+                         alors qu'il en a visuellement toutes les apparences pour l'utilisateur. -->
+                    <div id="stats-content" class="flex flex-col gap-2">
+                        <div id="stat-categories-container" class="grid grid-cols-2 gap-2"></div>
+                        <div class="glass-panel rounded-xl p-2.5 shadow-sm">
+                            <div class="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
+                                Top Organisateurs
+                            </div>
+                            <div id="stat-hosts-container" class="flex flex-col gap-1"></div>
+                        </div>
+                        <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-[11px] text-slate-400 shadow-sm">
+                            <span class="flex items-center gap-1.5">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
+                                Annulations & Reports
+                            </span>
+                            <span id="stat-canceled-count" class="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">0</span>
+                        </div>
+                        <div class="glass-panel rounded-xl p-2.5 shadow-sm">
+                            <div class="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 6"></polyline><polyline points="15 6 21 6 21 12"></polyline></svg>
+                                Activité (13 sem.)
+                            </div>
+                            <div id="activity-heatmap"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-col gap-2 py-3 last:pb-0">
+                    <div class="flex items-center justify-between gap-2">
+                        <button id="btn-toggle-upcoming" class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-all" aria-expanded="true" aria-controls="upcoming-content">
+                            <svg id="upcoming-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0 transition-transform duration-200" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            Prochainement
+                        </button>
+                        <span id="upcoming-count" class="text-[10px] font-bold bg-white/5 border border-white/5 text-slate-400 px-2 py-0.5 rounded-md">0</span>
+                    </div>
+                    <div id="upcoming-content" class="flex flex-col gap-2">
+                        <div id="upcoming-list" class="space-y-2">
+                            <div class="text-center text-xs text-slate-600 py-12">Aucun événement planifié</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <button id="btn-reopen-sidebar" title="Afficher les statistiques" aria-label="Afficher le panneau de statistiques" class="hidden fixed right-0 top-1/2 -translate-y-1/2 z-30 bg-[#161b22]/90 border border-white/10 border-r-0 rounded-l-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">📊</button>
+        <button id="btn-reopen-sidebar" title="Afficher les statistiques" aria-label="Afficher le panneau de statistiques" class="hidden fixed right-0 top-1/2 -translate-y-1/2 z-30 bg-[var(--surface-2)]/90 border border-white/10 border-r-0 rounded-l-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><line x1="4" y1="20" x2="20" y2="20"></line><rect x="6" y="12" width="3" height="8"></rect><rect x="11" y="7" width="3" height="13"></rect><rect x="16" y="10" width="3" height="10"></rect></svg>
+        </button>
     </main>
 
     <div id="custom-modal-container" title="Cliquer en dehors pour fermer" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md opacity-0 pointer-events-none transition-all duration-300 cursor-pointer">
-        <div title="" class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl transform scale-95 transition-all duration-300 flex flex-col space-y-4 text-left cursor-auto" id="custom-modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-event-title">
-            <div class="flex items-start justify-between">
-                <div class="flex items-start space-x-3">
+        <!-- max-h + colonne flex à 2 zones (en-tête figé / corps défilant) : V2.5, voir la refonte
+             de la modale plus bas dans ce commentaire. Avant ça, #custom-modal-box n'avait AUCUNE
+             limite de hauteur ni défilement propre - un événement avec affiche + épisode + hôte/
+             plateforme + notes + rappel + tags + "vous aimerez peut-être" + 2-3 liens CTA dépassait
+             largement un écran mobile, avec le bas du contenu (liens compris) tout bonnement
+             inatteignable (ni scroll, ni bouton fermer visible une fois débordé). L'en-tête reste
+             maintenant TOUJOURS visible (collé en haut de la modale, pas de la page) pendant qu'on
+             défile le reste - jamais perdu de vue, jamais bloqué. Sur mobile, la modale s'ouvre en
+             feuille ancrée en bas de l'écran (voir la media query plus bas) plutôt que centrée :
+             plus naturelle à refermer/faire défiler au pouce qu'une boîte de dialogue flottante.
+             `title=""` supprimé du conteneur intérieur : superflu (celui du conteneur extérieur,
+             "Cliquer en dehors pour fermer", suffit) et produisait une bulle d'aide vide au survol. -->
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl transform scale-95 transition-all duration-300 flex flex-col max-h-[85vh] cursor-auto" id="custom-modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-event-title">
+            <div class="flex items-start justify-between gap-3 p-6 pb-4 shrink-0 sticky top-0 bg-[var(--surface-2)] rounded-t-2xl border-b border-white/5 z-10">
+                <div class="flex items-start space-x-3 min-w-0">
                     <img id="modal-event-icon" src="./assets/img/badges/hors-prog.png" alt="" class="w-16 aspect-[8/9] rounded-xl object-cover border border-white/10 shrink-0" onerror="this.style.display='none'">
-                    <div class="flex flex-col space-y-1">
+                    <div class="flex flex-col space-y-1 min-w-0">
                         <div class="flex items-center gap-1.5 flex-wrap">
                             <span id="modal-event-type" class="text-[11px] font-black tracking-widest text-indigo-400 uppercase bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md w-fit">TYPE</span>
                             <span id="modal-event-status"></span>
@@ -414,44 +619,62 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                    <button id="modal-add-to-cal-btn" title="Ajouter cet événement à mon calendrier (.ics)" aria-label="Ajouter cet événement à mon calendrier" class="p-1.5 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all font-bold text-sm">📅</button>
+                    <button id="modal-add-to-cal-btn" title="Ajouter cet événement à mon calendrier (.ics)" aria-label="Ajouter cet événement à mon calendrier" class="p-1.5 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><line x1="12" y1="13" x2="12" y2="18"></line><line x1="9.5" y1="15.5" x2="14.5" y2="15.5"></line></svg>
+                    </button>
                     <!-- Partage natif (Web Share API) si le navigateur le permet (surtout mobile),
                          sinon repli sur la copie presse-papiers - voir modal-copy-link-btn dans
                          ModalView.js (même bouton, comportement choisi au clic). -->
-                    <button id="modal-copy-link-btn" title="Partager / copier le lien de cet événement" aria-label="Partager ou copier le lien de cet événement" class="p-1.5 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all font-bold text-sm">🔗</button>
+                    <button id="modal-copy-link-btn" title="Partager / copier le lien de cet événement" aria-label="Partager ou copier le lien de cet événement" class="p-1.5 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><circle cx="8" cy="16" r="3"></circle><circle cx="16" cy="8" r="3"></circle><line x1="10.2" y1="13.8" x2="13.8" y2="10.2"></line></svg>
+                    </button>
                     <button id="modal-close-btn" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
                 </div>
             </div>
 
-            <div class="border-t border-white/5 my-1"></div>
-
+            <div id="modal-scroll-body" class="flex-1 min-h-0 overflow-y-auto custom-scroll p-6 pt-4 flex flex-col space-y-4 text-left">
             <div id="modal-poster-container" class="hidden rounded-xl overflow-hidden border border-white/10">
                 <img id="modal-event-poster" src="" alt="" class="w-full max-h-56 object-cover">
             </div>
 
             <div class="grid grid-cols-2 gap-3 text-sm">
                 <div id="modal-time-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5">
-                    <div class="text-slate-400 font-bold text-[11px] uppercase tracking-wider">📅 Date & Heure</div>
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[11px] uppercase tracking-wider">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><circle cx="8" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="16" cy="14" r="1" fill="currentColor" stroke="none"></circle></svg>
+                        Date & Heure
+                    </div>
                     <div id="modal-event-time" class="text-slate-200 font-semibold mt-1">Non spécifié</div>
                 </div>
                 <div id="modal-location-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5">
-                    <div class="text-slate-400 font-bold text-[11px] uppercase tracking-wider">📍 Lieu</div>
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[11px] uppercase tracking-wider">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><path d="M12 22s7-7.5 7-12a7 7 0 0 0-14 0c0 4.5 7 12 7 12z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
+                        Lieu
+                    </div>
                     <div id="modal-event-location" class="text-emerald-400 font-semibold mt-1">Non spécifié</div>
                 </div>
             </div>
 
             <div id="modal-sub-block" class="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl hidden">
-                <div class="text-indigo-400 font-bold text-[11px] uppercase tracking-wider">📌 Episode(s)</div>
+                <div class="flex items-center gap-1.5 text-indigo-400 font-bold text-[11px] uppercase tracking-wider">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"></rect><line x1="8" y1="3" x2="12" y2="6"></line><line x1="16" y1="3" x2="12" y2="6"></line></svg>
+                    Episode(s)
+                </div>
                 <div id="modal-event-sub" class="text-indigo-300 font-semibold mt-0.5 text-sm"></div>
             </div>
 
             <div id="modal-meta-block" class="grid grid-cols-2 gap-3 text-xs">
                 <div id="modal-host-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
-                    <div class="text-slate-400 font-bold text-[9px] uppercase tracking-wider">👤 Organisé par</div>
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
+                        Organisé par
+                    </div>
                     <button id="modal-event-host" title="Voir le profil de cet organisateur" class="text-slate-200 font-semibold mt-1 hover:text-indigo-400 hover:underline transition-colors text-left"></button>
                 </div>
                 <div id="modal-platform-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
-                    <div class="text-slate-400 font-bold text-[9px] uppercase tracking-wider">📺 Plateforme</div>
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"></rect><line x1="8" y1="3" x2="12" y2="6"></line><line x1="16" y1="3" x2="12" y2="6"></line></svg>
+                        Plateforme
+                    </div>
                     <div id="modal-event-platform" class="text-slate-200 font-semibold mt-1"></div>
                 </div>
             </div>
@@ -463,35 +686,55 @@
 
             <div id="modal-reminder-container" class="flex flex-col space-y-1.5">
                 <button id="modal-reminder-btn" class="w-full flex items-center justify-center gap-2 text-[11px] font-bold px-3 py-2 rounded-lg border transition-all">
-                    🔔 M'envoyer un rappel
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
+                    M'envoyer un rappel
                 </button>
                 <p class="text-[10px] text-slate-600 text-center">Notification navigateur avant le début de cet événement. S'il revient sur plusieurs dates (série hebdo ou notée dans les Notes/Tags), le rappel suit automatiquement chaque prochaine diffusion.</p>
             </div>
 
             <div class="flex flex-col space-y-1.5">
-                <div class="text-slate-400 font-bold text-[9px] uppercase tracking-wider">🏷️ Tags indexés (Cliquables)</div>
+                <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M11 3h6a2 2 0 0 1 2 2v6l-9 9l-8-8z"></path><circle cx="15" cy="7" r="1.2" fill="currentColor" stroke="none"></circle></svg>
+                    Tags indexés (Cliquables)
+                </div>
                 <div id="modal-event-tags" class="flex flex-wrap gap-1.5"></div>
             </div>
 
             <!-- Suggestions "événements similaires" (même tag/organisateur/type), voir
                  renderSimilarEvents dans ModalView.js - masqué si aucun événement apparenté trouvé. -->
             <div id="modal-similar-container" class="hidden flex-col space-y-1.5"><!-- flex ajouté/retiré en JS avec hidden, voir _toggleModalLink dans ModalView.js -->
-                <div class="text-slate-400 font-bold text-[9px] uppercase tracking-wider">✨ Vous aimerez peut-être</div>
+                <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"></path><path d="M19 3v4"></path><path d="M17 5h4"></path></svg>
+                    Vous aimerez peut-être
+                </div>
                 <div id="modal-similar-events" class="flex flex-col gap-1.5"></div>
             </div>
 
             <div class="flex flex-col gap-2">
-                <a id="modal-event-link" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">🔗 Voir la fiche</a>
-                <a id="modal-event-salon" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-[#5865F2] hover:bg-[#4752C4] px-4 py-2.5 rounded-xl transition-all">💬 Rejoindre le salon</a>
-                <a id="modal-event-sondage" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 px-4 py-2.5 rounded-xl transition-all">🗳️ Voter / Sondage</a>
+                <a id="modal-event-link" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M9 15L20 4"></path><path d="M14 4h6v6"></path><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path></svg>
+                    Voir la fiche
+                </a>
+                <a id="modal-event-salon" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-[#5865F2] hover:bg-[#4752C4] px-4 py-2.5 rounded-xl transition-all">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M4 12a8 8 0 1 1 8 8H8l-4 3z"></path></svg>
+                    Rejoindre le salon
+                </a>
+                <a id="modal-event-sondage" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 px-4 py-2.5 rounded-xl transition-all">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><line x1="4" y1="20" x2="20" y2="20"></line><rect x="6" y="12" width="3" height="8"></rect><rect x="11" y="7" width="3" height="13"></rect><rect x="16" y="10" width="3" height="10"></rect></svg>
+                    Voter / Sondage
+                </a>
+            </div>
             </div>
         </div>
     </div>
 
     <div id="patchnotes-overlay" class="hidden fixed inset-0 z-[65] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-        <div class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="patchnotes-title">
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="patchnotes-title">
             <div class="flex items-start justify-between mb-3">
-                <h2 id="patchnotes-title" class="text-lg font-black text-white">🆕 Quoi de neuf ?</h2>
+                <h2 id="patchnotes-title" class="flex items-center gap-2 text-lg font-black text-white">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-indigo-400 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                    Quoi de neuf ?
+                </h2>
                 <button id="btn-close-patchnotes" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
             </div>
             <div id="patchnotes-content" class="space-y-4 text-sm text-slate-300"></div>
@@ -500,9 +743,12 @@
     </div>
 
     <div id="help-overlay" class="hidden fixed inset-0 z-[66] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-        <div class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="help-title">
             <div class="flex items-start justify-between mb-3">
-                <h2 id="help-title" class="text-lg font-black text-white">❓ Aide & légende</h2>
+                <h2 id="help-title" class="flex items-center gap-2 text-lg font-black text-white">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-slate-400 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.2 9a3 3 0 1 1 4.6 2.5c-1 0.6-1.8 1.1-1.8 2.5"></path><line x1="12" y1="17.2" x2="12" y2="17.3"></line></svg>
+                    Aide & légende
+                </h2>
                 <button id="btn-close-help" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
             </div>
             <div class="space-y-4 text-sm text-slate-300">
@@ -556,9 +802,12 @@
     </div>
 
     <div id="reminders-overlay" class="hidden fixed inset-0 z-[67] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-        <div class="w-full max-w-lg rounded-2xl bg-[#161b22]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="reminders-title">
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="reminders-title">
             <div class="flex items-start justify-between mb-3">
-                <h2 id="reminders-title" class="text-lg font-black text-white">🔔 Rappels</h2>
+                <h2 id="reminders-title" class="flex items-center gap-2 text-lg font-black text-white">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-slate-400 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
+                    Rappels
+                </h2>
                 <button id="btn-close-reminders" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
             </div>
 
@@ -611,61 +860,137 @@
         </div>
     </div>
 
-    <div id="admin-overlay" class="fixed inset-0 z-[60] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-6 sm:p-10">
-        <div class="max-w-5xl mx-auto flex items-center justify-between mb-6">
-            <h2 class="text-xl font-black text-white">🛠️ Mode Admin — Statistiques & anomalies</h2>
-            <button id="btn-close-admin" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">✕ Fermer</button>
+    <!-- Overlays "pleine page" (admin/rétrospective/détail/profil organisateur) : jusque-là un
+         fond plein sans carte ni bordure (bg-black/85 nu), visuellement une app différente des 5
+         autres overlays (modale d'événement, notes de version, aide, rappels) qui utilisent tous
+         une carte centrée (bg-[var(--surface-2)]/95, bordure, ombre, coins arrondis). V2.5 : même
+         traitement de carte ici, la mécanique d'ouverture (classList.remove/add('hidden') sur le
+         conteneur racine, voir main.js) et tous les IDs internes restent strictement identiques -
+         seul un nouveau wrapper "carte" enveloppe le contenu existant. -->
+    <div id="admin-overlay" class="fixed inset-0 z-[60] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
+        <div class="max-w-5xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="flex items-center gap-2 text-xl font-black text-white">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-amber-400 shrink-0" aria-hidden="true"><path d="M12 3l7 3v6c0 5-3 8-7 9c-4-1-7-4-7-9V6z"></path><line x1="12" y1="9" x2="12" y2="13"></line><circle cx="12" cy="16" r="0.6" fill="currentColor" stroke="none"></circle></svg>
+                    Mode Admin — Statistiques & anomalies
+                </h2>
+                <button id="btn-close-admin" class="flex items-center gap-1.5 p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+                    Fermer
+                </button>
+            </div>
+            <div id="admin-content"></div>
         </div>
-        <div id="admin-content"></div>
     </div>
 
-    <div id="retrospective-overlay" class="fixed inset-0 z-[62] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-10">
-        <div class="max-w-2xl mx-auto flex items-center justify-end mb-4">
-            <button id="btn-close-retrospective" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">✕ Fermer</button>
+    <div id="retrospective-overlay" class="fixed inset-0 z-[62] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+            <div class="flex items-center justify-end mb-4">
+                <button id="btn-close-retrospective" class="flex items-center gap-1.5 p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+                    Fermer
+                </button>
+            </div>
+            <div id="retrospective-content"></div>
         </div>
-        <div id="retrospective-content"></div>
     </div>
 
     <!-- Liste complète des sessions d'un mois/jour de semaine, ouverte au clic sur une barre
          des graphiques de la rétrospective (voir setupRetrospective() dans main.js). -->
-    <div id="bucket-detail-overlay" class="fixed inset-0 z-[63] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-10">
-        <div class="max-w-2xl mx-auto flex items-center justify-between mb-4">
-            <h3 id="bucket-detail-title" class="text-lg font-black text-white"></h3>
-            <button id="btn-close-bucket-detail" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">✕ Fermer</button>
+    <div id="bucket-detail-overlay" class="fixed inset-0 z-[63] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+            <div class="flex items-center justify-between mb-4">
+                <h3 id="bucket-detail-title" class="text-lg font-black text-white"></h3>
+                <button id="btn-close-bucket-detail" class="flex items-center gap-1.5 p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+                    Fermer
+                </button>
+            </div>
+            <div id="bucket-detail-content" class="max-w-2xl mx-auto space-y-2"></div>
         </div>
-        <div id="bucket-detail-content" class="max-w-2xl mx-auto space-y-2"></div>
+    </div>
+
+    <!-- Fiche d'un lieu de meetup IRL, ouverte au clic sur un marqueur de la vue Carte (voir
+         openLocationProfile() dans main.js / MeetupMapView.js) - même schéma que le profil
+         organisateur juste en dessous (résumé + à venir + historique), plutôt qu'un popup
+         Leaflet exigu pour un lieu qui cumule beaucoup de sessions dans le temps. -->
+    <div id="location-profile-overlay" class="fixed inset-0 z-[61] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+            <div class="flex items-center justify-between mb-1 gap-2">
+                <h3 id="location-profile-title" class="flex items-center gap-2 text-lg font-black text-white">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-indigo-400" aria-hidden="true"><path d="M12 22s7-7.5 7-12a7 7 0 0 0-14 0c0 4.5 7 12 7 12z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
+                    <span></span>
+                </h3>
+                <div class="flex items-center gap-1 shrink-0">
+                    <button id="btn-location-export-ics" title="Exporter les sessions de ce lieu en .ics" aria-label="Exporter les sessions de ce lieu en .ics" class="p-2 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><line x1="12" y1="13" x2="12" y2="18"></line><line x1="9.5" y1="15.5" x2="14.5" y2="15.5"></line></svg>
+                    </button>
+                    <button id="btn-location-copy-link" title="Copier le lien direct vers cette fiche" aria-label="Copier le lien direct vers cette fiche" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><circle cx="8" cy="16" r="3"></circle><circle cx="16" cy="8" r="3"></circle><line x1="10.2" y1="13.8" x2="13.8" y2="10.2"></line></svg>
+                    </button>
+                    <button id="btn-close-location-profile" title="Fermer" aria-label="Fermer" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
+                </div>
+            </div>
+            <div id="location-profile-summary" class="max-w-2xl mx-auto mb-4"></div>
+            <div id="location-profile-upcoming-section" class="max-w-2xl mx-auto mb-4 hidden">
+                <h4 class="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-indigo-300 mb-2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><polyline points="10 8 14 12 10 16"></polyline></svg>
+                    À venir
+                </h4>
+                <div id="location-profile-upcoming" class="space-y-2"></div>
+            </div>
+            <h4 class="flex items-center gap-1.5 max-w-2xl mx-auto text-xs font-black uppercase tracking-widest text-slate-500 mb-2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><line x1="8" y1="4" x2="8" y2="20"></line><line x1="16" y1="4" x2="16" y2="20"></line><line x1="3" y1="9" x2="8" y2="9"></line><line x1="3" y1="15" x2="8" y2="15"></line><line x1="16" y1="9" x2="21" y2="9"></line><line x1="16" y1="15" x2="21" y2="15"></line></svg>
+                Historique
+            </h4>
+            <div id="location-profile-content" class="max-w-2xl mx-auto space-y-2"></div>
+        </div>
     </div>
 
     <!-- Mini-profil d'un organisateur, ouvert au clic sur son nom (sidebar "Top organisateurs"
          ou champ "Organisé par" de la modale) - voir openOrganizerProfile() dans main.js. -->
-    <div id="organizer-profile-overlay" class="fixed inset-0 z-[64] hidden bg-black/85 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-10">
-        <div class="max-w-2xl mx-auto flex items-center justify-between mb-1 gap-2">
-            <h3 id="organizer-profile-title" class="text-lg font-black text-white"></h3>
-            <div class="flex items-center gap-1 shrink-0">
-                <button id="btn-organizer-export-ics" title="Exporter les sessions de cet organisateur en .ics" aria-label="Exporter les sessions de cet organisateur en .ics" class="p-2 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all font-bold text-sm">📅</button>
-                <button id="btn-organizer-export-image" title="Générer une image récap partageable" aria-label="Générer une image récap partageable" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all font-bold text-sm">🖼️</button>
-                <button id="btn-organizer-copy-link" title="Copier le lien direct vers ce profil" aria-label="Copier le lien direct vers ce profil" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all font-bold text-sm">🔗</button>
-                <button id="btn-close-organizer-profile" title="Fermer" aria-label="Fermer" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">✕</button>
+    <div id="organizer-profile-overlay" class="fixed inset-0 z-[64] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+            <div class="flex items-center justify-between mb-1 gap-2">
+                <h3 id="organizer-profile-title" class="text-lg font-black text-white"></h3>
+                <div class="flex items-center gap-1 shrink-0">
+                    <button id="btn-organizer-export-ics" title="Exporter les sessions de cet organisateur en .ics" aria-label="Exporter les sessions de cet organisateur en .ics" class="p-2 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><line x1="12" y1="13" x2="12" y2="18"></line><line x1="9.5" y1="15.5" x2="14.5" y2="15.5"></line></svg>
+                    </button>
+                    <button id="btn-organizer-export-image" title="Générer une image récap partageable" aria-label="Générer une image récap partageable" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9.5" r="1.5"></circle><path d="M21 16l-5-5l-4 4l-2-2l-6 6"></path></svg>
+                    </button>
+                    <button id="btn-organizer-copy-link" title="Copier le lien direct vers ce profil" aria-label="Copier le lien direct vers ce profil" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><circle cx="8" cy="16" r="3"></circle><circle cx="16" cy="8" r="3"></circle><line x1="10.2" y1="13.8" x2="13.8" y2="10.2"></line></svg>
+                    </button>
+                    <button id="btn-close-organizer-profile" title="Fermer" aria-label="Fermer" class="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
+                </div>
             </div>
+            <div id="organizer-profile-summary" class="max-w-2xl mx-auto mb-4"></div>
+            <div id="organizer-profile-sections" class="max-w-2xl mx-auto space-y-4 mb-4"></div>
+            <h4 class="flex items-center gap-1.5 max-w-2xl mx-auto text-xs font-black uppercase tracking-widest text-slate-500 mb-2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><line x1="8" y1="4" x2="8" y2="20"></line><line x1="16" y1="4" x2="16" y2="20"></line><line x1="3" y1="9" x2="8" y2="9"></line><line x1="3" y1="15" x2="8" y2="15"></line><line x1="16" y1="9" x2="21" y2="9"></line><line x1="16" y1="15" x2="21" y2="15"></line></svg>
+                Historique complet
+            </h4>
+            <div id="organizer-profile-content" class="max-w-2xl mx-auto space-y-2"></div>
         </div>
-        <div id="organizer-profile-summary" class="max-w-2xl mx-auto mb-4"></div>
-        <div id="organizer-profile-sections" class="max-w-2xl mx-auto space-y-4 mb-4"></div>
-        <h4 class="max-w-2xl mx-auto text-xs font-black uppercase tracking-widest text-slate-500 mb-2">📜 Historique complet</h4>
-        <div id="organizer-profile-content" class="max-w-2xl mx-auto space-y-2"></div>
     </div>
 
-    <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[#06080c]" role="status" aria-live="polite">
+    <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[var(--surface-0)]" role="status" aria-live="polite">
         <div class="h-10 w-10 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin" aria-hidden="true"></div>
         <p class="text-sm text-slate-400">Chargement du calendrier…</p>
     </div>
 
     <div id="error-banner" class="hidden fixed inset-x-0 top-20 z-[70] mx-auto max-w-lg px-4" role="alert">
         <div class="bg-rose-950/90 border border-rose-500/30 rounded-xl p-4 shadow-2xl backdrop-blur-md flex items-start gap-3">
-            <span class="text-xl" aria-hidden="true">⚠️</span>
+            <svg class="w-5 h-5 shrink-0 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"></path><line x1="12" y1="9" x2="12" y2="14"></line><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"></circle></svg>
             <div class="flex-1 min-w-0">
                 <div class="text-sm font-bold text-rose-200">Impossible de charger les données</div>
                 <p class="text-xs text-rose-300/80 mt-1">Le planning n'a pas pu être récupéré (connexion réseau, ou le lien du Google Sheet a changé). Réessayez dans quelques instants.</p>
-                <button id="btn-retry-load" class="mt-2 text-xs font-bold text-rose-200 bg-rose-500/20 hover:bg-rose-500/30 px-3 py-1.5 rounded-lg transition-all">🔄 Réessayer</button>
+                <button id="btn-retry-load" class="flex items-center gap-1.5 mt-2 text-xs font-bold text-rose-200 bg-rose-500/20 hover:bg-rose-500/30 px-3 py-1.5 rounded-lg transition-all">
+                    <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"></path><polyline points="18 3 18 7 14 7"></polyline><path d="M20 12a8 8 0 0 1-14 5.3"></path><polyline points="6 21 6 17 10 17"></polyline></svg>
+                    Réessayer
+                </button>
             </div>
         </div>
     </div>

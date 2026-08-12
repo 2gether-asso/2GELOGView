@@ -4,6 +4,7 @@ import { formatMinutes, formatDurationLong, formatCategoryLabel, topN } from '..
 import { CONFIG } from '../config.js';
 import { renderEventCard } from './EventCardTemplate.js';
 import { computeBadges } from '../services/BadgeService.js';
+import { Icons } from './Icons.js';
 
 export const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
 export const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -54,8 +55,10 @@ function heroTile(value, label, accentClass = "text-white") {
     `;
 }
 
-function sectionHeading(emoji, title) {
-    return `<h3 class="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">${emoji} ${escapeHtml(title)}</h3>`;
+// `iconHtml` : chaîne SVG déjà prête (voir Icons.js), pas un emoji brut (V2.5) - hérite
+// "currentColor" de la couleur du texte du <h3>, donc pas de classe de couleur à répéter ici.
+function sectionHeading(iconHtml, title) {
+    return `<h3 class="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">${iconHtml}${escapeHtml(title)}</h3>`;
 }
 
 export function renderCategoryBreakdown(byCategory) {
@@ -81,7 +84,7 @@ export function renderCategoryBreakdown(byCategory) {
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-3">
-            ${sectionHeading('📊', 'Répartition du temps')}
+            ${sectionHeading(Icons.barChart('w-4 h-4 shrink-0'), 'Répartition du temps')}
             <div class="space-y-2.5">${rows}</div>
         </div>
     `;
@@ -106,7 +109,7 @@ export function renderEventCarousel(events) {
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-3">
-            ${sectionHeading('🔥', 'Les sessions marathon')}
+            ${sectionHeading(Icons.zap('w-4 h-4 shrink-0'), 'Les sessions marathon')}
             <div class="flex gap-3 overflow-x-auto custom-scroll snap-x snap-mandatory pb-1 -mx-1 px-1">${cards}</div>
         </div>
     `;
@@ -171,11 +174,11 @@ export function getBucketEvents(events, year, kind, index) {
  * elle qu'un résumé (top 3) pour rester lisible.
  * @param {Array<string>} labels
  * @param {Array<{count:number, duration:number, events:Array}>} buckets
- * @param {string} emoji
+ * @param {string} iconHtml - Icône SVG déjà prête (voir Icons.js), pas un emoji brut (V2.5)
  * @param {(peakLabel:string) => string} headingFor
  * @param {'month'|'weekday'} kind
  */
-export function renderHoverBarChart(labels, buckets, emoji, headingFor, kind) {
+export function renderHoverBarChart(labels, buckets, iconHtml, headingFor, kind) {
     const maxCount = Math.max(...buckets.map(b => b.count), 1);
     const peakIndex = buckets.reduce((best, b, i) => (b.count > buckets[best].count ? i : best), 0);
 
@@ -216,7 +219,7 @@ export function renderHoverBarChart(labels, buckets, emoji, headingFor, kind) {
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-3 overflow-visible">
-            ${sectionHeading(emoji, headingFor(labels[peakIndex]))}
+            ${sectionHeading(iconHtml, headingFor(labels[peakIndex]))}
             <div class="flex items-end gap-1 sm:gap-2 h-28">${bars}</div>
             <p class="text-[10px] text-slate-600 text-center">Survolez pour un aperçu, cliquez sur une barre pour la liste complète.</p>
         </div>
@@ -246,7 +249,7 @@ export function renderPosterWall(events) {
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-3">
-            ${sectionHeading('🖼️', 'Le mur des affiches')}
+            ${sectionHeading(Icons.image('w-4 h-4 shrink-0'), 'Le mur des affiches')}
             <div class="grid grid-cols-4 sm:grid-cols-6 gap-2">${tiles}</div>
         </div>
     `;
@@ -282,7 +285,7 @@ export function renderBookendCards(realSessions, labels = {}) {
     if (first === last) {
         return `
             <div class="glass-panel rounded-2xl p-4 space-y-2">
-                ${sectionHeading('🎬', onlyLabel)}
+                ${sectionHeading(Icons.film('w-4 h-4 shrink-0'), onlyLabel)}
                 ${renderEventCard(first, dateOf(first))}
             </div>
         `;
@@ -291,11 +294,11 @@ export function renderBookendCards(realSessions, labels = {}) {
     return `
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="glass-panel rounded-2xl p-4 space-y-2">
-                ${sectionHeading('🎬', firstLabel)}
+                ${sectionHeading(Icons.film('w-4 h-4 shrink-0'), firstLabel)}
                 ${renderEventCard(first, dateOf(first))}
             </div>
             <div class="glass-panel rounded-2xl p-4 space-y-2">
-                ${sectionHeading('🏁', lastLabel)}
+                ${sectionHeading(Icons.flag('w-4 h-4 shrink-0'), lastLabel)}
                 ${renderEventCard(last, dateOf(last))}
             </div>
         </div>
@@ -332,7 +335,7 @@ export function renderMostRecurringEvent(realSessions) {
         <div class="glass-panel rounded-2xl p-5 space-y-2 relative overflow-hidden">
             ${backdrop}
             <div class="relative z-10 space-y-2">
-                ${sectionHeading('🔁', "L'évènement qui revient le plus")}
+                ${sectionHeading(Icons.repeat('w-4 h-4 shrink-0'), "L'évènement qui revient le plus")}
                 <div class="text-center">
                     <div class="text-xl font-black text-white">${escapeHtml(title)}</div>
                     <div class="text-xs text-slate-400 mt-1">${stat.count} séances · ${formatDurationLong(stat.dur)} cumulées</div>
@@ -376,7 +379,7 @@ export function renderTimeOfDayBreakdown(events) {
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-3">
-            ${sectionHeading('🕒', 'À quel moment on se retrouve')}
+            ${sectionHeading(Icons.clock('w-4 h-4 shrink-0'), 'À quel moment on se retrouve')}
             <div class="space-y-2.5">${rows}</div>
         </div>
     `;
@@ -445,7 +448,7 @@ export function renderTopTags(byTag) {
     if (tags.length === 0) return '';
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-3">
-            ${sectionHeading('🏷️', 'Tags favoris')}
+            ${sectionHeading(Icons.tag('w-4 h-4 shrink-0'), 'Tags favoris')}
             <div class="flex flex-wrap gap-2 justify-center">
                 ${tags.map(([tag]) => `<span class="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-bold text-indigo-300">#${escapeHtml(tag)}</span>`).join('')}
             </div>
@@ -455,20 +458,20 @@ export function renderTopTags(byTag) {
 
 function renderFunFacts(facts) {
     const tiles = [
-        { emoji: '👑', value: facts.topHost || '—', label: facts.topHost ? `MVP · ${formatMinutes(facts.topHostMinutes)} animées` : "MVP de l'année" },
-        { emoji: '🎭', value: facts.distinctTypes, label: 'Types d\'événements différents' },
-        { emoji: '👥', value: facts.distinctHosts, label: 'Organisateurs différents' },
-        { emoji: '🚫', value: facts.canceled, label: 'Annulations & reports' },
-        { emoji: '✅', value: `${facts.reliabilityPct}%`, label: 'Sessions maintenues' },
-        { emoji: '🔥', value: facts.streak, label: facts.streak > 1 ? "Semaines d'affilée (record)" : 'Semaine active' },
-        { emoji: '🎮', value: facts.distinctGames, label: 'Jeux différents' },
-        { emoji: '🎬', value: facts.distinctWatched, label: 'Films/séries différents' }
+        { icon: Icons.crown, value: facts.topHost || '—', label: facts.topHost ? `MVP · ${formatMinutes(facts.topHostMinutes)} animées` : "MVP de l'année" },
+        { icon: Icons.film, value: facts.distinctTypes, label: 'Types d\'événements différents' },
+        { icon: Icons.users, value: facts.distinctHosts, label: 'Organisateurs différents' },
+        { icon: Icons.xCircle, value: facts.canceled, label: 'Annulations & reports' },
+        { icon: Icons.checkCircle, value: `${facts.reliabilityPct}%`, label: 'Sessions maintenues' },
+        { icon: Icons.zap, value: facts.streak, label: facts.streak > 1 ? "Semaines d'affilée (record)" : 'Semaine active' },
+        { icon: Icons.gamepad, value: facts.distinctGames, label: 'Jeux différents' },
+        { icon: Icons.film, value: facts.distinctWatched, label: 'Films/séries différents' }
     ];
     return `
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             ${tiles.map(t => `
                 <div class="glass-panel rounded-xl p-3 text-center">
-                    <div class="text-xl" aria-hidden="true">${t.emoji}</div>
+                    <div class="flex justify-center text-indigo-400" aria-hidden="true">${t.icon('w-6 h-6')}</div>
                     <div class="text-base font-black text-white mt-1 truncate capitalize" title="${escapeHtml(String(t.value))}">${escapeHtml(String(t.value))}</div>
                     <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5 leading-tight">${escapeHtml(t.label)}</div>
                 </div>
@@ -493,7 +496,7 @@ export function renderBadgeShelf(badges) {
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-3">
-            ${sectionHeading('🏅', `Badges (${achievedCount}/${badges.length})`)}
+            ${sectionHeading(Icons.medal('w-4 h-4 shrink-0'), `Badges (${achievedCount}/${badges.length})`)}
             <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">${tiles}</div>
         </div>
     `;
@@ -506,7 +509,7 @@ function renderYearComparison(currentTotal, previousTotal, previousYear) {
     const isUp = delta >= 0;
     return `
         <div class="glass-panel rounded-2xl p-4 flex items-center justify-center gap-2 text-sm">
-            <span class="${isUp ? 'text-emerald-400' : 'text-slate-400'}" aria-hidden="true">${isUp ? '▲' : '▼'}</span>
+            <span class="${isUp ? 'text-emerald-400' : 'text-slate-400'}" aria-hidden="true">${isUp ? Icons.arrowUp('w-4 h-4') : Icons.arrowDown('w-4 h-4')}</span>
             <span class="text-slate-300">
                 <span class="font-black ${isUp ? 'text-emerald-400' : 'text-slate-300'}">${isUp ? '+' : ''}${pct}%</span>
                 de temps ensemble par rapport à ${previousYear}
@@ -602,8 +605,8 @@ export function renderRetrospective(container, events, year) {
             ${renderEventCarousel(realSessions)}
             ${renderPosterWall(realSessions)}
             ${renderMostRecurringEvent(realSessions)}
-            ${renderHoverBarChart(MONTH_LABELS, monthBuckets, '📅', (peak) => `Mois le plus actif : ${peak}`, 'month')}
-            ${renderHoverBarChart(WEEKDAY_LABELS, weekdayBuckets, '📆', (peak) => `Jour préféré : ${peak}`, 'weekday')}
+            ${renderHoverBarChart(MONTH_LABELS, monthBuckets, Icons.calendarDays('w-4 h-4 shrink-0'), (peak) => `Mois le plus actif : ${peak}`, 'month')}
+            ${renderHoverBarChart(WEEKDAY_LABELS, weekdayBuckets, Icons.calendarDays('w-4 h-4 shrink-0'), (peak) => `Jour préféré : ${peak}`, 'weekday')}
             ${renderTimeOfDayBreakdown(realSessions)}
             ${renderTopTags(stats.byTag)}
             ${renderFunFacts({
@@ -629,9 +632,9 @@ function renderYearNav(year, availableYears) {
     const hasNext = availableYears.includes(year + 1);
     return `
         <div class="flex items-center justify-center gap-3 sm:gap-4">
-            <button data-retro-year="${year - 1}" ${hasPrev ? '' : 'disabled'} aria-label="Année précédente" class="text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 text-xl px-2 transition-all">‹</button>
+            <button data-retro-year="${year - 1}" ${hasPrev ? '' : 'disabled'} aria-label="Année précédente" class="text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronLeft('w-5 h-5')}</button>
             <h2 class="text-2xl sm:text-3xl font-black text-white">Rétrospective ${year}</h2>
-            <button data-retro-year="${year + 1}" ${hasNext ? '' : 'disabled'} aria-label="Année suivante" class="text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 text-xl px-2 transition-all">›</button>
+            <button data-retro-year="${year + 1}" ${hasNext ? '' : 'disabled'} aria-label="Année suivante" class="text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronRight('w-5 h-5')}</button>
         </div>
     `;
 }

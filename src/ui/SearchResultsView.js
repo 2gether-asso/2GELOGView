@@ -2,6 +2,7 @@ import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
 import { renderStatusBadge, getEpisodeLabel, getIconSrc, getOvernightSuffix } from './EventCardTemplate.js';
 import { formatMinutes } from '../utils/Format.js';
+import { Icons } from './Icons.js';
 
 function shortDate(iso) {
     return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -40,11 +41,11 @@ export function renderRow(e, idx) {
                 <div class="flex flex-wrap gap-1.5 text-[11px]">
                     <span class="font-semibold px-1.5 py-0.5 rounded border" style="color: ${e.col}; border-color: ${e.col}40; background: ${e.col}1a;">${type}</span>
                     ${renderStatusBadge(e.progressStatus)}
-                    ${e.isNew ? `<span class="text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🆕 Nouveau</span>` : ''}
-                    ${episode ? `<span class="text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">📺 ${episode}</span>` : ''}
-                    ${location ? `<span class="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">📍 ${location}</span>` : ''}
-                    ${host ? `<span class="text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">👤 ${host}</span>` : ''}
-                    ${duration ? `<span class="text-slate-400 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">⏱️ ${duration}</span>` : ''}
+                    ${e.isNew ? `<span class="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.badgePlus('w-3 h-3 shrink-0')}Nouveau</span>` : ''}
+                    ${episode ? `<span class="inline-flex items-center gap-1 text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.tv('w-3 h-3 shrink-0')}${episode}</span>` : ''}
+                    ${location ? `<span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
+                    ${host ? `<span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.user('w-3 h-3 shrink-0')}${host}</span>` : ''}
+                    ${duration ? `<span class="inline-flex items-center gap-1 text-slate-400 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.clock('w-3 h-3 shrink-0')}${duration}</span>` : ''}
                 </div>
                 ${notes ? `<p class="text-xs text-slate-400 italic line-clamp-2 leading-relaxed">${notes}</p>` : ''}
                 ${tagsHtml ? `<div class="flex flex-wrap gap-1 pt-0.5">${tagsHtml}</div>` : ''}
@@ -136,17 +137,17 @@ export function renderGroupRow(group, indexOf) {
                     </div>
                     <div class="flex flex-wrap gap-1.5 text-[11px]">
                         <span class="font-semibold px-1.5 py-0.5 rounded border" style="color: ${first.col}; border-color: ${first.col}40; background: ${first.col}1a;">${type}</span>
-                        <span class="text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">🔁 ${group.length} occurrences</span>
-                        <span class="text-slate-400 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">⏱️ ${formatMinutes(totalDuration)} cumulées</span>
-                        ${newCount ? `<span class="text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">🆕 ${newCount} nouvelle(s)</span>` : ''}
-                        ${canceledCount ? `<span class="text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">🚫 ${canceledCount} annulée(s)</span>` : ''}
-                        ${location ? `<span class="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">📍 ${location}</span>` : ''}
-                        ${host ? `<span class="text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">👤 ${host}</span>` : ''}
+                        <span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.repeat('w-3 h-3 shrink-0')}${group.length} occurrences</span>
+                        <span class="inline-flex items-center gap-1 text-slate-400 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.clock('w-3 h-3 shrink-0')}${formatMinutes(totalDuration)} cumulées</span>
+                        ${newCount ? `<span class="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.badgePlus('w-3 h-3 shrink-0')}${newCount} nouvelle(s)</span>` : ''}
+                        ${canceledCount ? `<span class="inline-flex items-center gap-1 text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">${Icons.xCircle('w-3 h-3 shrink-0')}${canceledCount} annulée(s)</span>` : ''}
+                        ${location ? `<span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
+                        ${host ? `<span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.user('w-3 h-3 shrink-0')}${host}</span>` : ''}
                     </div>
                     ${sharedNotes ? `<p class="text-xs text-slate-400 italic line-clamp-2 leading-relaxed">${sharedNotes}</p>` : ''}
                     ${tagsHtml ? `<div class="flex flex-wrap gap-1 pt-0.5">${tagsHtml}</div>` : ''}
                 </div>
-                <span class="chevron relative z-10 text-slate-500 text-xs shrink-0 mt-1 select-none">▾ détails</span>
+                <span class="chevron relative z-10 flex items-center gap-1 text-slate-500 text-xs shrink-0 mt-1 select-none">${Icons.chevronDown('chevron-icon w-3 h-3 shrink-0 transition-transform duration-200')}<span class="chevron-label">détails</span></span>
             </div>
             <div class="occurrences-panel hidden border-t border-white/5 divide-y divide-white/5">
                 ${occurrencesHtml}
@@ -165,10 +166,13 @@ export function wireGroupToggle(container) {
         const toggle = e.target.closest('.group-toggle');
         if (!toggle) return;
         const panel = toggle.parentElement.querySelector('.occurrences-panel');
-        const chevron = toggle.querySelector('.chevron');
+        const chevronIcon = toggle.querySelector('.chevron-icon');
+        const chevronLabel = toggle.querySelector('.chevron-label');
         if (!panel) return;
         const isHidden = panel.classList.toggle('hidden');
-        if (chevron) chevron.textContent = isHidden ? '▾ détails' : '▴ replier';
+        // Rotation CSS (180deg replié -> déplié) plutôt qu'un second glyphe ▴ : un seul SVG.
+        if (chevronIcon) chevronIcon.classList.toggle('rotate-180', !isHidden);
+        if (chevronLabel) chevronLabel.textContent = isHidden ? 'détails' : 'replier';
     });
 }
 

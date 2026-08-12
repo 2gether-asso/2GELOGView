@@ -106,9 +106,12 @@ export class ModalView {
             }
             try {
                 await navigator.clipboard.writeText(url.href);
-                const original = btn.textContent;
-                btn.textContent = '✅';
-                setTimeout(() => { btn.textContent = original; }, 1500);
+                // innerHTML (pas textContent) : le bouton contient une icône SVG inline (V2.5),
+                // que textContent effacerait définitivement au moment de la restaurer (une <svg>
+                // n'a aucun texte à restituer - même piège que btn-subscribe-ics dans main.js).
+                const original = btn.innerHTML;
+                btn.innerHTML = '✅';
+                setTimeout(() => { btn.innerHTML = original; }, 1500);
             } catch {
                 window.prompt("Copiez ce lien :", url.href);
             }
@@ -312,7 +315,8 @@ export class ModalView {
         const btn = document.getElementById('modal-reminder-btn');
         const isActive = ReminderService.isSet(this._currentEventTitle);
         btn.className = `w-full flex items-center justify-center gap-2 text-[11px] font-bold px-3 py-2 rounded-lg border transition-all ${isActive ? REMINDER_ACTIVE_CLASS : REMINDER_IDLE_CLASS}`;
-        btn.innerHTML = isActive ? '🔔 Rappel activé' : "🔔 M'envoyer un rappel";
+        const bellIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>';
+        btn.innerHTML = `${bellIcon}${isActive ? 'Rappel activé' : "M'envoyer un rappel"}`;
     }
 
     /** Affiche/masque un des boutons-lien optionnels de la modale (fiche/salon/sondage). */

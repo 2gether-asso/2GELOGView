@@ -2,9 +2,10 @@
 // lancement manuel du workflow (voir .github/workflows/jekyll-gh-pages.yml, case à cocher
 // "post_discord_digest" du workflow_dispatch), jamais automatiquement : le bouton "🔗 Lancer le
 // digest Discord" du mode Admin du site (index.html) ouvre la page Actions du dépôt, où cette
-// case doit être cochée avant de lancer. Réutilise DiscordExporter.generateLinkDigest() (100%
-// portable en Node) : plutôt que du texte, un lien nu par événement vers sa page d'aperçu —
-// Discord les déplie en cartes enrichies (affiche, titre, date), bien plus épuré qu'un mur de texte.
+// case doit être cochée avant de lancer. Le digest est un visuel PNG (lundi -> dimanche de la
+// semaine EN COURS, voir generate-weekly-image.js) envoyé en pièce jointe du webhook, accompagné
+// d'un court message de mention - plus lisible d'un coup d'œil qu'un mur de texte ou une liste de
+// liens pour une semaine chargée.
 //
 // Nécessite un secret GitHub Actions DISCORD_WEBHOOK_URL (créé manuellement par un
 // organisateur : Discord → Paramètres du salon → Intégrations → Webhooks → Nouveau webhook,
@@ -17,15 +18,10 @@
 import Papa from 'papaparse';
 import { CONFIG } from '../src/config.js';
 import { EventGenerator } from '../src/services/EventGenerator.js';
-import { DiscordExporter } from '../src/services/DiscordExporter.js';
+import { bucketEventsByWeekday, renderWeeklySchedulePng } from './generate-weekly-image.js';
 
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const MEMBER_ROLE_ID = process.env.DISCORD_MEMBER_ROLE_ID;
-const DISCORD_MESSAGE_LIMIT = 2000;
-// Discord ne déplie de façon fiable qu'un nombre limité de liens en cartes dans un même
-// message ; au-delà, les événements restants sont comptés mais pas listés individuellement
-// (le lien vers le planning complet, déjà dans l'en-tête, prend le relais).
-const MAX_EMBEDDED_LINKS = 10;
 
 function isoWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -35,26 +31,15 @@ function isoWeekNumber(date) {
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
 
-function formatDateFr(date) {
-    return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-// Reproduit le format utilisé manuellement chaque semaine par l'association : à ajuster ici
-// directement si le libellé doit changer un jour, c'est le seul endroit qui le définit.
-function buildHeader(today) {
-    const weekEnd = new Date(today);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    const roleMention = MEMBER_ROLE_ID ? `<@&${MEMBER_ROLE_ID}>` : '@✨ Membres 2GETHER';
-    const siteUrl = CONFIG.SITE_URL.replace(/\/$/, '');
-
-    return [
-        `# Semaine ${isoWeekNumber(today)} - du ${formatDateFr(today)} au ${formatDateFr(weekEnd)}`,
-        `*Nous vous invitons ${roleMention} à découvrir de nouveaux jeux, film et séries en notre compagnie !*`,
-        '',
-        ':warning:  les évènements sont toujours à 22h00 pour le moment ! :warning:',
-        `:small_blue_diamond: Vous pouvez aussi accéder au planning en temps réel également sur : ${siteUrl}`,
-        ''
-    ].join('\n');
+/** Lundi 00:00 -> dimanche 23:59:59 de la semaine ISO contenant `date` (pas une fenêtre glissante
+ * de 7 jours à partir d'aujourd'hui : le programme doit correspondre à "cette semaine-ci" quel
+ * que soit le jour où le workflow est lancé manuellement). */
+function getIsoWeekRange(date) {
+    const day = date.getDay(); // 0 = dimanche ... 6 = samedi
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate() + diffToMonday);
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    return { monday, sunday };
 }
 
 async function main() {
@@ -81,32 +66,33 @@ async function main() {
         }
     });
 
-    const linksBlock = DiscordExporter.generateLinkDigest(instances);
-    const lines = linksBlock.split('\n');
-    const embedded = lines.slice(0, MAX_EMBEDDED_LINKS).join('\n');
-    const overflowCount = lines.length - MAX_EMBEDDED_LINKS;
-    const overflowNote = overflowCount > 0
-        ? `\n\n+${overflowCount} autre(s) événement(s) cette semaine, voir le planning complet ci-dessus.`
-        : '';
+    const { monday, sunday } = getIsoWeekRange(new Date());
+    const weekNumber = isoWeekNumber(monday);
+    // Ni annulées ni "Prévu" (même filtre que DiscordExporter côté app) : le digest montre ce qui
+    // va réellement avoir lieu.
+    const realSessions = instances.filter(e => !e.isCanceled && !e.isPlanned);
+    const eventsByDay = bucketEventsByWeekday(realSessions, monday);
+    const pngBuffer = renderWeeklySchedulePng({ monday, sunday, weekNumber, eventsByDay });
 
-    let message = buildHeader(new Date()) + embedded + overflowNote;
-    // Une semaine très chargée peut dépasser la limite de 2000 caractères d'un message Discord
-    // (l'export manuel laisse un humain raccourcir avant de coller ; ici personne ne le fera).
-    if (message.length > DISCORD_MESSAGE_LIMIT) {
-        const note = '\n… (message tronqué, voir le site pour le programme complet)';
-        message = message.slice(0, DISCORD_MESSAGE_LIMIT - note.length) + note;
-    }
+    const roleMention = MEMBER_ROLE_ID ? `<@&${MEMBER_ROLE_ID}>` : '@✨ Membres 2GETHER';
+    const siteUrl = CONFIG.SITE_URL.replace(/\/$/, '');
+    const message = `${roleMention}\n📅 **Programme de la semaine** — le planning complet en temps réel sur ${siteUrl}`;
 
-    const webhookRes = await fetch(WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message })
-    });
+    // multipart/form-data (FormData/Blob natifs à Node 20+, pas de dépendance supplémentaire) :
+    // Discord accepte un fichier joint via `files[0]`, accompagné du payload JSON habituel dans
+    // `payload_json` plutôt que dans le Content-Type JSON classique utilisé par l'ancien digest
+    // texte (voir historique du fichier) - fetch pose lui-même le bon Content-Type multipart
+    // (avec sa boundary) tant qu'on lui laisse un objet FormData comme body, sans l'imposer à la main.
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify({ content: message }));
+    form.append('files[0]', new Blob([pngBuffer], { type: 'image/png' }), 'programme-semaine.png');
+
+    const webhookRes = await fetch(WEBHOOK_URL, { method: 'POST', body: form });
     if (!webhookRes.ok) {
         throw new Error(`Webhook Discord : HTTP ${webhookRes.status} — ${await webhookRes.text()}`);
     }
 
-    console.log("Digest hebdomadaire posté sur Discord.");
+    console.log(`Digest hebdomadaire (semaine ${weekNumber}, ${realSessions.length} session(s)) posté sur Discord.`);
 }
 
 main().catch(err => {

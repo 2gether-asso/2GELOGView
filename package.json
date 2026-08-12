@@ -9,6 +9,7 @@
     "post:discord-digest": "node scripts/post-discord-digest.js"
   },
   "devDependencies": {
-    "papaparse": "^5.4.1"
+    "papaparse": "^5.4.1",
+    "@napi-rs/canvas": "^1.0.5"
   }
 }

@@ -1,4 +1,11 @@
 import { renderEventCard, renderCompactEventChip, renderContinuationChip } from './EventCardTemplate.js';
+import { DateUtils } from '../utils/DateUtils.js';
+
+// Garde-fou anti-boucle infinie pour _maybeSkipEmptyRange (navigation qui saute les mois/semaines
+// vides sous filtre, voir plus bas) : ~3 ans de mois d'affilée sans résultat n'a physiquement
+// aucune chance d'arriver avec un vrai filtre qui matche AU MOINS un événement quelque part
+// (déjà vérifié avant de se mettre à sauter) - au-delà, on arrête plutôt que de tourner sans fin.
+const MAX_SKIP_ATTEMPTS = 36;
 
 export class CalendarView {
     /**
@@ -13,6 +20,16 @@ export class CalendarView {
             console.error(`Élément #${elementId} introuvable pour initialiser FullCalendar.`);
             return null;
         }
+
+        // Navigation qui saute les mois/semaines/jours vides quand un filtre est actif (voir
+        // CalendarView.setFilterActive, appelé depuis updateUIState dans main.js) : capture
+        // (3e argument `true`) plutôt que bubble, pour mémoriser la direction AVANT que le
+        // gestionnaire de clic interne de FullCalendar ne déclenche son propre changement de
+        // date (et donc `datesSet`, voir plus bas) de façon synchrone dans le même clic.
+        calendarEl.addEventListener('click', (e) => {
+            if (e.target.closest('.fc-prev-button')) CalendarView._pendingNavDirection = 'prev';
+            else if (e.target.closest('.fc-next-button')) CalendarView._pendingNavDirection = 'next';
+        }, true);
 
         // Sur mobile, la grille 7 colonnes de la vue Semaine est illisible sur un petit
         // écran : on propose à la place Planning (liste, par défaut) et Jour (grille
@@ -33,7 +50,10 @@ export class CalendarView {
             locale: 'fr',
             firstDay: 1, // Lundi
             headerToolbar: {
-                left: 'prev,next today',
+                // Sur mobile, "today" fait doublon avec le 📍 Aujourd'hui déjà présent dans
+                // l'en-tête de l'appli et la page dédiée ☀️ Aujourd'hui - retiré uniquement là
+                // (refonte Planning V2.5) pour laisser prev/next/titre respirer sur leur ligne.
+                left: isMobile ? 'prev,next' : 'prev,next today',
                 center: 'title',
                 right: isMobile ? 'listMonth,timeGridDay' : 'dayGridMonth,timeGridWeek,listMonth'
             },
@@ -140,10 +160,85 @@ export class CalendarView {
             datesSet: function(info) {
                 localStorage.setItem('ui:calendarView', info.view.type);
                 CalendarView._applyEvents(info.view.calendar, CalendarView._lastEvents);
+
+                // Consommée immédiatement (une seule tentative de saut par navigation explicite) :
+                // un datesSet déclenché autrement (gotoDate depuis le mini-calendrier, chargement
+                // initial...) laisse `_pendingNavDirection` à null et ne saute donc jamais - seul
+                // un vrai pas prev/next (bouton ou ←/→) arme cette mécanique.
+                const direction = CalendarView._pendingNavDirection;
+                CalendarView._pendingNavDirection = null;
+                if (direction && CalendarView._filterActive) {
+                    CalendarView._maybeSkipEmptyRange(info.view.calendar, direction);
+                }
             }
         });
 
         return calendar;
+    }
+
+    /**
+     * Étape prev/next explicite (bouton de la barre d'outils déjà géré via le clic capturé dans
+     * create(), ceci couvre les autres déclencheurs - ex: raccourcis clavier ←/→, voir main.js)
+     * qui doit elle aussi pouvoir sauter les périodes vides sous filtre.
+     */
+    static goPrev(calendarInstance) {
+        if (!calendarInstance) return;
+        CalendarView._pendingNavDirection = 'prev';
+        calendarInstance.prev();
+    }
+    static goNext(calendarInstance) {
+        if (!calendarInstance) return;
+        CalendarView._pendingNavDirection = 'next';
+        calendarInstance.next();
+    }
+
+    /**
+     * Active/désactive la navigation "saute les périodes vides" (voir datesSet ci-dessus) - reflète
+     * simplement si AU MOINS un filtre de navigation est actif côté main.js (même condition que le
+     * bouton "Annuler les filtres", voir updateUIState) : par défaut (aucun filtre), parcourir le
+     * planning ne doit jamais sauter de périodes de sa propre initiative.
+     * @param {boolean} active
+     */
+    static setFilterActive(active) {
+        CalendarView._filterActive = active;
+    }
+
+    /**
+     * Si la période actuellement affichée (mois/semaine/jour selon la vue) ne contient AUCUN
+     * événement du dernier jeu filtré, continue automatiquement dans la même direction jusqu'à
+     * en retrouver un - évite de cliquer "suivant" une dizaine de fois à travers des mois vides
+     * pour un filtre ciblé sur quelques événements épars dans l'année.
+     * @param {Object} calendar - Instance FullCalendar (info.view.calendar)
+     * @param {'prev'|'next'} direction
+     */
+    static _maybeSkipEmptyRange(calendar, direction) {
+        const events = CalendarView._lastEvents;
+        // Rien à trouver nulle part : sauter indéfiniment ne mènerait qu'à MAX_SKIP_ATTEMPTS
+        // tentatives pour rien - autant rester sur place tout de suite.
+        if (!events || events.length === 0) return;
+
+        const startStr = DateUtils.toLocalDateStr(calendar.view.currentStart);
+        const endStr = DateUtils.toLocalDateStr(calendar.view.currentEnd); // exclusif
+        const hasEventInRange = events.some(e => {
+            const day = e.start.split('T')[0];
+            return day >= startStr && day < endStr;
+        });
+
+        if (hasEventInRange) {
+            CalendarView._skipAttempts = 0;
+            return;
+        }
+
+        CalendarView._skipAttempts++;
+        if (CalendarView._skipAttempts > MAX_SKIP_ATTEMPTS) {
+            CalendarView._skipAttempts = 0;
+            return;
+        }
+
+        // Se ré-arme pour le PROCHAIN datesSet déclenché par ce pas supplémentaire - sans ça,
+        // `_pendingNavDirection` viendrait d'être remis à null juste avant cet appel.
+        CalendarView._pendingNavDirection = direction;
+        if (direction === 'prev') calendar.prev(); else calendar.next();
     }
 
     /**
@@ -205,3 +300,6 @@ export class CalendarView {
 }
 
 CalendarView._lastEvents = [];
+CalendarView._filterActive = false;
+CalendarView._pendingNavDirection = null;
+CalendarView._skipAttempts = 0;
