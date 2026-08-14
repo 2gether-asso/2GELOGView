@@ -4,6 +4,10 @@ import { renderStatusBadge, getOvernightSuffix, getIconSrc } from './EventCardTe
 import { ReminderService } from '../services/ReminderService.js';
 import { embedFileName } from '../utils/EmbedId.js';
 import { IcsExporter } from '../services/IcsExporter.js';
+import { Icons } from './Icons.js';
+import { showToast } from './Toast.js';
+import { renderAvatarInitials } from '../utils/Avatar.js';
+import { formatCountdown } from '../utils/Format.js';
 
 const REMINDER_IDLE_CLASS = "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200";
 const REMINDER_ACTIVE_CLASS = "bg-indigo-600/80 border-indigo-400 text-white";
@@ -47,7 +51,7 @@ export class ModalView {
         // tout type d'événement, et couvre automatiquement chaque nouvelle diffusion pour
         // une série (même titre répété sur plusieurs dates), pas seulement celle ouverte ici.
         // Demande la permission de notification au premier clic si besoin.
-        document.getElementById('modal-reminder-btn').addEventListener('click', async () => {
+        document.getElementById('modal-reminder-btn').addEventListener('click', async (e) => {
             if (!this._currentEventTitle) return;
             if (typeof Notification === 'undefined') {
                 window.alert("Les notifications ne sont pas prises en charge par ce navigateur.");
@@ -59,6 +63,13 @@ export class ModalView {
             }
             const nowSubscribed = ReminderService.toggle(this._currentEventTitle);
             this._applyReminderButtonStyle();
+            // Petit tassement/rebond (V2.2) en plus du changement de couleur, pour un retour bien
+            // visible au clic - voir @keyframes confirmPulse dans index.html.
+            const btn = e.currentTarget;
+            btn.classList.remove('confirm-pulse');
+            void btn.offsetWidth;
+            btn.classList.add('confirm-pulse');
+            showToast(nowSubscribed ? 'Rappel activé !' : 'Rappel désactivé', { icon: Icons.bell('w-3.5 h-3.5 shrink-0 text-indigo-300') });
             if (nowSubscribed) {
                 new Notification('2GELOG', { body: `Rappel activé pour "${this._currentEventTitle}" : vous serez prévenu avant chaque prochaine diffusion.` });
             }
@@ -89,11 +100,10 @@ export class ModalView {
         // Partage natif (QOL #11) si le navigateur le permet (surtout mobile, feuille de
         // partage vers n'importe quelle appli) ; repli sur la copie presse-papiers sinon
         // (desktop, ou navigateur sans Web Share API) - même bouton, comportement choisi au clic.
-        document.getElementById('modal-copy-link-btn').addEventListener('click', async (e) => {
+        document.getElementById('modal-copy-link-btn').addEventListener('click', async () => {
             if (!this._currentEventId) return;
             const base = new URL('.', window.location.href);
             const url = new URL(`e/${embedFileName(this._currentEventId)}.html`, base);
-            const btn = e.currentTarget;
 
             if (navigator.share) {
                 try {
@@ -106,12 +116,10 @@ export class ModalView {
             }
             try {
                 await navigator.clipboard.writeText(url.href);
-                // innerHTML (pas textContent) : le bouton contient une icône SVG inline (V2.5),
-                // que textContent effacerait définitivement au moment de la restaurer (une <svg>
-                // n'a aucun texte à restituer - même piège que btn-subscribe-ics dans main.js).
-                const original = btn.innerHTML;
-                btn.innerHTML = '✅';
-                setTimeout(() => { btn.innerHTML = original; }, 1500);
+                // Toast (V2.2, voir Toast.js) plutôt que de basculer temporairement le contenu du
+                // bouton : plus besoin de jongler avec innerHTML/textContent pour préserver son
+                // icône SVG inline (l'ancien piège textContent qui l'effaçait, voir historique).
+                showToast('Lien copié !', { icon: Icons.link('w-3.5 h-3.5 shrink-0 text-indigo-300') });
             } catch {
                 window.prompt("Copiez ce lien :", url.href);
             }
@@ -218,7 +226,7 @@ export class ModalView {
         // Métadonnées avancées (@host ou @orga, Helldwin par défaut si non précisé, @plateforme)
         const hostContainer = document.getElementById('modal-host-container');
         this._currentEventHost = event.meta?.host || event.meta?.orga || CONFIG.DEFAULT_HOST;
-        document.getElementById('modal-event-host').innerText = this._currentEventHost;
+        document.getElementById('modal-event-host').innerHTML = `${renderAvatarInitials(this._currentEventHost)}<span class="group-hover:underline">${escapeHtml(this._currentEventHost)}</span>`;
         hostContainer.classList.remove('hidden');
 
         const platformContainer = document.getElementById('modal-platform-container');
@@ -240,7 +248,7 @@ export class ModalView {
         const tagsBox = document.getElementById('modal-event-tags');
         if (event.tags && event.tags.length > 0) {
             tagsBox.innerHTML = event.tags.map(t =>
-                `<button data-tag="${escapeHtml(t)}" class="text-[10px] bg-white/5 border border-white/5 text-indigo-400 hover:text-white hover:bg-indigo-600 px-2 py-0.5 rounded-md transition-all">#${escapeHtml(t)}</button>`
+                `<button data-tag="${escapeHtml(t)}" class="text-2xs bg-white/5 border border-white/5 text-indigo-400 hover:text-white hover:bg-indigo-600 px-2 py-0.5 rounded-md transition-all">#${escapeHtml(t)}</button>`
             ).join('');
         } else {
             tagsBox.innerHTML = `<span class="text-slate-600 text-xs italic">Aucun tag</span>`;
@@ -287,7 +295,7 @@ export class ModalView {
             // lointaine) : plus utile pour "planifier la suite" que ce qui n'arrivera que dans
             // plusieurs mois.
             .sort((a, b) => b.score - a.score || new Date(a.e.start) - new Date(b.e.start))
-            .slice(0, 4);
+            .slice(0, 8);
 
         if (scored.length === 0) {
             wrap.classList.add('hidden');
@@ -295,28 +303,46 @@ export class ModalView {
             return;
         }
 
-        container.innerHTML = scored.map(({ e }) => {
+        const VISIBLE_COUNT = 3;
+        container.innerHTML = scored.map(({ e }, i) => {
             const dateLabel = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
             return `
-                <button data-similar-id="${escapeHtml(e.id)}" class="w-full flex items-center gap-2 text-left p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 transition-all">
+                <button data-similar-id="${escapeHtml(e.id)}" class="similar-event-row w-full flex items-center gap-2 text-left p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 transition-all ${i >= VISIBLE_COUNT ? 'hidden' : ''}">
                     <img src="${getIconSrc(e)}" alt="" class="w-8 aspect-[8/9] rounded object-cover shrink-0" onerror="this.style.display='none'">
                     <div class="min-w-0 flex-1">
                         <div class="text-xs font-bold text-slate-200 truncate">${escapeHtml(e.title)}</div>
-                        <div class="text-[10px] text-slate-500">${dateLabel}${e.heure ? ' · ' + e.heure : ''}</div>
+                        <div class="text-2xs text-slate-500">${dateLabel}${e.heure ? ' · ' + e.heure : ''}</div>
                     </div>
                 </button>`;
-        }).join('');
+        }).join('') + (scored.length > VISIBLE_COUNT ? `
+                <button id="modal-similar-more-btn" class="w-full text-center text-2xs font-bold text-indigo-400 hover:text-indigo-300 py-1.5 transition-colors">Voir plus (${scored.length - VISIBLE_COUNT})</button>` : '');
         wrap.classList.remove('hidden');
         wrap.classList.add('flex');
+
+        const moreBtn = document.getElementById('modal-similar-more-btn');
+        if (moreBtn) {
+            moreBtn.addEventListener('click', () => {
+                container.querySelectorAll('.similar-event-row.hidden').forEach(row => row.classList.remove('hidden'));
+                moreBtn.remove();
+            });
+        }
     }
 
     /** Applique le style actif/inactif au bouton de rappel selon l'abonnement de CE titre. */
     static _applyReminderButtonStyle() {
         const btn = document.getElementById('modal-reminder-btn');
         const isActive = ReminderService.isSet(this._currentEventTitle);
-        btn.className = `w-full flex items-center justify-center gap-2 text-[11px] font-bold px-3 py-2 rounded-lg border transition-all ${isActive ? REMINDER_ACTIVE_CLASS : REMINDER_IDLE_CLASS}`;
+        btn.className = `w-full flex items-center justify-center gap-2 text-xxs font-bold px-3 py-2 rounded-lg border transition-all ${isActive ? REMINDER_ACTIVE_CLASS : REMINDER_IDLE_CLASS}`;
         const bellIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>';
         btn.innerHTML = `${bellIcon}${isActive ? 'Rappel activé' : "M'envoyer un rappel"}`;
+
+        // Compte à rebours (V2.3, QOL #2) : seulement si CETTE occurrence précise est encore à
+        // venir - une fois passée, "dans -3h" n'aurait aucun sens (une prochaine diffusion,
+        // si elle existe, sera visible via le panneau Rappels plutôt qu'ici).
+        const countdownEl = document.getElementById('modal-reminder-countdown');
+        const countdown = this._currentEvent ? formatCountdown(this._currentEvent.start) : null;
+        countdownEl.textContent = countdown ? `⏱️ ${countdown}` : '';
+        countdownEl.classList.toggle('hidden', !countdown);
     }
 
     /** Affiche/masque un des boutons-lien optionnels de la modale (fiche/salon/sondage). */

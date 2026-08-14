@@ -1,7 +1,7 @@
 // Petit jeu d'icônes ligne (SVG inline, sans dépendance/CDN) utilisé pour remplacer les emojis
 // dans le "chrome" de l'appli (boutons d'en-tête, titres de section, boutons d'action des
 // modales/overlays, badges de carte). Les emojis restent utilisés dans le contenu éditorial
-// (aide, notes de version) : voir le plan V2.5 pour le découpage exact.
+// (aide, notes de version) : voir le plan V2.2 pour le découpage exact.
 //
 // Chaque fonction retourne une chaîne <svg> autonome (viewBox 24x24, stroke="currentColor",
 // donc hérite la couleur du texte du bouton qui l'entoure) prête à être injectée via innerHTML.

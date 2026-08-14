@@ -1,5 +1,6 @@
 import { renderEventCard, renderCompactEventChip, renderContinuationChip } from './EventCardTemplate.js';
 import { DateUtils } from '../utils/DateUtils.js';
+import { showToast } from './Toast.js';
 
 // Garde-fou anti-boucle infinie pour _maybeSkipEmptyRange (navigation qui saute les mois/semaines
 // vides sous filtre, voir plus bas) : ~3 ans de mois d'affilée sans résultat n'a physiquement
@@ -12,9 +13,12 @@ export class CalendarView {
      * Initialise et configure l'instance FullCalendar.
      * @param {string} elementId - L'id de la div HTML cible (ex: 'calendar')
      * @param {Function} onEventClick - Callback appelé avec l'événement d'origine (evt) lors d'un clic
+     * @param {Function} [onExportImageClick] - Callback du bouton 🖼️ Image de la barre d'outils
+     *   (V2.3, "10") : appelé avec l'instance FullCalendar elle-même, pour que l'appelant (voir
+     *   generateMonthCalendarImage dans main.js) puisse lire la vue/plage actuellement affichée.
      * @returns {Object} L'instance du calendrier FullCalendar
      */
-    static create(elementId, onEventClick = null) {
+    static create(elementId, onEventClick = null, onExportImageClick = null) {
         const calendarEl = document.getElementById(elementId);
         if (!calendarEl) {
             console.error(`Élément #${elementId} introuvable pour initialiser FullCalendar.`);
@@ -30,6 +34,52 @@ export class CalendarView {
             if (e.target.closest('.fc-prev-button')) CalendarView._pendingNavDirection = 'prev';
             else if (e.target.closest('.fc-next-button')) CalendarView._pendingNavDirection = 'next';
         }, true);
+
+        // Navigation clavier complète de la grille Mois (V2.4, "18") : chaque case reçoit un
+        // tabIndex "roving" (une seule à la fois vaut 0, voir dayCellDidMount plus bas) plutôt
+        // que tabIndex=0 sur les 42 cases - le pattern ARIA grid standard, sans quoi Tab
+        // s'arrêterait 42 fois pour traverser un seul mois. `kbdFocusDate` retient la case
+        // "courante" d'une page à l'autre (survit à un changement de mois déclenché autrement,
+        // ex: bouton prev/next) - `data-date` est posé nativement par FullCalendar sur chaque
+        // `.fc-daygrid-day`, pas besoin d'un attribut à nous.
+        let kbdFocusDate = new Date();
+        calendarEl.addEventListener('keydown', (e) => {
+            const cell = e.target.closest?.('.fc-daygrid-day[data-date]');
+            if (!cell) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                calendar.changeView('timeGridDay', cell.dataset.date);
+                return;
+            }
+            const deltas = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+            if (!(e.key in deltas)) return;
+            e.preventDefault();
+            // stopPropagation obligatoire ici : un raccourci global existant (voir main.js,
+            // ←/→ = mois précédent/suivant en vue Calendrier) écoute aussi ces mêmes touches au
+            // niveau document et ne s'exclut que sur INPUT/TEXTAREA/SELECT focusé - pas sur une
+            // case de la grille. Sans stopPropagation, les deux se déclenchaient l'un après
+            // l'autre sur le même appui : le raccourci mois faisait sauter toute la page
+            // (re-render complet des cases), détruisant la case qu'on venait tout juste de
+            // focaliser et renvoyant le focus sur <body>.
+            e.stopPropagation();
+            const target = new Date(cell.dataset.date + 'T12:00:00');
+            target.setDate(target.getDate() + deltas[e.key]);
+            kbdFocusDate = target;
+            const targetStr = DateUtils.toLocalDateStr(target);
+            const targetCell = calendarEl.querySelector(`.fc-daygrid-day[data-date="${targetStr}"]`);
+            if (targetCell) {
+                cell.tabIndex = -1;
+                targetCell.tabIndex = 0;
+                targetCell.focus();
+            } else {
+                // Hors de la page affichée (ex: ← depuis le 1er du mois) : navigue vers ce
+                // mois, puis retente la mise au focus une fois la nouvelle page montée
+                // (dayCellDidMount aura déjà posé tabIndex=0 dessus via kbdFocusDate à jour).
+                calendar.gotoDate(targetStr);
+                requestAnimationFrame(() => calendarEl.querySelector(`.fc-daygrid-day[data-date="${targetStr}"]`)?.focus());
+            }
+        });
 
         // Sur mobile, la grille 7 colonnes de la vue Semaine est illisible sur un petit
         // écran : on propose à la place Planning (liste, par défaut) et Jour (grille
@@ -52,10 +102,22 @@ export class CalendarView {
             headerToolbar: {
                 // Sur mobile, "today" fait doublon avec le 📍 Aujourd'hui déjà présent dans
                 // l'en-tête de l'appli et la page dédiée ☀️ Aujourd'hui - retiré uniquement là
-                // (refonte Planning V2.5) pour laisser prev/next/titre respirer sur leur ligne.
+                // (refonte Planning V2.2) pour laisser prev/next/titre respirer sur leur ligne.
                 left: isMobile ? 'prev,next' : 'prev,next today',
                 center: 'title',
-                right: isMobile ? 'listMonth,timeGridDay' : 'dayGridMonth,timeGridWeek,listMonth'
+                // printBtn (V2.3, "10") : son propre groupe pour rester bien séparé des boutons
+                // de bascule de vue. Génère une image PNG structurée de la grille du mois plutôt
+                // que de déclencher window.print() - la mise en page navigateur (marges, sauts de
+                // page, densité des cases) s'est révélée trop peu fiable d'un navigateur à l'autre
+                // pour un rendu "propre" garanti, contrairement à un canvas dessiné nous-mêmes
+                // (même logique que generateOrganizerRecapImage/generateRetrospectiveRecapImage).
+                right: (isMobile ? 'listMonth,timeGridDay' : 'dayGridMonth,timeGridWeek,listMonth') + ' printBtn'
+            },
+            customButtons: {
+                printBtn: {
+                    text: '🖼️ Image',
+                    click: () => { if (onExportImageClick) onExportImageClick(calendar); }
+                }
             },
             buttonText: {
                 today: "📍 Aujourd'hui",
@@ -82,10 +144,19 @@ export class CalendarView {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'flex flex-col items-center gap-1 py-1';
                 wrapper.innerHTML = `
-                    <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">${weekday}</span>
+                    <span class="text-2xs font-bold uppercase tracking-wider text-slate-500">${weekday}</span>
                     <span class="flex items-center justify-center w-7 h-7 rounded-full text-sm font-black ${arg.isToday ? 'bg-indigo-500 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'text-slate-200'}">${arg.date.getDate()}</span>
                 `;
                 return { domNodes: [wrapper] };
+            },
+            // Roving tabIndex + libellé accessible pour la navigation clavier de la grille Mois
+            // (V2.4, "18", voir le keydown sur calendarEl plus haut) - une seule case à la fois
+            // reçoit tabIndex=0 (celle de kbdFocusDate), toutes les autres -1.
+            dayCellDidMount: (arg) => {
+                if (arg.view.type !== 'dayGridMonth') return;
+                const cellStr = DateUtils.toLocalDateStr(arg.date);
+                arg.el.tabIndex = cellStr === DateUtils.toLocalDateStr(kbdFocusDate) ? 0 : -1;
+                arg.el.setAttribute('aria-label', arg.date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }));
             },
             // Vue Planning : un seul intitulé par jour ("mercredi 12 août" via CSS
             // text-transform:capitalize) plutôt que le texte secondaire par défaut
@@ -111,18 +182,22 @@ export class CalendarView {
             height: 'auto',
             themeSystem: 'standard',
 
-            // Vues à créneaux horaires : la journée complète (0h) plutôt qu'une fenêtre resserrée,
-            // avec 6h de marge sur le jour suivant (30h = 6h du matin) pour qu'un événement tardif
-            // (23h50 → 01h50, voire plus tard) reste toujours entièrement visible dans la colonne
-            // de son jour de départ sans jamais être coupé.
+            // Vues à créneaux horaires : la journée complète (0h) plutôt qu'une fenêtre resserrée.
+            // Vue Semaine arrêtée à 1h du matin le lendemain (25h, V2.2 - demande explicite : une
+            // grille plus courte à parcourir, quitte à ce qu'un événement se prolongeant après 1h
+            // soit visuellement coupé en bas de grille plutôt que d'agrandir la colonne pour lui).
             slotMinTime: '00:00:00',
-            slotMaxTime: '30:00:00',
+            slotMaxTime: '25:00:00',
             slotDuration: '00:30:00',
             slotLabelInterval: '01:00:00',
             scrollTime: '17:00:00',
             slotEventOverlap: false,
             nowIndicator: true,
-            eventMinHeight: 24,
+            // Hauteur mini d'un événement (V2.2, relevée de 24 à 38px) : à 24px, un événement
+            // court (ex: 15-20 min) compressait le gabarit compact à 2 lignes (titre + heure/
+            // épisode) jusqu'à tronquer le texte - 38px reste proche de la hauteur d'un créneau de
+            // 30 min (~42px via .fc-timegrid-slot) donc lisible sans dominer la grille pour autant.
+            eventMinHeight: 38,
 
             // Rendu personnalisé des cases d'événements. Les vues en grille horaire
             // (semaine/jour) utilisent un rendu compact : la carte complète déborde
@@ -225,6 +300,13 @@ export class CalendarView {
         });
 
         if (hasEventInRange) {
+            // Toast (V2.2, QOL) uniquement si on a VRAIMENT sauté (au moins 1 tentative) - sinon
+            // ce serait une simple navigation manuelle normale, rien à confirmer. Sans repère,
+            // plusieurs sauts silencieux d'affilée pouvaient donner l'impression d'un clic qui ne
+            // répond pas plutôt que d'une navigation qui avance plus vite que d'habitude.
+            if (CalendarView._skipAttempts > 0) {
+                showToast(`Périodes vides ignorées — ${calendar.view.title}`);
+            }
             CalendarView._skipAttempts = 0;
             return;
         }

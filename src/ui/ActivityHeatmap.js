@@ -49,14 +49,16 @@ export function renderActivityHeatmap(container, events) {
                 const count = counts.get(iso) || 0;
                 const level = levelFor(count, maxCount);
                 const label = `${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} — ${count} session${count > 1 ? 's' : ''}`;
-                return `<div class="w-[9px] h-[9px] rounded-sm ${LEVEL_BG[level]}" title="${escapeHtml(label)}"></div>`;
+                // Cliquable (V2.2, QOL) : saute à cette date dans le calendrier, voir
+                // setupActivityHeatmapJump dans main.js - même geste que le mini-calendrier.
+                return `<div class="w-[9px] h-[9px] rounded-sm ${LEVEL_BG[level]} cursor-pointer hover:ring-1 hover:ring-indigo-400 transition-all" role="button" tabindex="0" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-heatmap-date="${iso}"></div>`;
             }).join('')}
         </div>
     `).join('');
 
     container.innerHTML = `
         <div class="flex items-end justify-between gap-[3px] overflow-x-auto custom-scroll pb-1">${cellsHtml}</div>
-        <div class="flex items-center justify-end gap-1 mt-1 text-[9px] text-slate-600">
+        <div class="flex items-center justify-end gap-1 mt-1 text-3xs text-slate-600">
             <span>Moins</span>
             ${LEVEL_BG.map(cls => `<div class="w-[9px] h-[9px] rounded-sm ${cls}"></div>`).join('')}
             <span>Plus</span>

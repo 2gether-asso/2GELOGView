@@ -3,6 +3,8 @@ import { CONFIG } from '../config.js';
 import { renderStatusBadge, getEpisodeLabel, getIconSrc, getOvernightSuffix } from './EventCardTemplate.js';
 import { formatMinutes } from '../utils/Format.js';
 import { Icons } from './Icons.js';
+import { renderAvatarInitials } from '../utils/Avatar.js';
+import { EmptyIllustrations, renderEmptyState } from './EmptyState.js';
 
 function shortDate(iso) {
     return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -14,14 +16,15 @@ export function renderRow(e, idx) {
     const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
     const episode = escapeHtml(getEpisodeLabel(e));
     const location = e.location && e.location !== CONFIG.DEFAULT_LOCATION ? escapeHtml(e.location) : "";
-    const host = escapeHtml(e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST);
+    const hostRaw = e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST;
+    const host = escapeHtml(hostRaw);
     const duration = formatMinutes(e.dur);
     const title = escapeHtml(e.title);
     const type = escapeHtml(e.type || 'Événement');
     const notes = escapeHtml(e.notes);
     const posterUrl = sanitizeUrl(e.image);
     const tagsHtml = (e.tags || [])
-        .map(t => `<span class="text-[11px] bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
+        .map(t => `<span class="text-xxs bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
         .join('');
 
     const posterLayer = posterUrl
@@ -30,21 +33,21 @@ export function renderRow(e, idx) {
         : '';
 
     return `
-        <div class="glass-card relative overflow-hidden flex gap-3 p-3 rounded-xl cursor-pointer items-start" data-idx="${idx}">
+        <div class="glass-card relative overflow-hidden flex gap-3 p-3 rounded-xl cursor-pointer items-start ${posterUrl ? 'has-poster' : ''}" data-idx="${idx}">
             ${posterLayer}
             <img src="${iconSrc}" alt="" class="relative z-10 w-14 aspect-[8/9] rounded-lg object-cover shrink-0" onerror="this.style.display='none'">
             <div class="relative z-10 flex-1 min-w-0 space-y-1.5">
                 <div class="flex items-start justify-between gap-2 flex-wrap">
                     <div class="text-sm font-bold text-slate-100 ${e.isCanceled ? 'line-through opacity-50' : ''}" title="${title}">${title}</div>
-                    <div class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${readableDate}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</div>
+                    <div class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${readableDate}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</div>
                 </div>
-                <div class="flex flex-wrap gap-1.5 text-[11px]">
+                <div class="flex flex-wrap gap-1.5 text-xxs">
                     <span class="font-semibold px-1.5 py-0.5 rounded border" style="color: ${e.col}; border-color: ${e.col}40; background: ${e.col}1a;">${type}</span>
                     ${renderStatusBadge(e.progressStatus)}
                     ${e.isNew ? `<span class="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.badgePlus('w-3 h-3 shrink-0')}Nouveau</span>` : ''}
                     ${episode ? `<span class="inline-flex items-center gap-1 text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.tv('w-3 h-3 shrink-0')}${episode}</span>` : ''}
                     ${location ? `<span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
-                    ${host ? `<span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.user('w-3 h-3 shrink-0')}${host}</span>` : ''}
+                    ${host ? `<span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 pl-0.5 pr-1.5 py-0.5 rounded border border-white/5">${renderAvatarInitials(hostRaw, 'w-3.5 h-3.5 text-4xs')}${host}</span>` : ''}
                     ${duration ? `<span class="inline-flex items-center gap-1 text-slate-400 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.clock('w-3 h-3 shrink-0')}${duration}</span>` : ''}
                 </div>
                 ${notes ? `<p class="text-xs text-slate-400 italic line-clamp-2 leading-relaxed">${notes}</p>` : ''}
@@ -85,7 +88,8 @@ export function renderGroupRow(group, indexOf) {
     group.forEach(e => (e.tags || []).forEach(t => tagsSet.add(t)));
 
     const location = first.location && first.location !== CONFIG.DEFAULT_LOCATION ? escapeHtml(first.location) : "";
-    const host = escapeHtml(first.meta?.host || first.meta?.orga || CONFIG.DEFAULT_HOST);
+    const hostRaw = first.meta?.host || first.meta?.orga || CONFIG.DEFAULT_HOST;
+    const host = escapeHtml(hostRaw);
     const title = escapeHtml(first.title);
     const type = escapeHtml(first.type || 'Événement');
 
@@ -101,7 +105,7 @@ export function renderGroupRow(group, indexOf) {
         const dateStr = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
         const ownNotes = !allSameNotes && e.notes ? escapeHtml(e.notes) : "";
         return `
-            <div class="px-3 py-2 hover:bg-white/5 cursor-pointer text-[13px]" data-idx="${idx}">
+            <div class="px-3 py-2 hover:bg-white/5 cursor-pointer text-13" data-idx="${idx}">
                 <div class="flex items-center justify-between gap-2">
                     <span class="text-slate-300 ${e.isCanceled ? 'line-through opacity-50' : ''}">${dateStr}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</span>
                     <span class="flex items-center gap-2 min-w-0">
@@ -116,7 +120,7 @@ export function renderGroupRow(group, indexOf) {
     }).join('');
 
     const tagsHtml = [...tagsSet]
-        .map(t => `<span class="text-[11px] bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
+        .map(t => `<span class="text-xxs bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
         .join('');
 
     const posterUrl = sanitizeUrl(first.image);
@@ -127,22 +131,22 @@ export function renderGroupRow(group, indexOf) {
 
     return `
         <div class="glass-card rounded-xl overflow-hidden">
-            <div class="group-toggle relative overflow-hidden flex gap-3 p-3 items-start cursor-pointer">
+            <div class="group-toggle relative overflow-hidden flex gap-3 p-3 items-start cursor-pointer ${posterUrl ? 'has-poster' : ''}">
                 ${posterLayer}
                 <img src="${iconSrc}" alt="" class="relative z-10 w-14 aspect-[8/9] rounded-lg object-cover shrink-0" onerror="this.style.display='none'">
                 <div class="relative z-10 flex-1 min-w-0 space-y-1.5">
                     <div class="flex items-start justify-between gap-2 flex-wrap">
                         <div class="text-sm font-bold text-slate-100" title="${title}">${title}</div>
-                        <div class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${shortDate(sorted[0].start)} → ${shortDate(sorted[sorted.length - 1].start)}</div>
+                        <div class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${shortDate(sorted[0].start)} → ${shortDate(sorted[sorted.length - 1].start)}</div>
                     </div>
-                    <div class="flex flex-wrap gap-1.5 text-[11px]">
+                    <div class="flex flex-wrap gap-1.5 text-xxs">
                         <span class="font-semibold px-1.5 py-0.5 rounded border" style="color: ${first.col}; border-color: ${first.col}40; background: ${first.col}1a;">${type}</span>
                         <span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.repeat('w-3 h-3 shrink-0')}${group.length} occurrences</span>
                         <span class="inline-flex items-center gap-1 text-slate-400 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.clock('w-3 h-3 shrink-0')}${formatMinutes(totalDuration)} cumulées</span>
                         ${newCount ? `<span class="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.badgePlus('w-3 h-3 shrink-0')}${newCount} nouvelle(s)</span>` : ''}
                         ${canceledCount ? `<span class="inline-flex items-center gap-1 text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">${Icons.xCircle('w-3 h-3 shrink-0')}${canceledCount} annulée(s)</span>` : ''}
                         ${location ? `<span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
-                        ${host ? `<span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.user('w-3 h-3 shrink-0')}${host}</span>` : ''}
+                        ${host ? `<span class="inline-flex items-center gap-1 text-slate-300 bg-white/5 pl-0.5 pr-1.5 py-0.5 rounded border border-white/5">${renderAvatarInitials(hostRaw, 'w-3.5 h-3.5 text-4xs')}${host}</span>` : ''}
                     </div>
                     ${sharedNotes ? `<p class="text-xs text-slate-400 italic line-clamp-2 leading-relaxed">${sharedNotes}</p>` : ''}
                     ${tagsHtml ? `<div class="flex flex-wrap gap-1 pt-0.5">${tagsHtml}</div>` : ''}
@@ -182,10 +186,17 @@ export function wireGroupToggle(container) {
  * en une seule ligne détaillant le total (occurrences, durée cumulée, dates).
  * @param {HTMLElement} container
  * @param {Array<Object>} events - Déjà triés/filtrés par l'appelant
+ * @param {'asc'|'desc'} order - Sens d'affichage courant (V2.2, QOL) - juste pour l'état visuel du
+ *   bouton data-search-order-toggle, le tri lui-même reste fait par l'appelant (main.js) sur
+ *   searchResultsCache, comme pour la Frise (voir TimelineView.js data-timeline-order-toggle).
  */
-export function renderSearchResults(container, events) {
+export function renderSearchResults(container, events, order = 'asc') {
     if (!events || events.length === 0) {
-        container.innerHTML = `<div class="text-center text-sm text-slate-500 py-24">Aucun résultat pour cette recherche.</div>`;
+        container.innerHTML = renderEmptyState({
+            illustration: EmptyIllustrations.search('w-16 h-16'),
+            title: 'Aucun résultat pour cette recherche.',
+            subtitle: "Essayez d'autres mots-clés ou vérifiez l'orthographe."
+        });
         return;
     }
 
@@ -199,7 +210,12 @@ export function renderSearchResults(container, events) {
         .join('');
 
     container.innerHTML = `
-        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-widest px-1 mb-2">${events.length} résultat${events.length > 1 ? 's' : ''}</div>
+        <div class="flex items-center justify-between px-1 mb-2">
+            <div class="text-xxs font-bold text-slate-500 uppercase tracking-widest">${events.length} résultat${events.length > 1 ? 's' : ''}</div>
+            <button data-search-order-toggle title="Inverser l'ordre chronologique" class="inline-flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                ${order === 'asc' ? `${Icons.arrowDown('w-3.5 h-3.5 shrink-0')}Plus ancien d'abord` : `${Icons.arrowUp('w-3.5 h-3.5 shrink-0')}Plus récent d'abord`}
+            </button>
+        </div>
         <div class="space-y-2">${rowsHtml}</div>
     `;
 

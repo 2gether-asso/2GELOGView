@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2GELOG V2.5 - UwU</title>
+    <title>2GELOG V2.4 - UwU</title>
     <link rel="icon" type="image/png" href="./assets/img/icon.png">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="apple-touch-icon" href="./assets/img/pwa/icon-192.png">
@@ -11,6 +11,26 @@
 
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Échelle typographique formalisée (V2.2) : les tailles < 12px (text-xs de Tailwind)
+        // étaient jusque-là posées en valeurs arbitraires (text-[9px], text-[10px], text-[11px]...)
+        // partout dans le code, chacune réinventée au cas par cas sans nom ni intention déclarée.
+        // Nommées ici avec les MÊMES valeurs en px (aucun changement visuel), juste documentées
+        // et réutilisables via une classe unique (text-3xs, text-2xs, text-xxs, text-13...).
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontSize: {
+                        '4xs': ['7px', { lineHeight: '9px' }],
+                        '3xs': ['9px', { lineHeight: '12px' }],
+                        '2xs': ['10px', { lineHeight: '14px' }],
+                        'xxs': ['11px', { lineHeight: '15px' }],
+                        '13': ['13px', { lineHeight: '18px' }],
+                    }
+                }
+            }
+        };
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -24,7 +44,7 @@
             --accent: #6366f1;
             --text-main: #f0f6fc;
 
-            /* Échelle d'élévation (V2.5) : remplace 3 noirs quasi-identiques utilisés jusque-là
+            /* Échelle d'élévation (V2.2) : remplace 3 noirs quasi-identiques utilisés jusque-là
                au hasard (#06080c / #0d1117 / #161b22) par une hiérarchie nommée à une seule
                source de vérité. Plus une surface est "au-dessus" du fond, plus son niveau est
                élevé. */
@@ -32,8 +52,18 @@
             --surface-1: #0d1117;               /* chrome ancré : sidebars (mobile), base de l'en-tête */
             --surface-2: #161b22;               /* surélevé : cartes des modales/overlays */
             --surface-3: rgba(255, 255, 255, .04); /* cartes/lignes à l'intérieur des panneaux (glass-card) */
+            /* Variantes pré-composées de --surface-2 avec une opacité (V2.2, bug découvert en
+               testant le thème clair) : Tailwind ne sait PAS extraire de canal alpha d'une valeur
+               arbitraire qui référence une variable CSS (`bg-[var(--surface-2)]/95` compile en
+               CSS invalide et n'affiche AUCUN fond, transparent - invisible en sombre car le fond
+               était déjà sombre derrière, mais ça cassait complètement la lisibilité en clair).
+               Corrigé en posant l'opacité directement DANS la valeur de la variable plutôt que via
+               la notation `/NN` de Tailwind - voir bg-[var(--surface-2-95)] sur les cartes de
+               modales/overlays dans tout ce fichier. */
+            --surface-2-95: rgba(22, 27, 34, 0.95);
+            --surface-2-90: rgba(22, 27, 34, 0.9);
 
-            /* Rôles de couleur sémantiques (V2.5) : documente une règle explicite pour savoir
+            /* Rôles de couleur sémantiques (V2.2) : documente une règle explicite pour savoir
                quand un bouton "mérite" une couleur, plutôt que de la choisir au cas par cas.
                  - slate/neutre = action par défaut, non destructive.
                  - accent (indigo) = action phare (max. 1-2 par surface : Rétrospective, Aujourd'hui).
@@ -53,22 +83,102 @@
              15 barre d'outils calendrier (sticky)   50 modale d'événement       66 aide
              30 suggestions/menus déroulants          60 admin                   67 rappels
              40 en-tête                               61 fiche de lieu           70 chargement/erreur
-                                                       62 rétrospective           80 quitter le kiosque
-                                                       63 détail (bucket)
-                                                       64 profil organisateur
+                                                       62 rétrospective           75 toasts
+                                                       63 détail (bucket)         80 quitter le kiosque
+                                                       64 profil organisateur     90 visite guidée
                                                        65 notes de version */
         body {
-            font-family: 'Plus Jakarta Sans', sans-serif; 
-            background: radial-gradient(circle at 50% 0%, #111827 0%, var(--bg-deep) 70%); 
-            color: var(--text-main); 
-            overflow: hidden; 
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: radial-gradient(circle at 50% 0%, #111827 0%, var(--bg-deep) 70%);
+            color: var(--text-main);
+            overflow: hidden;
         }
-        
+
         .glass-panel { background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border); }
         .glass-card { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.04); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
         .glass-card:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); }
 
-        /* Micro-interaction globale (V2.5) : un léger tassement au clic sur n'importe quel
+        /* Thème clair (V2.2, bascule manuelle) : #btn-toggle-theme dans l'en-tête, persisté en
+           localStorage (voir setupThemeToggle() dans main.js) - indépendant du thème SAISONNIER
+           ci-dessus (data-season), qui ne fait que teinter le fond sombre par défaut et continue
+           de fonctionner par-dessus, quel que soit le thème clair/sombre actif.
+           Deux couches : 1) les variables --surface-N / --glass-bg / --text-main / --bg-deep déjà
+           utilisées par .glass-panel, .glass-card, #loading-overlay etc, qui s'adaptent seules ;
+           2) des correctifs ciblés sur les utilitaires Tailwind posés en dur pour un fond sombre
+           (text-white, bg-white/10...) qu'aucune variable ne couvre - sélecteurs par attribut
+           ([class~=...]) plutôt que classes échappées (.bg-white\/5), plus robuste à écrire. */
+        html[data-theme="light"] {
+            --bg-deep: #e9ebee;
+            --glass-bg: rgba(255, 255, 255, 0.6);
+            --glass-border: rgba(15, 23, 42, 0.08);
+            --text-main: #1a1d24;
+            --surface-0: #e9ebee;
+            --surface-1: #f4f5f7;
+            --surface-2: #ffffff;
+            --surface-3: rgba(15, 23, 42, 0.035);
+            --surface-2-95: rgba(255, 255, 255, 0.95);
+            --surface-2-90: rgba(255, 255, 255, 0.9);
+            /* Le thème SAISONNIER pose sa propre teinte sombre ici (--season-bg-tint, voir
+               applySeasonalTheme dans SeasonalTheme.js) quelle que soit la saison, pensée pour se
+               fondre dans le fond sombre par défaut - jamais mise à jour pour le clair. Sans ce
+               correctif, `html[data-season] body` (même spécificité, mais déclaré plus bas dans ce
+               fichier donc prioritaire à spécificité égale) repeint le fond d'un dégradé sombre
+               par-dessus le thème clair : c'était la cause du fond "terne/verdâtre" en mode clair
+               avec une saison active (Auto = presque toujours, désormais que les saisons couvrent
+               toute l'année). Neutralisée en une teinte claire fixe, indépendante de la saison.  */
+            --season-bg-tint: #f4f5f7 !important;
+        }
+        html[data-theme="light"] body { background: radial-gradient(circle at 50% 0%, #ffffff 0%, var(--bg-deep) 70%) !important; }
+        html[data-theme="light"] .glass-card { background: rgba(15, 23, 42, 0.025); border-color: rgba(15, 23, 42, 0.07); }
+        html[data-theme="light"] .glass-card:hover { background: rgba(15, 23, 42, 0.05); border-color: rgba(99, 102, 241, 0.35); box-shadow: 0 8px 24px 0 rgba(15, 23, 42, 0.1); }
+        html[data-theme="light"] header { background: rgba(255, 255, 255, 0.75) !important; }
+        /* FullCalendar (vues Mois/Semaine/Planning) : sa propre feuille de style dense (voir plus
+           bas dans ce bloc <style>) est entièrement pensée pour le fond sombre (bordures/texte en
+           blanc translucide, bandeau d'outils en noir quasi-opaque) - reprise ici point par point
+           plutôt que réécrite, les sélecteurs/valeurs d'origine servant de référence. */
+        html[data-theme="light"] .fc .fc-header-toolbar { background: rgba(255, 255, 255, 0.92) !important; }
+        html[data-theme="light"] .fc .fc-toolbar-title { color: #14161b !important; }
+        html[data-theme="light"] .fc .fc-button-primary { background-color: rgba(15, 23, 42, 0.04) !important; border-color: rgba(15, 23, 42, 0.1) !important; color: #3c4453 !important; }
+        html[data-theme="light"] .fc .fc-button-primary:hover { background-color: rgba(15, 23, 42, 0.08) !important; border-color: rgba(99, 102, 241, 0.4) !important; color: #14161b !important; }
+        html[data-theme="light"] .fc-theme-standard td, html[data-theme="light"] .fc-theme-standard th { border-color: rgba(15, 23, 42, 0.09) !important; }
+        html[data-theme="light"] .fc-col-header-cell-cushion, html[data-theme="light"] .fc-daygrid-day-number, html[data-theme="light"] .fc-timegrid-slot-label-cushion, html[data-theme="light"] .fc-timegrid-axis-cushion, html[data-theme="light"] .fc-timegrid-axis { color: #6b7280 !important; }
+        html[data-theme="light"] .fc-timegrid-slot { border-color: rgba(15, 23, 42, 0.07) !important; }
+        html[data-theme="light"] .fc-timegrid-slot-minor { border-color: rgba(15, 23, 42, 0.04) !important; }
+        html[data-theme="light"] .fc-timegrid-col.fc-day-sat, html[data-theme="light"] .fc-timegrid-col.fc-day-sun { background: rgba(15, 23, 42, 0.015) !important; }
+        html[data-theme="light"] .fc-scroller::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.12) !important; }
+        html[data-theme="light"] .fc-list-day-cushion .fc-list-day-text { color: #14161b !important; }
+        html[data-theme="light"] .fc-list-empty-cushion { color: #9aa2ad !important; }
+        html[data-theme="light"] .custom-scroll::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.12); }
+        html[data-theme="light"] .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.22); box-shadow: none; }
+        html[data-theme="light"] [class~="text-white"] { color: #14161b !important; }
+        html[data-theme="light"] [class~="text-slate-100"] { color: #1c1f26 !important; }
+        html[data-theme="light"] [class~="text-slate-200"] { color: #262b35 !important; }
+        html[data-theme="light"] [class~="text-slate-300"] { color: #3c4453 !important; }
+        html[data-theme="light"] [class~="text-slate-400"] { color: #5b6472 !important; }
+        html[data-theme="light"] [class~="text-slate-500"] { color: #78818f !important; }
+        html[data-theme="light"] [class~="text-slate-600"] { color: #9aa2ad !important; }
+        html[data-theme="light"] [class~="bg-white/5"] { background-color: rgba(15, 23, 42, 0.035) !important; }
+        html[data-theme="light"] [class~="bg-white/10"] { background-color: rgba(15, 23, 42, 0.06) !important; }
+        html[data-theme="light"] [class~="bg-white/15"] { background-color: rgba(15, 23, 42, 0.09) !important; }
+        html[data-theme="light"] [class~="bg-white/25"] { background-color: rgba(15, 23, 42, 0.15) !important; }
+        html[data-theme="light"] [class~="bg-white/[0.01]"] { background-color: rgba(15, 23, 42, 0.02) !important; }
+        html[data-theme="light"] [class~="border-white/5"] { border-color: rgba(15, 23, 42, 0.08) !important; }
+        html[data-theme="light"] [class~="border-white/10"] { border-color: rgba(15, 23, 42, 0.13) !important; }
+        html[data-theme="light"] [class~="border-white/15"] { border-color: rgba(15, 23, 42, 0.18) !important; }
+
+        /* `.has-poster` (V2.2) : cartes avec une affiche/photo en fond (voir posterLayer dans
+           EventCardTemplate.js/SearchResultsView.js/RetrospectiveView.js) - leur dégradé sombre
+           reste sombre dans les deux thèmes (lisibilité du texte sur une PHOTO, pas sur le fond de
+           l'appli), donc leur texte doit lui aussi rester clair en thème clair, à l'inverse de
+           tout le reste de l'interface. Sélecteur plus spécifique que les règles générales
+           ci-dessus (ajoute `.has-poster`), gagne donc sans avoir à se soucier de l'ordre. */
+        html[data-theme="light"] .has-poster [class~="text-white"] { color: #ffffff !important; }
+        html[data-theme="light"] .has-poster [class~="text-slate-100"] { color: #f1f5f9 !important; }
+        html[data-theme="light"] .has-poster [class~="text-slate-200"] { color: #e2e8f0 !important; }
+        html[data-theme="light"] .has-poster [class~="text-slate-300"] { color: #cbd5e1 !important; }
+        html[data-theme="light"] .has-poster [class~="text-slate-400"] { color: #94a3b8 !important; }
+
+        /* Micro-interaction globale (V2.2) : un léger tassement au clic sur n'importe quel
            bouton natif de l'appli donne un retour tactile immédiat, sans avoir à l'ajouter
            bouton par bouton. Ignoré pour un utilisateur qui préfère moins de mouvement. */
         @media (prefers-reduced-motion: no-preference) {
@@ -76,7 +186,7 @@
             button:not(:disabled):active { transform: scale(0.96); }
         }
 
-        /* Petit fondu-glissé (V2.5) au moment où l'utilisateur bascule vers une AUTRE vue
+        /* Petit fondu-glissé (V2.2) au moment où l'utilisateur bascule vers une AUTRE vue
            principale (Calendrier/Recherche/Frise/Aujourd'hui/Carte) - classe posée explicitement
            par updateUIState() dans main.js, uniquement quand la vue affichée change réellement.
            PAS un simple `:not(.hidden)` : updateUIState() masque puis réaffiche systématiquement
@@ -91,7 +201,7 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Repère visuel "on est arrivé ici" (V2.5) après un saut de date depuis le mini-calendrier
+        /* Repère visuel "on est arrivé ici" (V2.2) après un saut de date depuis le mini-calendrier
            (voir highlightCalendarDate dans main.js) - un flash qui s'estompe sur la case ciblée,
            sans ouvrir sa modale. box-shadow inset plutôt que background : reste contenu dans les
            bords de la case quelle que soit la vue (mois/semaine/jour/liste) sans entrer en
@@ -101,6 +211,116 @@
             0% { box-shadow: inset 0 0 0 9999px rgba(99, 102, 241, 0.35); }
             100% { box-shadow: inset 0 0 0 9999px rgba(99, 102, 241, 0); }
         }
+
+        /* Toasts (V2.2, voir src/ui/Toast.js) : petit glissé-fondu, pas de dépendance à
+           prefers-reduced-motion - c'est un retour fonctionnel (confirmation d'action), pas une
+           décoration pure, donc gardé même pour un visiteur qui réduit les animations. */
+        .toast-item { opacity: 0; transform: translateY(10px) scale(0.96); transition: opacity 0.22s ease, transform 0.22s ease; }
+        .toast-item.toast-in { opacity: 1; transform: translateY(0) scale(1); }
+        .toast-item.toast-out { opacity: 0; transform: translateY(6px) scale(0.97); }
+
+        /* Petit rebond de confirmation (V2.2) sur un bouton qui vient de déclencher une action
+           réussie (rappel, vue favorite...), en plus du toast - retour tactile immédiat sur
+           l'élément cliqué lui-même. */
+        @media (prefers-reduced-motion: no-preference) {
+            .confirm-pulse { animation: confirmPulse 0.35s ease; }
+        }
+        @keyframes confirmPulse {
+            0% { transform: scale(1); }
+            35% { transform: scale(1.045); }
+            100% { transform: scale(1); }
+        }
+
+        /* Repli/dépli animé des sections Statistiques/Prochainement (V2.2) : grid-template-rows
+           1fr/0fr posé en JS (voir setupStatsToggle/setupUpcomingToggle dans main.js) plutôt que
+           la classe `hidden` (display:none, binaire, non-animable) utilisée jusque-là - la ligne
+           de grille s'anime, elle, comme n'importe quelle propriété numérique. `grid-template-rows`
+           initial (1fr) posé ici pour que l'état par défaut (ouvert) reste correct même avant que
+           le JS n'ait tourné une première fois. */
+        .collapse-wrap { grid-template-rows: 1fr; }
+        @media (prefers-reduced-motion: no-preference) {
+            .collapse-wrap { transition: grid-template-rows 0.3s ease; }
+        }
+
+        /* Bordure animée sur les cartes "En Cours" (V2.2, voir isGenuinelyLive dans
+           EventCardTemplate.js) : un halo dégradé qui tourne lentement derrière la carte, en plus
+           de la pastille déjà existante - ::before (l'anneau, plus grand que la carte) tourne via
+           `transform`, ::after (au même niveau -1, mais peint APRÈS donc par-dessus) rebouche tout
+           sauf le débord de 3px, qui reste visible en fin liseré animé. */
+        .live-glow-border { position: relative; isolation: isolate; border-color: transparent !important; }
+        .live-glow-border::before, .live-glow-border::after { content: ''; position: absolute; border-radius: inherit; z-index: -1; }
+        .live-glow-border::before { inset: -3px; background: conic-gradient(from 0deg, transparent, #34d399, transparent 45%); }
+        .live-glow-border::after { inset: 0; background: var(--surface-2); }
+        @media (prefers-reduced-motion: no-preference) {
+            .live-glow-border::before { animation: liveBorderSpin 3s linear infinite; }
+        }
+        @keyframes liveBorderSpin { to { transform: rotate(360deg); } }
+
+        /* Écran de chargement (V2.2) : logo "2G" qui respire + lignes fantômes imitant la forme
+           d'une carte événement (icône + 2 lignes de texte), pour que l'oeil anticipe la mise en
+           page réelle plutôt que de fixer un spinner générique pendant le fetch du CSV. */
+        @keyframes brandPulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.06); opacity: 0.85; }
+        }
+        @media (prefers-reduced-motion: no-preference) {
+            .brand-pulse { animation: brandPulse 1.8s ease-in-out infinite; }
+        }
+        .skeleton-row { display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem; border-radius: 0.75rem; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); }
+        .skeleton-icon { width: 2rem; height: 2.25rem; flex-shrink: 0; }
+        .skeleton-lines { flex: 1; display: flex; flex-direction: column; gap: 0.375rem; }
+        .skeleton-line { height: 0.5rem; }
+        .skeleton-line.w-3-4 { width: 75%; }
+        .skeleton-line.w-1-2 { width: 45%; }
+        .skeleton-block { border-radius: 0.5rem; background: linear-gradient(100deg, rgba(255,255,255,0.04) 30%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.04) 70%); background-size: 200% 100%; }
+        @media (prefers-reduced-motion: no-preference) {
+            .skeleton-block { animation: skeletonShimmer 1.6s ease-in-out infinite; }
+        }
+        @keyframes skeletonShimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* Anneau de focus clavier à la marque (V2.2) plutôt que l'anneau bleu par défaut du
+           navigateur - :focus-visible (pas :focus) pour ne rien changer au clic/tactile, où cet
+           anneau n'a pas de sens. */
+        :focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; border-radius: 4px; }
+
+        /* Grain de fond discret (V2.2) : texture très légère façon "premium", posée une fois pour
+           toute la page plutôt que par élément. Opacité volontairement infime (2,5%) et
+           pointer-events:none - purement décoratif, ne doit jamais gêner un clic en dessous. */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: 999;
+            pointer-events: none;
+            opacity: 0.025;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        }
+
+        /* Halo qui suit le curseur au survol d'une carte (V2.2, desktop uniquement - hover:hover
+           exclut le tactile où "survoler" n'a pas de sens) : --mouse-x/--mouse-y posées en JS par
+           un seul écouteur mousemove délégué (voir setupCardCursorGlow dans main.js), pas un
+           écouteur par carte. */
+        @media (hover: hover) and (pointer: fine) {
+            .glass-card { position: relative; }
+            .glass-card::before {
+                content: '';
+                position: absolute;
+                inset: 0;
+                border-radius: inherit;
+                background: radial-gradient(280px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(99, 102, 241, 0.14), transparent 60%);
+                opacity: 0;
+                transition: opacity 0.3s ease;
+                pointer-events: none;
+            }
+            .glass-card:hover::before { opacity: 1; }
+        }
+
+        /* Scrollbar réactive (renforcé V2.2) : lueur en plus du changement de couleur déjà en
+           place au survol du custom-scroll ci-dessus. */
+        .custom-scroll::-webkit-scrollbar-thumb:hover { box-shadow: 0 0 6px rgba(99, 102, 241, 0.5); }
 
         /* Densité d'affichage (QOL #17, voir setupDensityToggle dans main.js) : en mode compact,
            renderEventCard (EventCardTemplate.js) rend directement un gabarit différent - une
@@ -113,6 +333,20 @@
         html[data-season] body { background: radial-gradient(circle at 50% 0%, var(--season-bg-tint) 0%, var(--bg-deep) 70%); }
         html[data-season] .glass-panel { border-color: color-mix(in srgb, var(--season-color) 30%, var(--glass-border)); }
         html[data-season] #header-status-dot { background: var(--season-color); box-shadow: 0 0 10px color-mix(in srgb, var(--season-color) 80%, transparent); }
+
+        /* Particules saisonnières discrètes (V2.2, voir setupSeasonalParticles dans main.js et le
+           champ `particle` de SEASONS dans SeasonalTheme.js) : une poignée d'emoji qui tombent
+           lentement en fond, façon neige à Noël - purement décoratif et non-interactif
+           (pointer-events:none), donc entièrement sauté sous prefers-reduced-motion plutôt que
+           simplement figé (un emoji immobile au hasard sur l'écran n'apporterait rien). */
+        #seasonal-particles { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; }
+        .seasonal-particle { position: absolute; top: -8%; will-change: transform, opacity; opacity: 0; animation: seasonalParticleFall linear infinite; }
+        @keyframes seasonalParticleFall {
+            0% { transform: translateY(0) translateX(0) rotate(0deg); opacity: 0; }
+            8% { opacity: var(--particle-opacity, 0.55); }
+            92% { opacity: var(--particle-opacity, 0.55); }
+            100% { transform: translateY(112vh) translateX(var(--particle-drift, 20px)) rotate(25deg); opacity: 0; }
+        }
 
         .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -156,7 +390,12 @@
         .fc-col-header-cell-cushion { color: #8b949e; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 8px 0 !important; }
         .fc-daygrid-day-number { color: #8b949e; font-size: 0.75rem; padding: 6px 8px !important; font-weight: 700; }
         .fc-day-today { background: rgba(99, 102, 241, 0.05) !important; }
-        
+        /* Navigation clavier de la grille Mois (V2.4, "18", voir dayCellDidMount/keydown dans
+           CalendarView.js) : anneau de focus visible sur la case actuellement ciblée par les
+           flèches - outline-offset négatif pour rester DANS la case plutôt que de déborder sur
+           les voisines vu le peu d'espace entre cases contiguës. */
+        .fc-daygrid-day:focus-visible, .fc-daygrid-day:focus { outline: 2px solid #6366f1; outline-offset: -2px; }
+
         .fc-daygrid-day-events { padding-bottom: 8px !important; }
         .fc-daygrid-day-frame { min-height: 100% !important; }
         .fc-event { background: transparent !important; border: none !important; padding: 0 !important; margin: 2px 4px !important; }
@@ -217,7 +456,7 @@
         .fc-list-empty-cushion { color: #64748b !important; font-style: italic; font-size: 0.85rem; padding: 4rem 1rem !important; }
 
         /* Petits écrans : la barre d'outils FullCalendar (prev/next/vues) passe sur
-           plusieurs lignes plutôt que de déborder ou d'écraser le titre. Refonte Planning V2.5 :
+           plusieurs lignes plutôt que de déborder ou d'écraser le titre. Refonte Planning V2.2 :
            cibles de clic agrandies (~40px de haut, zone tactile confortable au pouce plutôt que
            les 4px de padding d'origine hérités du desktop) et en-têtes de jour resserrés pour
            laisser plus de place aux cartes d'événements elles-mêmes à l'écran. */
@@ -236,7 +475,7 @@
             .fc-list-day-cushion .fc-list-day-text { font-size: 0.75rem; }
         }
 
-        /* Modale d'événement en feuille ancrée en bas sur mobile (V2.5), plutôt que centrée comme
+        /* Modale d'événement en feuille ancrée en bas sur mobile (V2.2), plutôt que centrée comme
            sur desktop : plus naturelle à atteindre/refermer au pouce, pattern reconnaissable
            (identique aux feuilles d'action iOS/Android). Ne touche à AUCUNE classe posée en JS -
            ModalView.js continue de basculer exactement les mêmes classes `opacity-0
@@ -284,16 +523,27 @@
         body.kiosk-mode #btn-reopen-filters-sidebar {
             display: none !important;
         }
+
+        /* Mode "grand texte" (V2.4, "17", voir #btn-toggle-large-text dans l'aide) : `zoom`
+           plutôt que `transform: scale()`, qui créerait un nouveau bloc de confinement pour
+           tous les descendants `position: fixed` (en-tête, overlays, toasts - omniprésents ici)
+           et casserait leur positionnement par rapport au vrai viewport. `zoom` grossit tout,
+           y compris les tailles Tailwind personnalisées en px (voir tailwind.config plus haut),
+           sans ce piège - support Firefox seulement depuis la version 126 (2024), dégradation
+           silencieuse (texte normal) sur les navigateurs plus anciens qui l'ignorent. */
+        html.a11y-large-text { zoom: 1.15; }
     </style>
 </head>
 <body class="h-dvh w-screen flex flex-col antialiased">
+
+    <div id="seasonal-particles" aria-hidden="true"></div>
 
     <header class="shrink-0 border-b border-white/5 bg-[#161b22]/40 backdrop-blur-xl flex flex-wrap items-center justify-between gap-3 px-3 sm:px-6 py-2.5 z-40 shadow-lg shadow-black/10">
         <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer shrink-0">
             <div id="header-status-dot" class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
             <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
-                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.5</span>
-                <span id="seasonal-badge" class="hidden font-bold text-[10px] px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
+                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-2xs bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.4</span>
+                <span id="seasonal-badge" class="hidden font-bold text-2xs px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
             </h1>
         </div>
 
@@ -302,93 +552,120 @@
              un séparateur n'y ajouterait que du bruit visuel) plutôt qu'un unique alignement plat
              de boutons tous identiques, pour rester lisible malgré leur nombre. -->
         <div class="flex items-center gap-1.5 sm:gap-1 flex-wrap w-full sm:w-auto order-3 sm:order-none">
-            <button id="btn-help" title="Aide et légende" aria-label="Aide et légende" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-help" title="Aide et légende" aria-label="Aide et légende" class="text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.2 9a3 3 0 1 1 4.6 2.5c-1 0.6-1.8 1.1-1.8 2.5"></path><line x1="12" y1="17.2" x2="12" y2="17.3"></line></svg>
+            </button>
+            <!-- Historique des mises à jour (V2.2) : rouvre à tout moment la même vue que la popup
+                 "Quoi de neuf ?" auto-affichée à la sortie d'une version (voir setupPatchNotes). -->
+            <button id="btn-open-patchnotes" title="Nouveautés et historique des mises à jour" aria-label="Nouveautés et historique des mises à jour" class="text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.3"></path><polyline points="3 4 3 9 8 9"></polyline><polyline points="12 7 12 12 16 14"></polyline></svg>
             </button>
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-goto-today" title="Aujourd'hui sur 2GETHER : le programme du jour (raccourci clavier T)" aria-label="Voir le programme d'aujourd'hui" class="flex items-center gap-1.5 text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-2.5 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
+            <button id="btn-goto-today" title="Aujourd'hui sur 2GETHER : le programme du jour (raccourci clavier T)" aria-label="Voir le programme d'aujourd'hui" class="flex items-center gap-1.5 text-xxs font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-2.5 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line><line x1="4.6" y1="4.6" x2="6.8" y2="6.8"></line><line x1="17.2" y1="17.2" x2="19.4" y2="19.4"></line><line x1="4.6" y1="19.4" x2="6.8" y2="17.2"></line><line x1="17.2" y1="6.8" x2="19.4" y2="4.6"></line></svg>
                 <span class="hidden sm:inline">Aujourd'hui</span>
             </button>
-            <button id="btn-toggle-timeline" title="Vue Frise : la même sélection organisée par mois, séries regroupées en un seul bloc" aria-label="Vue Frise" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-toggle-timeline" title="Vue Frise : la même sélection organisée par mois, séries regroupées en un seul bloc" aria-label="Vue Frise" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="7" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="17" cy="12" r="1.6" fill="currentColor" stroke="none"></circle></svg>
                 <span class="hidden sm:inline">Frise</span>
             </button>
-            <button id="btn-toggle-map" title="Carte des lieux IRL (meetups)" aria-label="Carte des lieux IRL" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-toggle-map" title="Carte des lieux IRL (meetups)" aria-label="Carte des lieux IRL" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 22s7-7.5 7-12a7 7 0 0 0-14 0c0 4.5 7 12 7 12z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
                 <span class="hidden sm:inline">Carte</span>
+            </button>
+            <!-- Vue Année (V2.4, "5") : 12 mini-mois d'un coup d'oeil - voir YearView.js. -->
+            <button id="btn-toggle-year" title="Vue Année : les 12 mois d'un coup d'oeil" aria-label="Vue Année" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+                <span class="hidden sm:inline">Année</span>
             </button>
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-export-ics" title="Exporter le planning affiché en .ics (instantané ponctuel)" aria-label="Exporter le planning affiché en .ics" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-export-ics" title="Exporter le planning affiché en .ics (instantané ponctuel)" aria-label="Exporter le planning affiché en .ics" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><line x1="12" y1="13" x2="12" y2="18"></line><line x1="9.5" y1="15.5" x2="14.5" y2="15.5"></line></svg>
                 <span class="hidden sm:inline">.ics</span>
             </button>
-            <button id="btn-subscribe-ics" title="Copier le lien d'abonnement (webcal://) : se resynchronise tout seul dans votre appli calendrier" aria-label="Copier le lien d'abonnement au calendrier" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-subscribe-ics" title="Copier le lien d'abonnement (webcal://) : se resynchronise tout seul dans votre appli calendrier" aria-label="Copier le lien d'abonnement au calendrier" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><circle cx="6" cy="18" r="1.8" fill="currentColor" stroke="none"></circle><path d="M5 11a8 8 0 0 1 8 8"></path><path d="M5 5a14 14 0 0 1 14 14"></path></svg>
                 <span class="hidden sm:inline">S'abonner</span>
             </button>
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-open-reminders" title="Gérer vos rappels de notification" aria-label="Gérer vos rappels de notification" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-open-reminders" title="Gérer vos rappels de notification" aria-label="Gérer vos rappels de notification" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
                 <span class="hidden sm:inline">Rappels</span>
             </button>
-            <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" aria-label="Rétrospective annuelle" class="flex items-center gap-1.5 text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
+            <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" aria-label="Rétrospective annuelle" class="flex items-center gap-1.5 text-xxs font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"></path><path d="M19 3v4"></path><path d="M17 5h4"></path></svg>
                 <span class="hidden sm:inline">Rétrospective</span>
             </button>
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-toggle-density" title="Densité d'affichage des cartes : confortable" aria-label="Basculer la densité d'affichage" class="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <button id="btn-toggle-density" title="Densité d'affichage des cartes : confortable" aria-label="Basculer la densité d'affichage" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><circle cx="9" cy="6" r="2"></circle><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="15" cy="12" r="2"></circle><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="7" cy="18" r="2"></circle></svg>
                 <span class="hidden sm:inline">Confortable</span>
             </button>
             <label for="theme-select" class="sr-only">Thème saisonnier</label>
-            <select id="theme-select" title="Choisir le thème saisonnier (par défaut : automatique selon la date)" class="text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 pl-2 pr-1 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            <select id="theme-select" title="Choisir le thème saisonnier (par défaut : automatique selon la date)" class="text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 pl-2 pr-1 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <option value="auto">🎨 Auto</option>
+                <option value="nouvel-an">🎉 Nouvel An</option>
+                <option value="st-valentin">💖 St-Valentin</option>
+                <option value="printemps">🌸 Printemps</option>
+                <option value="ete">☀️ Été</option>
+                <option value="rentree">🎒 Rentrée</option>
+                <option value="automne">🍂 Automne</option>
                 <option value="halloween">🎃 Halloween</option>
                 <option value="noel">🎄 Noël</option>
-                <option value="st-valentin">💖 St-Valentin</option>
+                <option value="fin-annee">✨ Fin d'année</option>
+                <option value="hiver">❄️ Hiver</option>
                 <option value="none">◾ Aucun</option>
             </select>
 
+            <!-- Thème clair/sombre (V2.2) : bascule manuelle indépendante du thème saisonnier
+                 ci-dessus (celui-ci ne fait que TEINTER le fond sombre, il ne l'inverse jamais) -
+                 voir setupThemeToggle() dans main.js. Icône seule (titre en aria-label) comme le
+                 reste des boutons compacts de l'en-tête. -->
+            <button id="btn-toggle-theme" title="Basculer le thème clair/sombre" aria-label="Basculer le thème clair/sombre" class="flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 p-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg id="theme-toggle-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
+                <svg id="theme-toggle-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="hidden w-4 h-4 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line><line x1="4.6" y1="4.6" x2="6.8" y2="6.8"></line><line x1="17.2" y1="17.2" x2="19.4" y2="19.4"></line><line x1="4.6" y1="19.4" x2="6.8" y2="17.2"></line><line x1="17.2" y1="6.8" x2="19.4" y2="4.6"></line></svg>
+            </button>
+
             <!-- Outils d'organisateur (admin/kiosque/discord) : regroupés derrière un seul menu
-                 "⋯" plutôt qu'en boutons séparés (V2.5) - masqué par défaut, révélé par
+                 "⋯" plutôt qu'en boutons séparés (V2.2) - masqué par défaut, révélé par
                  setupAdminMode() dans main.js (?admin dans l'URL, pas une vraie sécurité, voir
                  config.js). Les IDs/handlers de chaque outil sont inchangés, seul leur parent a
                  changé (voir setupAdminToolsMenu() dans main.js pour l'ouverture/fermeture). -->
             <div id="admin-tools-menu" class="hidden relative">
-                <button id="btn-admin-tools-toggle" title="Outils organisateur" aria-label="Outils organisateur" aria-haspopup="true" aria-expanded="false" class="text-[11px] font-bold text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 px-2.5 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
+                <button id="btn-admin-tools-toggle" title="Outils organisateur" aria-label="Outils organisateur" aria-haspopup="true" aria-expanded="false" class="text-xxs font-bold text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 px-2.5 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle></svg>
                 </button>
                 <div id="admin-tools-dropdown" class="hidden absolute right-0 top-full mt-1 z-30 glass-panel rounded-xl p-1.5 shadow-2xl w-60 flex flex-col gap-0.5 text-left">
-                    <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" aria-label="Copier un message Discord" class="flex items-center gap-2 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                    <button id="btn-export-discord" title="Copier un message Discord annonçant le programme de la semaine" aria-label="Copier un message Discord" class="flex items-center gap-2 text-xxs font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M4 12a8 8 0 1 1 8 8H8l-4 3z"></path></svg>
                         Copier un message Discord
                     </button>
-                    <a id="btn-trigger-webhook" href="https://github.com/2gether-asso/2GELOGView/actions/workflows/jekyll-gh-pages.yml" target="_blank" rel="noopener" title="Ouvre la page GitHub Actions : cliquez « Run workflow », cochez « Poster le programme de la semaine sur Discord », puis lancez." aria-label="Lancer le digest Discord" class="flex items-center gap-2 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                    <a id="btn-trigger-webhook" href="https://github.com/2gether-asso/2GELOGView/actions/workflows/jekyll-gh-pages.yml" target="_blank" rel="noopener" title="Ouvre la page GitHub Actions : cliquez « Run workflow », cochez « Poster le programme de la semaine sur Discord », puis lancez." aria-label="Lancer le digest Discord" class="flex items-center gap-2 text-xxs font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><polygon points="13 2 4 14 11 14 10 22 20 10 13 10"></polygon></svg>
                         Lancer le digest Discord
                     </a>
-                    <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" aria-label="Mode Kiosque" class="flex items-center gap-2 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                    <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" aria-label="Mode Kiosque" class="flex items-center gap-2 text-xxs font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"></rect><line x1="8" y1="20" x2="16" y2="20"></line><line x1="12" y1="16" x2="12" y2="20"></line></svg>
                         Mode Kiosque
                     </button>
                     <div class="h-px bg-white/10 my-0.5" aria-hidden="true"></div>
-                    <button id="btn-admin-view" aria-label="Mode Admin" class="flex items-center gap-2 text-[11px] font-bold text-amber-300 hover:text-amber-200 hover:bg-amber-500/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                    <button id="btn-admin-view" aria-label="Mode Admin" class="flex items-center gap-2 text-xxs font-bold text-amber-300 hover:text-amber-200 hover:bg-amber-500/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3l7 3v6c0 5-3 8-7 9c-4-1-7-4-7-9V6z"></path><line x1="12" y1="9" x2="12" y2="13"></line><circle cx="12" cy="16" r="0.6" fill="currentColor" stroke="none"></circle></svg>
                         Mode Admin
+                        <span id="admin-anomaly-badge" title="Anomalies détectées dans le tableur" class="hidden ml-auto shrink-0 text-3xs font-black bg-rose-500 text-white rounded-full px-1.5 py-0.5"></span>
                     </button>
                 </div>
             </div>
 
-            <button id="btn-clear-filters" aria-label="Annuler les filtres" class="flex items-center gap-1.5 text-[11px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
+            <button id="btn-clear-filters" aria-label="Annuler les filtres" class="flex items-center gap-1.5 text-xxs font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all hidden">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M3 5h13"></path><path d="M3 5l6 7v7l3 1.5v-8.5l2-2.3"></path><line x1="17" y1="4" x2="22" y2="9"></line><line x1="22" y1="4" x2="17" y2="9"></line></svg>
                 <span class="hidden sm:inline">Annuler les filtres</span>
             </button>
@@ -426,7 +703,7 @@
              organisateurs, période) plutôt que de s'entasser sur une seule ligne qui déborde. -->
         <section id="filters-sidebar" class="w-full sm:w-72 absolute sm:relative inset-y-0 left-0 z-20 sm:z-auto border-r border-white/5 bg-[var(--surface-1)] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden backdrop-blur-sm transition-all shadow-2xl sm:shadow-none text-xs text-slate-400">
             <div class="flex items-center justify-between px-4 py-3 shrink-0 border-b border-white/5">
-                <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-300">
+                <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-300">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><path d="M3 5h18"></path><path d="M7 5l5 7v7l4 2v-9l5-7"></path></svg>
                     Filtres
                 </span>
@@ -434,17 +711,20 @@
             </div>
             <div id="filters-sidebar-content" class="flex-1 overflow-y-auto custom-scroll px-4 py-3 flex flex-col divide-y divide-white/5">
                 <div class="flex flex-col gap-2 pb-3 first:pt-0">
-                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                    <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><path d="M12 3l2.7 5.9l6.3 0.7l-4.7 4.4l1.3 6.2L12 17l-5.6 3.2l1.3-6.2L3 9.6l6.3-0.7z"></path></svg>
                         Vues favorites
                     </span>
                     <div class="flex items-center gap-1.5 flex-wrap">
                         <label for="saved-views-select" class="sr-only">Choisir une vue favorite</label>
-                        <select id="saved-views-select" title="Rappeler un jeu de filtres enregistré" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 flex-1 min-w-0">
+                        <select id="saved-views-select" title="Rappeler un jeu de filtres enregistré" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xxs text-slate-200 focus:outline-none focus:border-indigo-500 flex-1 min-w-0">
                             <option value="">— Aucune —</option>
                         </select>
-                        <button id="btn-save-view" title="Enregistrer les filtres actuels comme vue favorite" aria-label="Enregistrer la vue actuelle" class="text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 transition-all shrink-0">
+                        <button id="btn-save-view" title="Enregistrer les filtres actuels comme vue favorite" aria-label="Enregistrer la vue actuelle" class="text-xxs font-bold text-slate-400 hover:text-white px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 transition-all shrink-0">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"></path><rect x="8" y="4" width="7" height="5"></rect><rect x="7" y="14" width="10" height="6"></rect></svg>
+                        </button>
+                        <button id="btn-share-filters" title="Copier un lien partageable vers cette vue filtrée" aria-label="Copier un lien partageable vers cette vue filtrée" class="text-xxs font-bold text-slate-400 hover:text-indigo-300 px-2 py-1.5 rounded-lg border border-white/10 bg-white/5 transition-all shrink-0">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><circle cx="8" cy="16" r="3"></circle><circle cx="16" cy="8" r="3"></circle><line x1="10.2" y1="13.8" x2="13.8" y2="10.2"></line></svg>
                         </button>
                         <button id="btn-delete-view" title="Supprimer la vue favorite sélectionnée" aria-label="Supprimer la vue favorite sélectionnée" class="hidden text-slate-500 hover:text-rose-300 px-1.5 py-1.5 rounded-lg transition-all shrink-0">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"></line><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path><line x1="9" y1="4" x2="15" y2="4"></line><line x1="9" y1="4" x2="9" y2="7"></line><line x1="15" y1="4" x2="15" y2="7"></line></svg>
@@ -453,55 +733,55 @@
                 </div>
                 <div class="flex flex-col gap-2 py-3">
                     <div class="flex items-center justify-between gap-2">
-                        <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                        <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><path d="M11 3h6a2 2 0 0 1 2 2v6l-9 9l-8-8z"></path><circle cx="15" cy="7" r="1.2" fill="currentColor" stroke="none"></circle></svg>
                             Catégories
                         </span>
-                        <button id="btn-hidden-categories" title="Réafficher les catégories masquées" aria-label="Réafficher les catégories masquées" class="hidden text-[10px] font-bold text-amber-300 hover:text-amber-200 px-1.5 py-0.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all shrink-0"></button>
+                        <button id="btn-hidden-categories" title="Réafficher les catégories masquées" aria-label="Réafficher les catégories masquées" class="hidden text-2xs font-bold text-amber-300 hover:text-amber-200 px-1.5 py-0.5 rounded-lg border border-amber-500/20 bg-amber-500/10 transition-all shrink-0"></button>
                     </div>
                     <div class="flex gap-1.5 flex-wrap" id="filter-categories-container"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
-                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                    <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><line x1="5" y1="9" x2="19" y2="9"></line><line x1="5" y1="15" x2="19" y2="15"></line><line x1="9" y1="4" x2="7" y2="20"></line><line x1="17" y1="4" x2="15" y2="20"></line></svg>
                         Tags récurrents
                     </span>
                     <div id="filter-tags-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
-                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                    <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><line x1="8" y1="4" x2="8" y2="20"></line><line x1="16" y1="4" x2="16" y2="20"></line><line x1="3" y1="9" x2="8" y2="9"></line><line x1="3" y1="15" x2="8" y2="15"></line><line x1="16" y1="9" x2="21" y2="9"></line><line x1="16" y1="15" x2="21" y2="15"></line></svg>
                         Types
                     </span>
                     <div id="filter-types-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
-                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                    <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
                         Organisateurs
                     </span>
                     <div id="filter-hosts-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3 last:pb-0">
-                    <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 shrink-0">
+                    <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><circle cx="8" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="16" cy="14" r="1" fill="currentColor" stroke="none"></circle></svg>
                         Période
                     </span>
                     <!-- Navigation à une date précise : le mini-calendrier vit maintenant en
-                         permanence en haut de la sidebar Statistiques (V2.5, voir #sidebar-minical)
+                         permanence en haut de la sidebar Statistiques (V2.2, voir #sidebar-minical)
                          plutôt qu'un popover ouvert depuis un bouton ici. -->
                     <div class="flex items-center gap-1.5 flex-wrap">
-                        <input type="date" id="filter-date-from" aria-label="Du" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
-                        <span class="text-slate-500 text-[11px]" aria-hidden="true">→</span>
-                        <input type="date" id="filter-date-to" aria-label="Au" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
+                        <input type="date" id="filter-date-from" aria-label="Du" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xxs text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
+                        <span class="text-slate-500 text-xxs" aria-hidden="true">→</span>
+                        <input type="date" id="filter-date-to" aria-label="Au" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xxs text-slate-200 focus:outline-none focus:border-indigo-500 [color-scheme:dark] min-w-0 flex-1">
                         <button id="btn-clear-date-range" title="Réinitialiser la période" aria-label="Réinitialiser la période" class="hidden text-slate-500 hover:text-rose-300 text-xs px-1 shrink-0">✕</button>
                     </div>
                 </div>
             </div>
         </section>
 
-        <button id="btn-reopen-filters-sidebar" title="Afficher les filtres" aria-label="Afficher le panneau de filtres" class="hidden fixed left-0 top-1/2 -translate-y-1/2 z-30 bg-[var(--surface-2)]/90 border border-white/10 border-l-0 rounded-r-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M3 5h18"></path><path d="M7 5l5 7v7l4 2v-9l5-7"></path></svg>
+        <button id="btn-reopen-filters-sidebar" title="Afficher les filtres" aria-label="Afficher le panneau de filtres" class="hidden fixed left-0 top-1/2 -translate-y-1/2 z-30 bg-[var(--surface-2-90)] border border-white/10 border-l-0 rounded-r-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 pointer-events-none" aria-hidden="true"><path d="M3 5h18"></path><path d="M7 5l5 7v7l4 2v-9l5-7"></path></svg>
         </button>
 
         <section class="flex-1 p-4 h-full relative overflow-y-auto overflow-x-hidden custom-scroll bg-black/[0.05]">
@@ -509,53 +789,72 @@
             <div id="search-results" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
             <div id="timeline-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
             <div id="today-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
+            <div id="year-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
             <!-- isolate : Leaflet pose ses propres z-index internes (jusqu'à 700 pour ses panes/
                  popups) sur des éléments sans quoi contenir ce sous-arbre dans son propre contexte
                  d'empilement - ces 700 finiraient comparés directement à la modale d'événement
                  (z-50, voir #custom-modal-container) au niveau racine et passeraient TOUJOURS
                  devant elle. -->
-            <div id="map-view" class="hidden w-full h-full isolate">
+            <div id="map-view" class="hidden w-full h-full isolate relative">
+                <!-- Filtre par rayon (V2.4, "15") : ville centre + rayon, voir setupMapRadiusFilter
+                     dans main.js. z-10 relatif à #map-view (isolate) suffit à passer au-dessus de
+                     la tuile Leaflet, pas besoin d'un des paliers globaux documentés plus haut. -->
+                <div id="map-radius-filter" class="absolute top-3 left-3 z-10 glass-panel rounded-xl p-2 flex items-center gap-1.5 text-xxs shadow-lg">
+                    <label for="map-radius-city" class="sr-only">Centrer le filtre sur une ville</label>
+                    <select id="map-radius-city" class="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xxs text-slate-200 focus:outline-none focus:border-indigo-500 max-w-[8rem]">
+                        <option value="">Toutes les villes</option>
+                    </select>
+                    <label for="map-radius-km" class="sr-only">Rayon en kilomètres</label>
+                    <select id="map-radius-km" class="hidden bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xxs text-slate-200 focus:outline-none focus:border-indigo-500">
+                        <option value="50">50 km</option>
+                        <option value="100" selected>100 km</option>
+                        <option value="200">200 km</option>
+                        <option value="500">500 km</option>
+                    </select>
+                </div>
                 <div id="meetup-map" class="w-full h-full rounded-xl overflow-hidden"></div>
             </div>
         </section>
 
         <section id="sidebar-panel" class="w-full sm:w-80 absolute sm:relative inset-y-0 right-0 z-20 sm:z-auto border-l border-white/5 bg-[var(--surface-1)] sm:bg-white/[0.01] flex flex-col h-full shrink-0 overflow-hidden backdrop-blur-sm transition-all shadow-2xl sm:shadow-none text-xs text-slate-400">
             <div class="flex items-center justify-between px-4 py-3 shrink-0 border-b border-white/5">
-                <span class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-300">
+                <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-300">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><line x1="4" y1="20" x2="20" y2="20"></line><rect x="6" y="12" width="3" height="8"></rect><rect x="11" y="7" width="3" height="13"></rect><rect x="16" y="10" width="3" height="10"></rect></svg>
                     Tableau de bord
                 </span>
                 <button id="btn-toggle-sidebar" title="Masquer le panneau" aria-label="Masquer le panneau de statistiques" class="text-slate-500 hover:text-white text-xs p-1 rounded-md hover:bg-white/5 transition-all">✕</button>
             </div>
-            <!-- Même rythme visuel que #filters-sidebar-content en face (V2.5) : un seul défilement
+            <!-- Même rythme visuel que #filters-sidebar-content en face (V2.2) : un seul défilement
                  partagé plutôt que la Rétrospective figée + Prochainement défilant séparément
                  d'avant, et des sections délimitées par divide-y au lieu d'empilements space-y-4
                  imbriqués - plus simple à lire d'un coup d'oeil. -->
             <div id="sidebar-panel-content" class="flex-1 overflow-y-auto custom-scroll px-4 py-3 flex flex-col divide-y divide-white/5">
-                <!-- Mini-calendrier (QOL #16, V2.5) : intégré en permanence ici plutôt qu'un
-                     popover ouvert depuis un bouton dans la sidebar Filtres - toujours sous les
-                     yeux, et chaque jour affiche en fond la vignette d'un de ses événements quand
-                     il en a une (voir renderMiniCalendar dans main.js). -->
+                <!-- Ordre V2.3 (voir setupStatsToggle dans main.js pour le repli par défaut) :
+                     Statistiques (repliée par défaut, la plus "lourde" à lire) d'abord, puis le
+                     mini-calendrier toujours visible, puis Semaine prochaine/Prochainement dans
+                     l'ordre chronologique de ce qu'ils couvrent. -->
                 <div class="flex flex-col gap-2 pb-3 first:pt-0">
-                    <div id="sidebar-minical"></div>
-                </div>
-                <div class="flex flex-col gap-2 py-3">
-                    <button id="btn-toggle-stats" class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-all" aria-expanded="true" aria-controls="stats-content">
-                        <svg id="stats-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0 transition-transform duration-200" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    <button id="btn-toggle-stats" class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-all" aria-expanded="false" aria-controls="stats-content">
+                        <svg id="stats-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0 transition-transform duration-200 -rotate-90" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
                         <span>Statistiques <span id="stats-year-label" class="normal-case tracking-normal text-slate-500"></span></span>
                     </button>
                     <!-- #activity-heatmap DANS #stats-content (pas un frère) : suit son repli/dépli,
-                         alors qu'il en a visuellement toutes les apparences pour l'utilisateur. -->
+                         alors qu'il en a visuellement toutes les apparences pour l'utilisateur.
+                         Wrapper grid-template-rows (V2.2, voir #stats-chevron) : repli/dépli animé
+                         en douceur plutôt qu'un basculement instantané display:none/block - une
+                         propriété grid s'anime, contrairement à `display`. -->
+                    <div id="stats-content-collapse" class="grid collapse-wrap">
+                    <div class="overflow-hidden">
                     <div id="stats-content" class="flex flex-col gap-2">
                         <div id="stat-categories-container" class="grid grid-cols-2 gap-2"></div>
                         <div class="glass-panel rounded-xl p-2.5 shadow-sm">
-                            <div class="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                            <div class="flex items-center gap-1.5 text-2xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
                                 Top Organisateurs
                             </div>
                             <div id="stat-hosts-container" class="flex flex-col gap-1"></div>
                         </div>
-                        <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-[11px] text-slate-400 shadow-sm">
+                        <div class="glass-panel rounded-xl p-2.5 flex items-center justify-between text-xxs text-slate-400 shadow-sm">
                             <span class="flex items-center gap-1.5">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
                                 Annulations & Reports
@@ -563,38 +862,69 @@
                             <span id="stat-canceled-count" class="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">0</span>
                         </div>
                         <div class="glass-panel rounded-xl p-2.5 shadow-sm">
-                            <div class="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                            <div class="flex items-center gap-1.5 text-2xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 6"></polyline><polyline points="15 6 21 6 21 12"></polyline></svg>
                                 Activité (13 sem.)
                             </div>
                             <div id="activity-heatmap"></div>
                         </div>
                     </div>
+                    </div>
+                    </div>
+                </div>
+                <!-- Mini-calendrier (QOL #16, V2.2) : intégré en permanence ici plutôt qu'un
+                     popover ouvert depuis un bouton dans la sidebar Filtres - toujours sous les
+                     yeux, et chaque jour affiche en fond la vignette d'un de ses événements quand
+                     il en a une (voir renderMiniCalendar dans main.js). -->
+                <div class="flex flex-col gap-2 py-3">
+                    <div id="sidebar-minical"></div>
+                </div>
+                <div class="flex flex-col gap-2 py-3">
+                    <div class="flex items-center justify-between gap-2">
+                        <button id="btn-toggle-nextweek" class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-all" aria-expanded="true" aria-controls="nextweek-content">
+                            <svg id="nextweek-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0 transition-transform duration-200" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            Semaine prochaine
+                        </button>
+                        <span id="nextweek-count" class="text-2xs font-bold bg-white/5 border border-white/5 text-slate-400 px-2 py-0.5 rounded-md">0</span>
+                    </div>
+                    <div id="nextweek-content-collapse" class="grid collapse-wrap">
+                    <div class="overflow-hidden">
+                    <div id="nextweek-content" class="flex flex-col gap-2">
+                        <div id="nextweek-list" class="space-y-2">
+                            <div class="text-center text-xs text-slate-600 py-12">Rien de prévu la semaine prochaine</div>
+                        </div>
+                    </div>
+                    </div>
+                    </div>
                 </div>
                 <div class="flex flex-col gap-2 py-3 last:pb-0">
                     <div class="flex items-center justify-between gap-2">
-                        <button id="btn-toggle-upcoming" class="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-all" aria-expanded="true" aria-controls="upcoming-content">
+                        <button id="btn-toggle-upcoming" class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-all" aria-expanded="true" aria-controls="upcoming-content">
                             <svg id="upcoming-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0 transition-transform duration-200" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
                             Prochainement
                         </button>
-                        <span id="upcoming-count" class="text-[10px] font-bold bg-white/5 border border-white/5 text-slate-400 px-2 py-0.5 rounded-md">0</span>
+                        <span id="upcoming-count" class="text-2xs font-bold bg-white/5 border border-white/5 text-slate-400 px-2 py-0.5 rounded-md">0</span>
                     </div>
+                    <div id="upcoming-content-collapse" class="grid collapse-wrap">
+                    <div class="overflow-hidden">
                     <div id="upcoming-content" class="flex flex-col gap-2">
                         <div id="upcoming-list" class="space-y-2">
                             <div class="text-center text-xs text-slate-600 py-12">Aucun événement planifié</div>
                         </div>
                     </div>
+                    </div>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <button id="btn-reopen-sidebar" title="Afficher les statistiques" aria-label="Afficher le panneau de statistiques" class="hidden fixed right-0 top-1/2 -translate-y-1/2 z-30 bg-[var(--surface-2)]/90 border border-white/10 border-r-0 rounded-l-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><line x1="4" y1="20" x2="20" y2="20"></line><rect x="6" y="12" width="3" height="8"></rect><rect x="11" y="7" width="3" height="13"></rect><rect x="16" y="10" width="3" height="10"></rect></svg>
+        <button id="btn-reopen-sidebar" title="Afficher les statistiques" aria-label="Afficher le panneau de statistiques" class="hidden fixed right-0 top-1/2 -translate-y-1/2 z-30 bg-[var(--surface-2-90)] border border-white/10 border-r-0 rounded-l-xl px-2 py-4 text-slate-400 hover:text-white hover:bg-white/10 transition-all backdrop-blur-md">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 pointer-events-none" aria-hidden="true"><line x1="4" y1="20" x2="20" y2="20"></line><rect x="6" y="12" width="3" height="8"></rect><rect x="11" y="7" width="3" height="13"></rect><rect x="16" y="10" width="3" height="10"></rect></svg>
         </button>
     </main>
 
     <div id="custom-modal-container" title="Cliquer en dehors pour fermer" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md opacity-0 pointer-events-none transition-all duration-300 cursor-pointer">
-        <!-- max-h + colonne flex à 2 zones (en-tête figé / corps défilant) : V2.5, voir la refonte
+        <!-- max-h + colonne flex à 2 zones (en-tête figé / corps défilant) : V2.2, voir la refonte
              de la modale plus bas dans ce commentaire. Avant ça, #custom-modal-box n'avait AUCUNE
              limite de hauteur ni défilement propre - un événement avec affiche + épisode + hôte/
              plateforme + notes + rappel + tags + "vous aimerez peut-être" + 2-3 liens CTA dépassait
@@ -606,13 +936,13 @@
              plus naturelle à refermer/faire défiler au pouce qu'une boîte de dialogue flottante.
              `title=""` supprimé du conteneur intérieur : superflu (celui du conteneur extérieur,
              "Cliquer en dehors pour fermer", suffit) et produisait une bulle d'aide vide au survol. -->
-        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl transform scale-95 transition-all duration-300 flex flex-col max-h-[85vh] cursor-auto" id="custom-modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-event-title">
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2-95)] border border-white/10 shadow-2xl transform scale-95 transition-all duration-300 flex flex-col max-h-[85vh] cursor-auto" id="custom-modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-event-title">
             <div class="flex items-start justify-between gap-3 p-6 pb-4 shrink-0 sticky top-0 bg-[var(--surface-2)] rounded-t-2xl border-b border-white/5 z-10">
                 <div class="flex items-start space-x-3 min-w-0">
                     <img id="modal-event-icon" src="./assets/img/badges/hors-prog.png" alt="" class="w-16 aspect-[8/9] rounded-xl object-cover border border-white/10 shrink-0" onerror="this.style.display='none'">
                     <div class="flex flex-col space-y-1 min-w-0">
                         <div class="flex items-center gap-1.5 flex-wrap">
-                            <span id="modal-event-type" class="text-[11px] font-black tracking-widest text-indigo-400 uppercase bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md w-fit">TYPE</span>
+                            <span id="modal-event-type" class="text-xxs font-black tracking-widest text-indigo-400 uppercase bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md w-fit">TYPE</span>
                             <span id="modal-event-status"></span>
                         </div>
                         <h3 id="modal-event-title" class="text-base font-extrabold text-white leading-snug mt-1">Titre de l'événement</h3>
@@ -633,20 +963,20 @@
             </div>
 
             <div id="modal-scroll-body" class="flex-1 min-h-0 overflow-y-auto custom-scroll p-6 pt-4 flex flex-col space-y-4 text-left">
-            <div id="modal-poster-container" class="hidden rounded-xl overflow-hidden border border-white/10">
-                <img id="modal-event-poster" src="" alt="" class="w-full max-h-56 object-cover">
+            <div id="modal-poster-container" class="hidden rounded-xl overflow-hidden border border-white/10 bg-black/20 flex items-center justify-center">
+                <img id="modal-event-poster" src="" alt="" class="w-full max-h-72 object-contain">
             </div>
 
             <div class="grid grid-cols-2 gap-3 text-sm">
                 <div id="modal-time-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5">
-                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[11px] uppercase tracking-wider">
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-xxs uppercase tracking-wider">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><circle cx="8" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="14" r="1" fill="currentColor" stroke="none"></circle><circle cx="16" cy="14" r="1" fill="currentColor" stroke="none"></circle></svg>
                         Date & Heure
                     </div>
                     <div id="modal-event-time" class="text-slate-200 font-semibold mt-1">Non spécifié</div>
                 </div>
                 <div id="modal-location-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5">
-                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[11px] uppercase tracking-wider">
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-xxs uppercase tracking-wider">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><path d="M12 22s7-7.5 7-12a7 7 0 0 0-14 0c0 4.5 7 12 7 12z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
                         Lieu
                     </div>
@@ -655,7 +985,7 @@
             </div>
 
             <div id="modal-sub-block" class="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl hidden">
-                <div class="flex items-center gap-1.5 text-indigo-400 font-bold text-[11px] uppercase tracking-wider">
+                <div class="flex items-center gap-1.5 text-indigo-400 font-bold text-xxs uppercase tracking-wider">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"></rect><line x1="8" y1="3" x2="12" y2="6"></line><line x1="16" y1="3" x2="12" y2="6"></line></svg>
                     Episode(s)
                 </div>
@@ -664,14 +994,14 @@
 
             <div id="modal-meta-block" class="grid grid-cols-2 gap-3 text-xs">
                 <div id="modal-host-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
-                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-3xs uppercase tracking-wider">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
                         Organisé par
                     </div>
-                    <button id="modal-event-host" title="Voir le profil de cet organisateur" class="text-slate-200 font-semibold mt-1 hover:text-indigo-400 hover:underline transition-colors text-left"></button>
+                    <button id="modal-event-host" title="Voir le profil de cet organisateur" class="group inline-flex items-center gap-1.5 text-slate-200 font-semibold mt-1 hover:text-indigo-400 transition-colors text-left"></button>
                 </div>
                 <div id="modal-platform-container" class="bg-black/20 p-2.5 rounded-xl border border-white/5 hidden">
-                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                    <div class="flex items-center gap-1.5 text-slate-400 font-bold text-3xs uppercase tracking-wider">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"></rect><line x1="8" y1="3" x2="12" y2="6"></line><line x1="16" y1="3" x2="12" y2="6"></line></svg>
                         Plateforme
                     </div>
@@ -680,20 +1010,23 @@
             </div>
 
             <div class="bg-black/20 p-3 rounded-xl border border-white/5 flex flex-col space-y-1">
-                <div class="text-slate-400 font-bold text-[9px] uppercase tracking-wider">📝 Notes complémentaires</div>
+                <div class="text-slate-400 font-bold text-3xs uppercase tracking-wider">📝 Notes complémentaires</div>
                 <p id="modal-event-notes" class="text-slate-300 italic text-xs leading-relaxed whitespace-pre-line">Aucune description disponible.</p>
             </div>
 
             <div id="modal-reminder-container" class="flex flex-col space-y-1.5">
-                <button id="modal-reminder-btn" class="w-full flex items-center justify-center gap-2 text-[11px] font-bold px-3 py-2 rounded-lg border transition-all">
+                <button id="modal-reminder-btn" class="w-full flex items-center justify-center gap-2 text-xxs font-bold px-3 py-2 rounded-lg border transition-all">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
                     M'envoyer un rappel
                 </button>
-                <p class="text-[10px] text-slate-600 text-center">Notification navigateur avant le début de cet événement. S'il revient sur plusieurs dates (série hebdo ou notée dans les Notes/Tags), le rappel suit automatiquement chaque prochaine diffusion.</p>
+                <!-- Compte à rebours (V2.3, QOL #2) : posé/masqué par _applyReminderButtonStyle
+                     dans ModalView.js, uniquement quand cet événement précis est encore à venir. -->
+                <p id="modal-reminder-countdown" class="hidden text-center text-3xs font-bold text-indigo-400"></p>
+                <p class="text-2xs text-slate-600 text-center">Notification navigateur avant le début de cet événement. S'il revient sur plusieurs dates (série hebdo ou notée dans les Notes/Tags), le rappel suit automatiquement chaque prochaine diffusion.</p>
             </div>
 
             <div class="flex flex-col space-y-1.5">
-                <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                <div class="flex items-center gap-1.5 text-slate-400 font-bold text-3xs uppercase tracking-wider">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M11 3h6a2 2 0 0 1 2 2v6l-9 9l-8-8z"></path><circle cx="15" cy="7" r="1.2" fill="currentColor" stroke="none"></circle></svg>
                     Tags indexés (Cliquables)
                 </div>
@@ -703,7 +1036,7 @@
             <!-- Suggestions "événements similaires" (même tag/organisateur/type), voir
                  renderSimilarEvents dans ModalView.js - masqué si aucun événement apparenté trouvé. -->
             <div id="modal-similar-container" class="hidden flex-col space-y-1.5"><!-- flex ajouté/retiré en JS avec hidden, voir _toggleModalLink dans ModalView.js -->
-                <div class="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                <div class="flex items-center gap-1.5 text-slate-400 font-bold text-3xs uppercase tracking-wider">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"></path><path d="M19 3v4"></path><path d="M17 5h4"></path></svg>
                     Vous aimerez peut-être
                 </div>
@@ -729,7 +1062,7 @@
     </div>
 
     <div id="patchnotes-overlay" class="hidden fixed inset-0 z-[65] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="patchnotes-title">
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2-95)] border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="patchnotes-title">
             <div class="flex items-start justify-between mb-3">
                 <h2 id="patchnotes-title" class="flex items-center gap-2 text-lg font-black text-white">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-indigo-400 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
@@ -743,7 +1076,7 @@
     </div>
 
     <div id="help-overlay" class="hidden fixed inset-0 z-[66] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2-95)] border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="help-title">
             <div class="flex items-start justify-between mb-3">
                 <h2 id="help-title" class="flex items-center gap-2 text-lg font-black text-white">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-slate-400 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.2 9a3 3 0 1 1 4.6 2.5c-1 0.6-1.8 1.1-1.8 2.5"></path><line x1="12" y1="17.2" x2="12" y2="17.3"></line></svg>
@@ -751,6 +1084,16 @@
                 </h2>
                 <button id="btn-close-help" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
             </div>
+            <!-- Revoir la visite guidée (V2.2) : relance startOnboardingTour depuis zéro, voir
+                 setupOnboardingTour dans main.js - même moteur que celui du tout premier lancement. -->
+            <button id="btn-replay-onboarding" class="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-indigo-300 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 px-3 py-2 rounded-xl transition-all mb-2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.3"></path><polyline points="3 4 3 9 8 9"></polyline></svg>
+                Revoir la visite guidée
+            </button>
+            <!-- Mode "grand texte" (V2.4, "17") : voir setupLargeTextToggle dans main.js. -->
+            <button id="btn-toggle-large-text" aria-pressed="false" class="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-2 rounded-xl transition-all mb-4">
+                <span>🔠 Grand texte : Désactivé</span>
+            </button>
             <div class="space-y-4 text-sm text-slate-300">
                 <div>
                     <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Statuts</div>
@@ -793,6 +1136,8 @@
                     <div class="space-y-1 text-xs">
                         <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">/</kbd> — focus sur la recherche</div>
                         <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">T</kbd> — ouvre la page "☀️ Aujourd'hui"</div>
+                        <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">F</kbd> — bascule la vue "🗓️ Frise"</div>
+                        <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">C</kbd> — bascule la vue "📍 Carte"</div>
                         <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">←</kbd> / <kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">→</kbd> — période précédente/suivante (vue calendrier)</div>
                         <div><kbd class="bg-white/10 px-1.5 py-0.5 rounded border border-white/10 font-mono">Échap</kbd> — ferme la fenêtre au premier plan</div>
                     </div>
@@ -802,7 +1147,7 @@
     </div>
 
     <div id="reminders-overlay" class="hidden fixed inset-0 z-[67] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="reminders-title">
+        <div class="w-full max-w-lg rounded-2xl bg-[var(--surface-2-95)] border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="reminders-title">
             <div class="flex items-start justify-between mb-3">
                 <h2 id="reminders-title" class="flex items-center gap-2 text-lg font-black text-white">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-slate-400 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
@@ -816,7 +1161,7 @@
                     <div class="font-bold text-slate-200">Tout activer</div>
                     <div id="reminders-blanket-desc" class="text-slate-500">Être prévenu avant chaque session à venir, sans avoir à suivre chaque série individuellement.</div>
                 </div>
-                <button id="btn-toggle-all-reminders" aria-pressed="false" class="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
+                <button id="btn-toggle-all-reminders" aria-pressed="false" class="shrink-0 text-xxs font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
             </div>
 
             <div class="glass-panel rounded-xl p-3 flex items-center justify-between gap-3 mb-3">
@@ -824,7 +1169,7 @@
                     <label for="reminder-lead-select" class="font-bold text-slate-200 block">⏱️ Délai de rappel</label>
                     <div class="text-slate-500">Combien de temps avant le début de la session.</div>
                 </div>
-                <select id="reminder-lead-select" title="Délai de rappel avant chaque session" class="shrink-0 bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500">
+                <select id="reminder-lead-select" title="Délai de rappel avant chaque session" class="shrink-0 bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xxs text-slate-200 focus:outline-none focus:border-indigo-500">
                     <option value="5">5 min avant</option>
                     <option value="15">15 min avant</option>
                     <option value="30">30 min avant</option>
@@ -837,7 +1182,17 @@
                     <div class="font-bold text-slate-200">🌅 Résumé quotidien</div>
                     <div class="text-slate-500">Une notification chaque matin avec le programme du jour, s'il y en a un.</div>
                 </div>
-                <button id="btn-toggle-daily-digest" aria-pressed="false" class="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
+                <button id="btn-toggle-daily-digest" aria-pressed="false" class="shrink-0 text-xxs font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
+            </div>
+
+            <!-- Son discret optionnel (V2.3) : petit carillon généré via Web Audio API
+                 (voir playNotificationSound dans main.js), désactivé par défaut. -->
+            <div class="glass-panel rounded-xl p-3 flex items-center justify-between gap-3 mb-3">
+                <div class="text-xs text-slate-300 min-w-0">
+                    <div class="font-bold text-slate-200">🔊 Son de notification</div>
+                    <div class="text-slate-500">Un petit signal sonore discret avec chaque rappel/résumé.</div>
+                </div>
+                <button id="btn-toggle-notif-sound" aria-pressed="false" class="shrink-0 text-xxs font-bold px-3 py-1.5 rounded-lg border transition-all">🔕 Désactivé</button>
             </div>
 
             <div class="glass-panel rounded-xl p-3 mb-4">
@@ -846,16 +1201,19 @@
                         <div class="font-bold text-slate-200">🌙 Ne pas déranger</div>
                         <div id="reminders-dnd-desc" class="text-slate-500">Met en pause tous les rappels temporairement, sans rien désabonner.</div>
                     </div>
-                    <button id="btn-clear-dnd" class="hidden shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 transition-all">Réactiver</button>
+                    <button id="btn-clear-dnd" class="hidden shrink-0 text-xxs font-bold px-3 py-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 transition-all">Réactiver</button>
                 </div>
                 <div id="dnd-options" class="flex flex-wrap gap-1.5 mt-2.5">
-                    <button data-dnd-hours="1" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">1h</button>
-                    <button data-dnd-hours="8" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">Ce soir (8h)</button>
-                    <button data-dnd-hours="24" class="text-[11px] font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">24h</button>
+                    <button data-dnd-hours="1" class="text-xxs font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">1h</button>
+                    <button data-dnd-hours="8" class="text-xxs font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">Ce soir (8h)</button>
+                    <button data-dnd-hours="24" class="text-xxs font-bold text-slate-400 hover:text-white px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 transition-all">24h</button>
                 </div>
             </div>
 
-            <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Suivis individuellement</div>
+            <div class="flex items-center justify-between mb-1.5">
+                <div class="text-xs font-bold uppercase tracking-wider text-slate-500">Suivis individuellement</div>
+                <button id="btn-clear-all-reminders" title="Se désabonner de tous les suivis individuels" aria-label="Tout désabonner" class="hidden text-3xs font-bold text-slate-500 hover:text-rose-300 transition-colors">Tout désabonner</button>
+            </div>
             <div id="reminders-list" class="space-y-1.5"></div>
         </div>
     </div>
@@ -863,12 +1221,12 @@
     <!-- Overlays "pleine page" (admin/rétrospective/détail/profil organisateur) : jusque-là un
          fond plein sans carte ni bordure (bg-black/85 nu), visuellement une app différente des 5
          autres overlays (modale d'événement, notes de version, aide, rappels) qui utilisent tous
-         une carte centrée (bg-[var(--surface-2)]/95, bordure, ombre, coins arrondis). V2.5 : même
+         une carte centrée (bg-[var(--surface-2-95)], bordure, ombre, coins arrondis). V2.2 : même
          traitement de carte ici, la mécanique d'ouverture (classList.remove/add('hidden') sur le
          conteneur racine, voir main.js) et tous les IDs internes restent strictement identiques -
          seul un nouveau wrapper "carte" enveloppe le contenu existant. -->
     <div id="admin-overlay" class="fixed inset-0 z-[60] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
-        <div class="max-w-5xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+        <div class="max-w-5xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2-95)] border border-white/10 shadow-2xl p-6 sm:p-8">
             <div class="flex items-center justify-between mb-6">
                 <h2 class="flex items-center gap-2 text-xl font-black text-white">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-amber-400 shrink-0" aria-hidden="true"><path d="M12 3l7 3v6c0 5-3 8-7 9c-4-1-7-4-7-9V6z"></path><line x1="12" y1="9" x2="12" y2="13"></line><circle cx="12" cy="16" r="0.6" fill="currentColor" stroke="none"></circle></svg>
@@ -884,8 +1242,17 @@
     </div>
 
     <div id="retrospective-overlay" class="fixed inset-0 z-[62] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
-        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
-            <div class="flex items-center justify-end mb-4">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2-95)] border border-white/10 shadow-2xl p-6 sm:p-8">
+            <div class="flex items-center justify-end gap-1 mb-4">
+                <!-- Toute l'histoire (V2.4, "9") : bascule vers un résumé multi-années, voir
+                     renderAllYearsHistory dans RetrospectiveView.js et setupRetrospective dans
+                     main.js. aria-pressed reflète l'état, comme les autres boutons à bascule. -->
+                <button id="btn-retro-history" title="Voir toute l'histoire (toutes les années)" aria-label="Voir toute l'histoire" aria-pressed="false" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><rect x="4" y="3" width="16" height="6" rx="1.5"></rect><rect x="4" y="11" width="16" height="6" rx="1.5"></rect><line x1="4" y1="20" x2="20" y2="20"></line></svg>
+                </button>
+                <button id="btn-retro-export-image" title="Générer une image récap partageable de l'année" aria-label="Générer une image récap partageable de l'année" class="p-2 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-all">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9.5" r="1.5"></circle><path d="M21 16l-5-5l-4 4l-2-2l-6 6"></path></svg>
+                </button>
                 <button id="btn-close-retrospective" class="flex items-center gap-1.5 p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
                     Fermer
@@ -898,7 +1265,12 @@
     <!-- Liste complète des sessions d'un mois/jour de semaine, ouverte au clic sur une barre
          des graphiques de la rétrospective (voir setupRetrospective() dans main.js). -->
     <div id="bucket-detail-overlay" class="fixed inset-0 z-[63] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
-        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2-95)] border border-white/10 shadow-2xl p-6 sm:p-8">
+            <!-- Fil d'ariane "vous êtes ici" (V2.2) : rappelle depuis quel overlay parent ce
+                 détail a été ouvert (Rétrospective ou Profil organisateur, voir openBucketDetail/
+                 openOrganizerWeekdayDetail dans main.js) - le 1er segment est cliquable pour
+                 revenir au parent (setupBucketDetailBreadcrumbBack). -->
+            <nav id="bucket-detail-breadcrumb" class="flex items-center gap-1.5 text-xxs font-bold text-slate-500 mb-2"></nav>
             <div class="flex items-center justify-between mb-4">
                 <h3 id="bucket-detail-title" class="text-lg font-black text-white"></h3>
                 <button id="btn-close-bucket-detail" class="flex items-center gap-1.5 p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-sm">
@@ -915,7 +1287,7 @@
          organisateur juste en dessous (résumé + à venir + historique), plutôt qu'un popup
          Leaflet exigu pour un lieu qui cumule beaucoup de sessions dans le temps. -->
     <div id="location-profile-overlay" class="fixed inset-0 z-[61] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
-        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2-95)] border border-white/10 shadow-2xl p-6 sm:p-8">
             <div class="flex items-center justify-between mb-1 gap-2">
                 <h3 id="location-profile-title" class="flex items-center gap-2 text-lg font-black text-white">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-indigo-400" aria-hidden="true"><path d="M12 22s7-7.5 7-12a7 7 0 0 0-14 0c0 4.5 7 12 7 12z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
@@ -950,7 +1322,7 @@
     <!-- Mini-profil d'un organisateur, ouvert au clic sur son nom (sidebar "Top organisateurs"
          ou champ "Organisé par" de la modale) - voir openOrganizerProfile() dans main.js. -->
     <div id="organizer-profile-overlay" class="fixed inset-0 z-[64] hidden bg-black/70 backdrop-blur-md overflow-y-auto custom-scroll p-4 sm:p-8">
-        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2)]/95 border border-white/10 shadow-2xl p-6 sm:p-8">
+        <div class="max-w-2xl mx-auto my-2 sm:my-6 rounded-2xl bg-[var(--surface-2-95)] border border-white/10 shadow-2xl p-6 sm:p-8">
             <div class="flex items-center justify-between mb-1 gap-2">
                 <h3 id="organizer-profile-title" class="text-lg font-black text-white"></h3>
                 <div class="flex items-center gap-1 shrink-0">
@@ -976,9 +1348,17 @@
         </div>
     </div>
 
-    <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-4 bg-[var(--surface-0)]" role="status" aria-live="polite">
-        <div class="h-10 w-10 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin" aria-hidden="true"></div>
+    <div id="loading-overlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-5 bg-[var(--surface-0)] px-6" role="status" aria-live="polite">
+        <!-- Icône de l'app (même fichier que le favicon, voir <link rel="icon"> plus haut) plutôt
+             qu'un badge "2G" recréé à la main - déjà son propre fond sombre, pas besoin d'un
+             second cadre coloré par-dessus. -->
+        <img src="./assets/img/icon.png" alt="" class="brand-pulse h-16 w-16 rounded-2xl shadow-lg shadow-indigo-500/30 object-cover" aria-hidden="true">
         <p class="text-sm text-slate-400">Chargement du calendrier…</p>
+        <div class="w-full max-w-xs flex flex-col gap-2" aria-hidden="true">
+            <div class="skeleton-row"><div class="skeleton-block skeleton-icon"></div><div class="skeleton-lines"><div class="skeleton-block skeleton-line w-3-4"></div><div class="skeleton-block skeleton-line w-1-2"></div></div></div>
+            <div class="skeleton-row" style="animation-delay:.1s"><div class="skeleton-block skeleton-icon" style="animation-delay:.1s"></div><div class="skeleton-lines"><div class="skeleton-block skeleton-line w-3-4" style="animation-delay:.1s"></div><div class="skeleton-block skeleton-line w-1-2" style="animation-delay:.1s"></div></div></div>
+            <div class="skeleton-row" style="animation-delay:.2s"><div class="skeleton-block skeleton-icon" style="animation-delay:.2s"></div><div class="skeleton-lines"><div class="skeleton-block skeleton-line w-3-4" style="animation-delay:.2s"></div><div class="skeleton-block skeleton-line w-1-2" style="animation-delay:.2s"></div></div></div>
+        </div>
     </div>
 
     <div id="error-banner" class="hidden fixed inset-x-0 top-20 z-[70] mx-auto max-w-lg px-4" role="alert">
@@ -994,6 +1374,11 @@
             </div>
         </div>
     </div>
+
+    <!-- Notifications "toast" (V2.2, voir src/ui/Toast.js) : remplace le pattern répété un peu
+         partout ("échanger le contenu d'un bouton pour ✅ Copié! puis le restaurer") par un seul
+         mécanisme cohérent, y compris pour une confirmation sans bouton précis (rappel activé...). -->
+    <div id="toast-container" class="fixed inset-x-0 bottom-4 sm:bottom-6 z-[75] flex flex-col items-center gap-2 pointer-events-none px-4" aria-live="polite"></div>
 
     <script type="module" src="./src/main.js"></script>
 </body>

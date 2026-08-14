@@ -8,7 +8,9 @@ import { renderEventCard, isGenuinelyLive } from './ui/EventCardTemplate.js';
 import { renderSearchResults } from './ui/SearchResultsView.js';
 import { renderTimeline } from './ui/TimelineView.js';
 import { renderTodayView } from './ui/TodayView.js';
-import { initMeetupMap, updateMeetupMap, groupEventsByCity, cityLabel } from './ui/MeetupMapView.js';
+import { renderYearView } from './ui/YearView.js';
+import { fetchBirthdays } from './services/BirthdayService.js';
+import { initMeetupMap, updateMeetupMap, groupEventsByCity, cityLabel, getKnownCityKeys } from './ui/MeetupMapView.js';
 import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
 import { SearchEngine } from './services/SearchEngine.js';
@@ -17,17 +19,22 @@ import { DiscordExporter } from './services/DiscordExporter.js';
 import { renderActivityHeatmap } from './ui/ActivityHeatmap.js';
 import { DateUtils } from './utils/DateUtils.js';
 import { escapeHtml, sanitizeUrl } from './utils/Html.js';
-import { formatMinutes, topN, formatCategoryLabel } from './utils/Format.js';
+import { formatMinutes, topN, formatCategoryLabel, formatCountdown, formatDurationLong } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
 import { ReminderService } from './services/ReminderService.js';
 import {
     renderRetrospective, getAvailableYears, getBucketEvents, computeOrganizerFacts, renderBadgeShelf,
     renderCategoryBreakdown, renderTopTags, renderTimeOfDayBreakdown, renderPosterWall,
-    renderMostRecurringEvent, renderBookendCards, renderHoverBarChart, WEEKDAY_LABELS
+    renderMostRecurringEvent, renderBookendCards, renderHoverBarChart, WEEKDAY_LABELS, computeYearFacts,
+    renderAllYearsHistory
 } from './ui/RetrospectiveView.js';
 import { computeBadges } from './services/BadgeService.js';
-import { applySeasonalTheme, resolveActiveSeason, getManualOverride, setManualOverride } from './services/SeasonalTheme.js';
+import { applySeasonalTheme, resolveActiveSeason, getManualOverride, setManualOverride, SEASONS } from './services/SeasonalTheme.js';
 import { Icons } from './ui/Icons.js';
+import { showToast } from './ui/Toast.js';
+import { startOnboardingTour } from './ui/OnboardingTour.js';
+import { renderAvatarInitials } from './utils/Avatar.js';
+import { animateCountUp } from './utils/CountUp.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -56,14 +63,29 @@ let savedViews = [];
 // La sidebar "Prochainement" et le listing de recherche conservent en mémoire
 // les événements affichés pour retrouver l'objet complet lors d'un clic (délégation).
 let upcomingEventsCache = [];
+let nextWeekEventsCache = [];
 let searchResultsCache = [];
 let timelineCache = [];
 let todayViewCache = [];
+// Anniversaires des membres (V2.3), chargés une seule fois depuis un tableur annexe (voir
+// BirthdayService.js) - pas rafraîchis à chaque loadData() comme le planning principal, un
+// tableur d'anniversaires n'a pas besoin d'être re-téléchargé aussi souvent.
+let birthdaysList = [];
+// Filtre carte par rayon (V2.4, "15") : null = pas de filtre (toutes les villes reconnues),
+// sinon { city, km } lu depuis #map-radius-city/#map-radius-km (voir setupMapRadiusFilter).
+let mapRadiusFilter = null;
+// Année affichée par la vue Année (V2.4, "5") - indépendante de timelineYear (Frise) : rien
+// n'empêche de vouloir garder la Frise sur 2025 en cours de consultation, pendant qu'on
+// parcourt l'Année sur une autre période.
+let yearViewYear = new Date().getFullYear();
 // Sens d'affichage et année affichée de la vue Frise, modifiables via leurs propres contrôles
 // (voir TimelineView.js data-timeline-order-toggle / data-timeline-year) - indépendants du
 // reste des filtres.
 let timelineSortOrder = 'asc'; // 'asc' | 'desc'
 let timelineYear = new Date().getFullYear();
+// Sens d'affichage de la vue Recherche (V2.2, QOL - cohérence avec la Frise ci-dessus, qui a déjà
+// son propre bouton d'inversion) : jusque-là toujours croissant, sans moyen de le changer.
+let searchResultsSortOrder = 'asc';
 // La recherche (isSearching) prime toujours sur ce mode : basculer en Frise/Carte/Aujourd'hui
 // n'empêche pas de chercher, ça change juste ce qui s'affiche quand la recherche est vide.
 // Sur mobile, la grille du calendrier (Mois) est étroite et peu confortable au doigt : la Frise
@@ -73,7 +95,7 @@ let timelineYear = new Date().getFullYear();
 let currentViewMode = window.matchMedia('(max-width: 639px)').matches ? 'timeline' : 'calendar'; // 'calendar' | 'timeline' | 'map' | 'today'
 // Dernière vue principale réellement affichée (voir updateUIState) : sert uniquement à savoir
 // si la vue affichée à CET appel diffère du précédent, pour ne jouer l'animation .view-fade-in
-// (V2.5, voir index.html) que lors d'une vraie bascule de vue, pas à chaque filtre/recherche.
+// (V2.2, voir index.html) que lors d'une vraie bascule de vue, pas à chaque filtre/recherche.
 let lastVisiblePaneId = null;
 // Dernier ensemble filtré affiché (calendrier ou recherche) : utilisé par l'export .ics
 // pour exporter "ce que l'utilisateur voit" plutôt que tout le dépôt.
@@ -129,11 +151,16 @@ function updateHiddenCategoriesBadge() {
 // TOUTES les vues (pas juste "filtrer dessus" comme le clic sur la pastille elle-même) - utile
 // pour des catégories qu'on ne veut simplement plus jamais voir (ex: Gazette), sans avoir à
 // re-sélectionner "Tous" puis reperdre ce choix à la prochaine visite.
-function renderCategoryFilterBar() {
+function renderCategoryFilterBar(events = []) {
     const container = document.getElementById('filter-categories-container');
     const categories = [...new Set(
         Object.entries(CONFIG.THEMES).filter(([name]) => name !== 'default').map(([, theme]) => theme.cat)
     )];
+    // Compteurs (V2.2, cohérence avec les chips Tags/Organisateurs qui en affichent déjà) :
+    // total du dépôt (pas le sous-ensemble déjà filtré), même base que renderHostFilterBar/
+    // updateTagsFilterBar - exclut annulés/prévus, pas de vraies sessions à compter ici.
+    const counts = {};
+    events.forEach(e => { if (!e.isCanceled && !e.isPlanned) counts[e.category] = (counts[e.category] || 0) + 1; });
 
     const allBtn = `<button data-cat="all" class="${!currentCategory || currentCategory === 'all' ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE}">Tous</button>`;
     const catBtns = categories.map(cat => {
@@ -141,7 +168,7 @@ function renderCategoryFilterBar() {
         const label = escapeHtml(formatCategoryLabel(cat));
         return `
             <span class="inline-flex items-center gap-0.5 ${isHidden ? 'opacity-40' : ''}">
-                <button data-cat="${escapeHtml(cat)}" class="${currentCategory === cat ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE} ${isHidden ? 'line-through' : ''}">${label}</button>
+                <button data-cat="${escapeHtml(cat)}" class="${currentCategory === cat ? CATEGORY_BTN_ACTIVE : CATEGORY_BTN_INACTIVE} ${isHidden ? 'line-through' : ''}">${label} <span class="text-3xs opacity-70 ml-0.5">(${counts[cat] || 0})</span></button>
                 <button data-hide-cat="${escapeHtml(cat)}" title="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" aria-label="${isHidden ? 'Réafficher' : 'Masquer'} la catégorie ${label}" class="text-slate-500 hover:text-amber-300 px-1 py-1 rounded-md hover:bg-white/5 transition-all">${isHidden ? Icons.eyeOff('w-3 h-3') : Icons.eye('w-3 h-3')}</button>
             </span>`;
     }).join('');
@@ -165,14 +192,14 @@ function renderHostFilterBar(events) {
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 12);
 
     if (sorted.length === 0) {
-        container.innerHTML = `<span class="text-[11px] text-slate-600 italic">Aucun organisateur</span>`;
+        container.innerHTML = `<span class="text-xxs text-slate-600 italic">Aucun organisateur</span>`;
         return;
     }
 
     container.innerHTML = sorted.map(([host, count]) => {
         const isSelected = currentHostFilter === host;
         const safeHost = escapeHtml(host);
-        return `<button data-host="${safeHost}" class="px-3 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${isSelected ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}">${safeHost} <span class="text-[9px] opacity-70 ml-0.5">(${count})</span></button>`;
+        return `<button data-host="${safeHost}" class="px-3 py-1 text-xxs rounded-lg border whitespace-nowrap transition-all ${isSelected ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}">${safeHost} <span class="text-3xs opacity-70 ml-0.5">(${count})</span></button>`;
     }).join('');
 }
 
@@ -189,15 +216,18 @@ function renderDashboardStats(events) {
     const sortedCategories = Object.entries(stats.byCategory).sort((a, b) => b[1].t - a[1].t);
 
     categoriesContainer.innerHTML = sortedCategories.length === 0
-        ? `<span class="col-span-2 text-[11px] text-slate-600 italic">Aucune session</span>`
+        ? `<span class="col-span-2 text-xxs text-slate-600 italic">Aucune session</span>`
         : sortedCategories.map(([cat, stat]) => `
             <div class="glass-panel p-3 rounded-xl flex flex-col shadow-sm">
-                <span class="text-[10px] font-bold text-slate-400 truncate">${escapeHtml(formatCategoryLabel(cat))}</span>
+                <span class="text-2xs font-bold text-slate-400 truncate">${escapeHtml(formatCategoryLabel(cat))}</span>
                 <span class="text-base font-black text-slate-100 mt-0.5">${stat.n}</span>
-                <span class="text-[11px] text-indigo-400 font-bold mt-0.5 truncate">${formatMinutes(stat.t)}</span>
+                <span class="text-xxs text-indigo-400 font-bold mt-0.5 truncate">${formatMinutes(stat.t)}</span>
             </div>
         `).join('');
 
+    // Pas de count-up ici (contrairement aux profils/rétrospective) : renderDashboardStats est
+    // rappelé à chaque frappe de recherche/filtre, une animation à chaque lettre tapée serait
+    // criarde plutôt qu'agréable - réservé aux "reveals" ponctuels (ouverture d'un profil/overlay).
     document.getElementById('stat-canceled-count').innerText = stats.counters.annulations || 0;
 
     // Top 3 organisateurs (temps cumulé) de l'année en cours : même donnée que la
@@ -206,10 +236,13 @@ function renderDashboardStats(events) {
     const hostsContainer = document.getElementById('stat-hosts-container');
     const topHosts = topN(stats.byHost, 3);
     hostsContainer.innerHTML = topHosts.length === 0
-        ? `<span class="text-[11px] text-slate-600 italic">Aucune donnée</span>`
+        ? `<span class="text-xxs text-slate-600 italic">Aucune donnée</span>`
         : topHosts.map(([host, minutes]) => `
-            <div class="flex items-center justify-between gap-2 text-[11px] cursor-pointer hover:text-white transition-colors" data-host="${escapeHtml(host)}">
-                <span class="text-slate-300 truncate capitalize">${escapeHtml(host)}</span>
+            <div class="flex items-center justify-between gap-2 text-xxs cursor-pointer hover:text-white transition-colors" data-host="${escapeHtml(host)}">
+                <span class="flex items-center gap-1.5 min-w-0">
+                    ${renderAvatarInitials(host, 'w-5 h-5 text-3xs')}
+                    <span class="text-slate-300 truncate capitalize">${escapeHtml(host)}</span>
+                </span>
                 <span class="text-slate-500 font-bold shrink-0">${formatMinutes(minutes)}</span>
             </div>
         `).join('');
@@ -225,24 +258,28 @@ function updateTagsFilterBar(events) {
     const sortedTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 15);
 
     if (sortedTags.length === 0) {
-        container.innerHTML = `<span class="text-[11px] text-slate-600 italic">Aucun #tag</span>`;
+        container.innerHTML = `<span class="text-xxs text-slate-600 italic">Aucun #tag</span>`;
         return;
     }
 
     container.innerHTML = sortedTags.map(([tag, count]) => {
         const isSelected = currentTagFilter === tag;
         const safeTag = escapeHtml(tag);
-        return `<button data-tag="${safeTag}" class="px-3 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all backdrop-blur-md ${isSelected ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}" >#${safeTag} <span class="text-[9px] opacity-70 ml-0.5">(${count})</span></button>`;
+        return `<button data-tag="${safeTag}" class="px-3 py-1 text-xxs rounded-lg border whitespace-nowrap transition-all backdrop-blur-md ${isSelected ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}" >#${safeTag} <span class="text-3xs opacity-70 ml-0.5">(${count})</span></button>`;
     }).join('');
 }
 
 // Chips "Types" générées dynamiquement à partir de CONFIG.THEMES : offre un filtrage
 // fin par type exact (Soirée Série, Meet Up, JDR, ...) en plus des 2 catégories larges.
-function renderTypeFilterBar() {
+function renderTypeFilterBar(events = []) {
     const container = document.getElementById('filter-types-container');
     const types = Object.keys(CONFIG.THEMES).filter(name => name !== 'default');
+    // Compteurs (V2.2, cohérence avec les chips Tags/Organisateurs) : total du dépôt, même base
+    // que renderCategoryFilterBar ci-dessus.
+    const counts = {};
+    events.forEach(e => { if (!e.isCanceled && !e.isPlanned) counts[e.type] = (counts[e.type] || 0) + 1; });
 
-    const allBtn = `<button data-type="" class="px-2.5 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${!currentTypeFilter ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}">Tous les types</button>`;
+    const allBtn = `<button data-type="" class="px-2.5 py-1 text-xxs rounded-lg border whitespace-nowrap transition-all ${!currentTypeFilter ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}">Tous les types</button>`;
 
     // Chaque pastille inactive garde un liseré de la couleur propre à son type (voir
     // EventCardTemplate/CalendarView, qui utilisent la même teinte) : un repère visuel pour
@@ -253,7 +290,7 @@ function renderTypeFilterBar() {
         const style = isSelected
             ? `background:${theme.col}33; border-color:${theme.col}; color:#fff;`
             : `border-left: 3px solid ${theme.col}99;`;
-        return `<button data-type="${name}" class="px-2.5 py-1 text-[11px] rounded-lg border whitespace-nowrap transition-all ${isSelected ? 'font-bold' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}" style="${style}">${name}</button>`;
+        return `<button data-type="${name}" class="px-2.5 py-1 text-xxs rounded-lg border whitespace-nowrap transition-all ${isSelected ? 'font-bold' : 'bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10'}" style="${style}">${name} <span class="text-3xs opacity-70 ml-0.5">(${counts[name] || 0})</span></button>`;
     }).join('');
 
     container.innerHTML = allBtn + typeBtns;
@@ -302,13 +339,51 @@ function renderUpcomingSidebar(events) {
     container.innerHTML = Object.entries(groups)
         .filter(([, items]) => items.length > 0)
         .map(([label, items]) => `
-            <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-0.5 pt-1 first:pt-0">${label}</div>
+            <div class="text-2xs font-bold uppercase tracking-wider text-slate-500 px-0.5 pt-1 first:pt-0">${label}</div>
             ${items.map(({ e, idx }) => {
                 const dateObj = new Date(e.start);
                 const readableDate = dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
                 return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
             }).join('')}
         `).join('');
+}
+
+// Widget "Semaine prochaine" (V2.3, "16") : distinct de "Prochainement" ci-dessus (qui mélange
+// aujourd'hui/demain/cette semaine/plus tard sur les 20 prochains événements) - ici uniquement
+// la fenêtre ISO lundi->dimanche qui suit la semaine EN COURS, pour se projeter sur "la semaine
+// prochaine" au sens calendaire strict plutôt que sur un simple "7 prochains jours" glissant.
+function renderNextWeekSidebar(events) {
+    const container = document.getElementById('nextweek-list');
+    const countLabel = document.getElementById('nextweek-count');
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    // Lundi de la semaine en cours (firstDay=1, cohérent avec FullCalendar, voir CalendarView.js).
+    const currentMonday = new Date(today);
+    currentMonday.setDate(currentMonday.getDate() - ((currentMonday.getDay() + 6) % 7));
+    const nextMonday = new Date(currentMonday);
+    nextMonday.setDate(nextMonday.getDate() + 7);
+    const nextSunday = new Date(nextMonday);
+    nextSunday.setDate(nextSunday.getDate() + 6);
+    const nextMondayStr = DateUtils.toLocalDateStr(nextMonday);
+    const nextSundayStr = DateUtils.toLocalDateStr(nextSunday);
+
+    const nextWeek = events
+        .filter(e => { const d = e.start.split('T')[0]; return d >= nextMondayStr && d <= nextSundayStr && !e.isCanceled; })
+        .sort((a, b) => a.start.localeCompare(b.start));
+
+    nextWeekEventsCache = nextWeek;
+    countLabel.innerText = nextWeek.length;
+    if (nextWeek.length === 0) {
+        container.innerHTML = `<div class="text-center text-xs text-slate-600 py-12">Rien de prévu la semaine prochaine</div>`;
+        return;
+    }
+
+    container.innerHTML = nextWeek.map((e, idx) => {
+        const dateObj = new Date(e.start);
+        const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+    }).join('');
 }
 
 function saveFiltersToStorage() {
@@ -334,6 +409,54 @@ function restoreFiltersFromStorage() {
     } catch {
         // Valeur corrompue : on ignore silencieusement et repart sur les filtres par défaut.
     }
+}
+
+// Lien partageable encodant tous les filtres actifs (V2.3, "8") : contrairement aux vues
+// favorites (catégorie/type/tag/organisateur seulement, voir setupSavedViews), inclut aussi la
+// recherche et la période puisqu'un lien partagé décrit un instant précis, pas une combinaison
+// réutilisable dans le temps. "fhost" (et pas "host", déjà pris par openOrganizerProfileFromUrl
+// qui OUVRE le profil d'un organisateur plutôt que de filtrer dessus) évite toute collision.
+const FILTER_URL_PARAMS = { cat: 'category', type: 'type', tag: 'tag', fhost: 'host', q: 'search', from: 'dateFrom', to: 'dateTo' };
+
+function applyFiltersFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    if (![...Object.keys(FILTER_URL_PARAMS)].some(p => params.has(p))) return;
+
+    if (params.has('cat')) currentCategory = params.get('cat');
+    if (params.has('type')) currentTypeFilter = params.get('type');
+    if (params.has('tag')) currentTagFilter = params.get('tag');
+    if (params.has('fhost')) currentHostFilter = params.get('fhost');
+    if (params.has('from')) currentDateFrom = params.get('from');
+    if (params.has('to')) currentDateTo = params.get('to');
+
+    if (params.has('q')) {
+        currentSearchQuery = params.get('q');
+        const searchInput = document.getElementById('recherche');
+        searchInput.value = currentSearchQuery;
+        document.getElementById('btn-clear-search').classList.toggle('hidden', !currentSearchQuery);
+        document.getElementById('search-icon').classList.toggle('hidden', !!currentSearchQuery);
+    }
+    if (currentDateFrom) document.getElementById('filter-date-from').value = currentDateFrom;
+    if (currentDateTo) document.getElementById('filter-date-to').value = currentDateTo;
+    document.getElementById('btn-clear-date-range').classList.toggle('hidden', !currentDateFrom && !currentDateTo);
+
+    saveFiltersToStorage();
+}
+
+// Construit l'URL partageable reflétant les filtres actuellement actifs (voir FILTER_URL_PARAMS
+// ci-dessus pour la correspondance param -> variable). Repart d'une URL "propre" (sans anciens
+// paramètres de filtre déjà présents) pour ne jamais empiler d'anciennes valeurs obsolètes.
+function buildFiltersShareUrl() {
+    const url = new URL(window.location.href);
+    Object.keys(FILTER_URL_PARAMS).forEach(p => url.searchParams.delete(p));
+    if (currentCategory && currentCategory !== 'all') url.searchParams.set('cat', currentCategory);
+    if (currentTypeFilter) url.searchParams.set('type', currentTypeFilter);
+    if (currentTagFilter) url.searchParams.set('tag', currentTagFilter);
+    if (currentHostFilter) url.searchParams.set('fhost', currentHostFilter);
+    if (currentSearchQuery) url.searchParams.set('q', currentSearchQuery);
+    if (currentDateFrom) url.searchParams.set('from', currentDateFrom);
+    if (currentDateTo) url.searchParams.set('to', currentDateTo);
+    return url;
 }
 
 function loadSavedViews() {
@@ -381,6 +504,7 @@ function setupSavedViews() {
         renderSavedViewsSelect();
         select.value = String(savedViews.length - 1);
         deleteBtn.classList.remove('hidden');
+        showToast(`Vue « ${escapeHtml(name.trim())} » enregistrée !`, { icon: Icons.star('w-3.5 h-3.5 shrink-0 text-indigo-300') });
     });
 
     select.addEventListener('change', () => {
@@ -393,7 +517,7 @@ function setupSavedViews() {
         currentTagFilter = view.tag || null;
         currentHostFilter = view.host || null;
         setActiveCategoryButton(document.querySelector(`#filter-categories-container button[data-cat="${currentCategory === 'all' ? 'all' : CSS.escape(currentCategory)}"]`) || document.querySelector('#filter-categories-container button[data-cat="all"]'));
-        renderTypeFilterBar();
+        renderTypeFilterBar(repo.getAll());
         updateTagsFilterBar(repo.getAll());
         renderHostFilterBar(repo.getAll());
         saveFiltersToStorage();
@@ -410,9 +534,21 @@ function setupSavedViews() {
         renderSavedViewsSelect();
         deleteBtn.classList.add('hidden');
     });
+
+    // Lien partageable (V2.3, "8") - voir buildFiltersShareUrl/applyFiltersFromUrl. Même geste
+    // copier/coller que les autres liens directs de l'app (organisateur, lieu, événement).
+    document.getElementById('btn-share-filters').addEventListener('click', async () => {
+        const url = buildFiltersShareUrl();
+        try {
+            await navigator.clipboard.writeText(url.href);
+            showToast('Lien de la vue filtrée copié !', { icon: Icons.link('w-3.5 h-3.5 shrink-0 text-indigo-300') });
+        } catch {
+            window.prompt("Copiez ce lien :", url.href);
+        }
+    });
 }
 
-// Mini-calendrier (QOL #16) : intégré en permanence en haut de la sidebar Statistiques (V2.5,
+// Mini-calendrier (QOL #16) : intégré en permanence en haut de la sidebar Statistiques (V2.2,
 // remplace l'ancien popover ouvert depuis "Aller à une date..." dans la sidebar Filtres) - un
 // coup d'oeil suffit pour voir le mois entier ET sauter directement à une date précise, plus
 // rapide que d'enchaîner les boutons prev/next de FullCalendar quand la cible est éloignée (ex:
@@ -460,7 +596,7 @@ function renderMiniCalendarDay(dateStr, day, isToday, imageUrl, hasEvent) {
         ? 'text-white hover:brightness-125'
         : (isToday ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-300 hover:bg-white/10');
     return `
-        <button data-minical-date="${dateStr}"${bgAttr} aria-label="${day}" class="relative aspect-square w-full rounded-md text-[11px] font-bold transition-all overflow-hidden bg-cover bg-center ${todayRing} ${colorClasses}">
+        <button data-minical-date="${dateStr}"${bgAttr} aria-label="${day}" class="relative aspect-square w-full rounded-md text-xxs font-bold transition-all overflow-hidden bg-cover bg-center ${todayRing} ${colorClasses}">
             ${imageUrl ? '<span class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" aria-hidden="true"></span>' : ''}
             <span class="relative z-10">${day}</span>
             ${hasEvent && !imageUrl ? '<span class="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-400" aria-hidden="true"></span>' : ''}
@@ -491,15 +627,35 @@ function renderMiniCalendar() {
         <div class="rounded-xl border border-white/5 bg-black/20 p-3">
             <div class="flex items-center justify-between mb-2">
                 <button id="minical-prev" aria-label="Mois précédent" class="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10 transition-all">${Icons.chevronLeft('w-3.5 h-3.5')}</button>
-                <span class="text-[11px] font-bold text-slate-200 capitalize">${monthLabel}</span>
+                <span class="text-xxs font-bold text-slate-200 capitalize">${monthLabel}</span>
                 <button id="minical-next" aria-label="Mois suivant" class="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10 transition-all">${Icons.chevronRight('w-3.5 h-3.5')}</button>
             </div>
-            <div class="grid grid-cols-7 gap-1 text-center text-[9px] font-bold text-slate-500 mb-1.5">
+            <div class="grid grid-cols-7 gap-1 text-center text-3xs font-bold text-slate-500 mb-1.5">
                 ${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => `<span>${d}</span>`).join('')}
             </div>
             <div class="grid grid-cols-7 gap-1">${cells}</div>
         </div>
     `;
+}
+
+// Bascule vers la vue calendrier à une date donnée + la fait briller (V2.2 : factorisé hors de
+// setupMiniCalendar pour être réutilisé par la heatmap d'activité, voir setupActivityHeatmapJump).
+function jumpToDate(dateStr) {
+    if (currentSearchQuery) {
+        currentSearchQuery = "";
+        document.getElementById('recherche').value = "";
+        document.getElementById('btn-clear-search').classList.add('hidden');
+        document.getElementById('search-icon').classList.remove('hidden');
+    }
+    currentViewMode = 'calendar';
+    applyViewButtonStyles();
+    updateUIState();
+    if (calendarInstance) {
+        calendarInstance.gotoDate(dateStr);
+        // Laisse FullCalendar terminer son propre re-rendu (gotoDate ne met pas le DOM à
+        // jour de façon synchrone) avant de chercher la case à faire briller.
+        setTimeout(() => highlightCalendarDate(dateStr), 50);
+    }
 }
 
 function setupMiniCalendar() {
@@ -512,23 +668,17 @@ function setupMiniCalendar() {
         if (e.target.closest('#minical-next')) { miniCalendarDate.setMonth(miniCalendarDate.getMonth() + 1); renderMiniCalendar(); return; }
         const dateBtn = e.target.closest('button[data-minical-date]');
         if (!dateBtn) return;
-        const dateStr = dateBtn.dataset.minicalDate;
+        jumpToDate(dateBtn.dataset.minicalDate);
+    });
+}
 
-        if (currentSearchQuery) {
-            currentSearchQuery = "";
-            document.getElementById('recherche').value = "";
-            document.getElementById('btn-clear-search').classList.add('hidden');
-            document.getElementById('search-icon').classList.remove('hidden');
-        }
-        currentViewMode = 'calendar';
-        applyViewButtonStyles();
-        updateUIState();
-        if (calendarInstance) {
-            calendarInstance.gotoDate(dateStr);
-            // Laisse FullCalendar terminer son propre re-rendu (gotoDate ne met pas le DOM à
-            // jour de façon synchrone) avant de chercher la case à faire briller.
-            setTimeout(() => highlightCalendarDate(dateStr), 50);
-        }
+// Cellules de la heatmap d'activité cliquables (V2.2, QOL - cohérence avec le mini-calendrier qui
+// permet déjà de sauter à une date) : voir data-heatmap-date posé par ActivityHeatmap.js.
+function setupActivityHeatmapJump() {
+    document.getElementById('activity-heatmap').addEventListener('click', (e) => {
+        const cell = e.target.closest('[data-heatmap-date]');
+        if (!cell) return;
+        jumpToDate(cell.dataset.heatmapDate);
     });
 }
 
@@ -608,18 +758,6 @@ function computeAndMarkNewEvents(allEvents) {
     localStorage.setItem(SEEN_EVENTS_KEY, JSON.stringify(upcoming.map(e => e.id)));
 }
 
-function formatCountdown(targetDate) {
-    const diffMs = targetDate - new Date();
-    if (diffMs <= 0) return "maintenant";
-    const mins = Math.floor(diffMs / 60000);
-    const days = Math.floor(mins / 1440);
-    const hours = Math.floor((mins % 1440) / 60);
-    const remMins = mins % 60;
-    if (days > 0) return `dans ${days}j ${hours}h`;
-    if (hours > 0) return `dans ${hours}h${remMins > 0 ? remMins + 'min' : ''}`;
-    return `dans ${remMins} min`;
-}
-
 // Le prochain événement pertinent : celui actuellement "En Cours" en priorité (le plus
 // utile à savoir immédiatement), sinon le prochain "Prévu" le plus proche. Calculé sur
 // TOUT le dépôt (pas les filtres actifs) : c'est une info globale, pas liée au filtrage.
@@ -659,7 +797,7 @@ function updateNextEventBanner() {
         text.innerHTML = `<b>En direct :</b> ${escapeHtml(result.event.title)}${result.event.heure ? ' · depuis ' + escapeHtml(result.event.heure) : ''}`;
     } else {
         icon.innerHTML = Icons.clock('w-3.5 h-3.5');
-        text.innerHTML = `<b>Prochain :</b> ${escapeHtml(result.event.title)} — ${formatCountdown(new Date(result.event.start))}`;
+        text.innerHTML = `<b>Prochain :</b> ${escapeHtml(result.event.title)} — ${formatCountdown(result.event.start) || 'maintenant'}`;
     }
 }
 
@@ -669,7 +807,8 @@ function applyViewButtonStyles() {
     const timelineBtn = document.getElementById('btn-toggle-timeline');
     const mapBtn = document.getElementById('btn-toggle-map');
     const todayBtn = document.getElementById('btn-goto-today');
-    [[timelineBtn, 'timeline'], [mapBtn, 'map'], [todayBtn, 'today']].forEach(([btn, mode]) => {
+    const yearBtn = document.getElementById('btn-toggle-year');
+    [[timelineBtn, 'timeline'], [mapBtn, 'map'], [todayBtn, 'today'], [yearBtn, 'year']].forEach(([btn, mode]) => {
         const active = currentViewMode === mode;
         btn.classList.toggle('bg-indigo-500/10', active);
         btn.classList.toggle('border-indigo-500/20', active);
@@ -707,6 +846,50 @@ function applyDensity(compact) {
     // le premier clic remplacerait l'icône par du texte brut.
     btn.innerHTML = `${Icons.sliders('w-4 h-4 shrink-0')}<span class="hidden sm:inline">${compact ? 'Compact' : 'Confortable'}</span>`;
 }
+// Mode "grand texte" (V2.4, "17", voir #btn-toggle-large-text dans l'aide) : purement du CSS
+// (zoom, voir index.html), pas besoin de re-rendu comme la densité - le texte grossit "pour de
+// vrai" (voir la règle CSS pour pourquoi zoom plutôt que transform:scale sur ce site).
+const LARGE_TEXT_KEY = 'ui:largeText';
+function applyLargeText(enabled) {
+    document.documentElement.classList.toggle('a11y-large-text', enabled);
+    const btn = document.getElementById('btn-toggle-large-text');
+    btn.setAttribute('aria-pressed', String(enabled));
+    btn.querySelector('span').textContent = `🔠 Grand texte : ${enabled ? 'Activé' : 'Désactivé'}`;
+}
+function setupLargeTextToggle() {
+    const enabled = localStorage.getItem(LARGE_TEXT_KEY) === '1';
+    applyLargeText(enabled);
+    document.getElementById('btn-toggle-large-text').addEventListener('click', () => {
+        const nowEnabled = !document.documentElement.classList.contains('a11y-large-text');
+        applyLargeText(nowEnabled);
+        localStorage.setItem(LARGE_TEXT_KEY, nowEnabled ? '1' : '0');
+    });
+}
+
+// Filtre carte par rayon (V2.4, "15") : centre choisi parmi les villes reconnues
+// (CITY_COORDINATES, voir getKnownCityKeys) + un rayon en km - le sélecteur de rayon ne
+// s'affiche qu'une fois une ville centre choisie (masqué sinon, inutile tant qu'aucun centre
+// n'est fixé). Purement une préférence de session, pas persistée (repart à "Toutes les villes"
+// à chaque rechargement, comme le zoom/pan de la carte elle-même).
+function setupMapRadiusFilter() {
+    const citySelect = document.getElementById('map-radius-city');
+    const kmSelect = document.getElementById('map-radius-km');
+    getKnownCityKeys().forEach(city => {
+        const opt = document.createElement('option');
+        opt.value = city;
+        opt.textContent = cityLabel(city);
+        citySelect.appendChild(opt);
+    });
+
+    const apply = () => {
+        mapRadiusFilter = citySelect.value ? { city: citySelect.value, km: Number(kmSelect.value) } : null;
+        kmSelect.classList.toggle('hidden', !citySelect.value);
+        if (currentViewMode === 'map') updateUIState();
+    };
+    citySelect.addEventListener('change', apply);
+    kmSelect.addEventListener('change', apply);
+}
+
 function setupDensityToggle() {
     const compact = localStorage.getItem(DENSITY_KEY) === '1';
     applyDensity(compact);
@@ -740,7 +923,7 @@ function resetFiltersAndSearch() {
     document.getElementById('filter-date-to').value = "";
     document.getElementById('btn-clear-date-range').classList.add('hidden');
     setActiveCategoryButton(document.querySelector('#filter-categories-container button[data-cat="all"]'));
-    renderTypeFilterBar();
+    renderTypeFilterBar(repo.getAll());
     updateTagsFilterBar(repo.getAll());
     renderHostFilterBar(repo.getAll());
     document.getElementById('saved-views-select').value = "";
@@ -789,22 +972,24 @@ function updateUIState() {
     const timelineEl = document.getElementById('timeline-view');
     const mapEl = document.getElementById('map-view');
     const todayEl = document.getElementById('today-view');
+    const yearEl = document.getElementById('year-view');
     const isSearching = currentSearchQuery.trim().length > 0;
 
-    // Cinq vues mutuellement exclusives sur la même sélection filtrée : la recherche prime
-    // toujours sur Frise/Carte/Aujourd'hui (voir currentViewMode plus haut), qui priment sur le
-    // calendrier.
+    // Six vues mutuellement exclusives sur la même sélection filtrée : la recherche prime
+    // toujours sur Frise/Carte/Aujourd'hui/Année (voir currentViewMode plus haut), qui priment
+    // sur le calendrier.
     calendarEl.classList.add('hidden');
     searchResultsEl.classList.add('hidden');
     timelineEl.classList.add('hidden');
     mapEl.classList.add('hidden');
     todayEl.classList.add('hidden');
+    yearEl.classList.add('hidden');
 
     if (isSearching) {
         filtered = SearchEngine.search(filtered, { query: currentSearchQuery });
-        searchResultsCache = [...filtered].sort((a, b) => a.start.localeCompare(b.start));
+        searchResultsCache = [...filtered].sort((a, b) => searchResultsSortOrder === 'asc' ? a.start.localeCompare(b.start) : b.start.localeCompare(a.start));
         searchResultsEl.classList.remove('hidden');
-        renderSearchResults(searchResultsEl, searchResultsCache);
+        renderSearchResults(searchResultsEl, searchResultsCache, searchResultsSortOrder);
     } else if (currentViewMode === 'timeline') {
         // Défile jusqu'au repère "Aujourd'hui" seulement quand la Frise vient de devenir
         // visible (pas à chaque changement de filtre/tri une fois déjà ouverte, sans quoi
@@ -821,11 +1006,18 @@ function updateUIState() {
         timelineEl.classList.remove('hidden');
         timelineCache = renderTimeline(timelineEl, filtered, timelineSortOrder, timelineYear, justOpened);
     } else if (currentViewMode === 'map') {
+        // Cadrage automatique sur les marqueurs (V2.2, QOL) seulement à l'ouverture de la Carte
+        // (même logique que justOpened pour la Frise ci-dessus) - pas à chaque filtre/recherche
+        // une fois déjà dessus, sous peine de faire sauter le zoom/pan choisi par l'utilisateur.
+        const mapJustOpened = lastVisiblePaneId !== 'map-view';
         mapEl.classList.remove('hidden');
-        updateMeetupMap(filtered, (ev) => ModalView.open(ev), (cityKey) => openLocationProfile(cityKey));
+        updateMeetupMap(filtered, (ev) => ModalView.open(ev), (cityKey) => openLocationProfile(cityKey), mapJustOpened, mapRadiusFilter);
     } else if (currentViewMode === 'today') {
         todayEl.classList.remove('hidden');
-        todayViewCache = renderTodayView(todayEl, eventsForToday);
+        todayViewCache = renderTodayView(todayEl, eventsForToday, birthdaysList, repo.getAll());
+    } else if (currentViewMode === 'year') {
+        yearEl.classList.remove('hidden');
+        renderYearView(yearEl, repo.getAll(), yearViewYear);
     } else {
         calendarEl.classList.remove('hidden');
         CalendarView.sync(calendarInstance, filtered);
@@ -837,6 +1029,7 @@ function updateUIState() {
         : currentViewMode === 'timeline' ? 'timeline-view'
         : currentViewMode === 'map' ? 'map-view'
         : currentViewMode === 'today' ? 'today-view'
+        : currentViewMode === 'year' ? 'year-view'
         : 'calendar';
     if (activePaneId !== lastVisiblePaneId) {
         const activePaneEl = document.getElementById(activePaneId);
@@ -848,6 +1041,7 @@ function updateUIState() {
 
     renderDashboardStats(filtered);
     renderUpcomingSidebar(filtered);
+    renderNextWeekSidebar(filtered);
     // Indépendant des filtres (voir computeMiniCalendarDayInfo) : se rafraîchit ici simplement
     // pour rester à jour à chaque rechargement des données, comme le reste de la sidebar.
     renderMiniCalendar();
@@ -871,17 +1065,20 @@ function updateUIState() {
  * @param {string} storageKey - Clé localStorage (ex: 'ui:sidebarCollapsed')
  * @param {(collapsed: boolean) => void} applyState - Applique visuellement l'état
  */
-function createCollapsiblePanel(storageKey, applyState) {
+function createCollapsiblePanel(storageKey, applyState, forceDefaultCollapsed = false) {
     const setCollapsed = (collapsed) => {
         applyState(collapsed);
         if (collapsed) localStorage.setItem(storageKey, '1');
         else localStorage.removeItem(storageKey);
     };
 
-    // Respecte un choix déjà enregistré ; sinon replié par défaut sur petit écran
-    // (mobile, où un panneau écraserait le contenu) et ouvert sinon.
+    // Respecte un choix déjà enregistré ; sinon replié par défaut sur petit écran (mobile, où un
+    // panneau écraserait le contenu) et ouvert sinon - sauf `forceDefaultCollapsed` (V2.3,
+    // Statistiques) qui impose replié par défaut sur TOUTE taille d'écran tant que rien n'a
+    // encore été explicitement enregistré (un dépli explicite reste, lui, mémorisé comme
+    // d'habitude puisqu'il retire juste la clé plutôt que d'en écrire une "0").
     const stored = localStorage.getItem(storageKey);
-    const collapsedByDefault = stored === '1' || (stored === null && window.matchMedia('(max-width: 639px)').matches);
+    const collapsedByDefault = stored === '1' || (stored === null && (forceDefaultCollapsed || window.matchMedia('(max-width: 639px)').matches));
     applyState(collapsedByDefault);
 
     return {
@@ -920,42 +1117,65 @@ function setupSidebarToggle() {
 }
 
 // Panneau "Statistiques" repliable : une fois replié, le panneau latéral se réduit à
-// l'essentiel (heatmap d'activité + Prochainement), sans les cartes de stats qui prennent
-// le plus de hauteur.
+// l'essentiel (mini-calendrier + Semaine prochaine/Prochainement), sans les cartes de stats
+// qui prennent le plus de hauteur - replié par défaut (V2.3, forceDefaultCollapsed) tant que
+// l'utilisateur ne l'a pas explicitement déplié au moins une fois.
 function setupStatsToggle() {
-    const content = document.getElementById('stats-content');
+    // #stats-content-collapse (grid-template-rows 1fr/0fr, voir .collapse-wrap dans index.html) :
+    // pas #stats-content directement, dont la classe `hidden` (display:none) ne peut pas s'animer.
+    const wrap = document.getElementById('stats-content-collapse');
     const btnToggle = document.getElementById('btn-toggle-stats');
     const chevron = document.getElementById('stats-chevron');
 
     const panelCtrl = createCollapsiblePanel('ui:statsCollapsed', (collapsed) => {
-        content.classList.toggle('hidden', collapsed);
+        wrap.style.gridTemplateRows = collapsed ? '0fr' : '1fr';
+        wrap.inert = collapsed; // pas de focus/interaction possible sur un contenu réduit à 0px
         // Rotation CSS (-90deg) plutôt qu'un second glyphe ▸ : un seul SVG qui pivote en douceur
         // (transition déjà posée dans index.html) au lieu d'un changement de caractère instantané.
         chevron.classList.toggle('-rotate-90', collapsed);
         btnToggle.setAttribute('aria-expanded', String(!collapsed));
-    });
+    }, true);
 
     btnToggle.addEventListener('click', () => {
-        panelCtrl.toggle(content.classList.contains('hidden'));
+        panelCtrl.toggle(wrap.style.gridTemplateRows === '0fr');
     });
 }
 
-// Panneau "Prochainement" repliable (V2.5) : même mécanique que setupStatsToggle juste au-dessus -
+// Panneau "Prochainement" repliable (V2.2) : même mécanique que setupStatsToggle juste au-dessus -
 // utile une fois qu'on a déjà repéré ce qui vient, pour laisser plus de place au mini-calendrier/
 // aux stats sans avoir à tout refermer d'un coup via #btn-toggle-sidebar.
 function setupUpcomingToggle() {
-    const content = document.getElementById('upcoming-content');
+    const wrap = document.getElementById('upcoming-content-collapse');
     const btnToggle = document.getElementById('btn-toggle-upcoming');
     const chevron = document.getElementById('upcoming-chevron');
 
     const panelCtrl = createCollapsiblePanel('ui:upcomingCollapsed', (collapsed) => {
-        content.classList.toggle('hidden', collapsed);
+        wrap.style.gridTemplateRows = collapsed ? '0fr' : '1fr';
+        wrap.inert = collapsed;
         chevron.classList.toggle('-rotate-90', collapsed);
         btnToggle.setAttribute('aria-expanded', String(!collapsed));
     });
 
     btnToggle.addEventListener('click', () => {
-        panelCtrl.toggle(content.classList.contains('hidden'));
+        panelCtrl.toggle(wrap.style.gridTemplateRows === '0fr');
+    });
+}
+
+// Panneau "Semaine prochaine" repliable (V2.3, "16") - même mécanique que setupUpcomingToggle.
+function setupNextWeekToggle() {
+    const wrap = document.getElementById('nextweek-content-collapse');
+    const btnToggle = document.getElementById('btn-toggle-nextweek');
+    const chevron = document.getElementById('nextweek-chevron');
+
+    const panelCtrl = createCollapsiblePanel('ui:nextWeekCollapsed', (collapsed) => {
+        wrap.style.gridTemplateRows = collapsed ? '0fr' : '1fr';
+        wrap.inert = collapsed;
+        chevron.classList.toggle('-rotate-90', collapsed);
+        btnToggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+
+    btnToggle.addEventListener('click', () => {
+        panelCtrl.toggle(wrap.style.gridTemplateRows === '0fr');
     });
 }
 
@@ -981,92 +1201,276 @@ function setupFiltersSidebarToggle() {
     });
 }
 
-// Contenu des notes de version : à éditer librement à chaque mise à jour notable.
-// Changez `version` pour que la popup se réaffiche une fois à tous les visiteurs.
-const PATCH_NOTES = {
-    version: "2026-07-26c",
-    sections: [
-        {
-            title: "🚀 V2.1",
-            items: [
-                "🗓️ Nouvelle vue Frise : la sélection filtrée organisée par mois, une série entière (hebdo ou notée) regroupée en un seul bloc plutôt que dispersée en autant de lignes que de diffusions.",
-                "🗺️ Nouvelle vue Carte : les meetups IRL localisés sur une carte interactive (Montpellier, Paris, Grenoble pour commencer, facilement extensible).",
-                "🏅 Badges communautaires dans la rétrospective (régularité, diversité, fiabilité...), et un mini-profil par organisateur (cliquez son nom dans \"Top organisateurs\" ou dans la modale d'un événement) avec ses propres badges.",
-                "📲 App installable : ajoutez 2GELOG à votre écran d'accueil, fonctionne même hors-ligne avec les dernières données connues.",
-                "🎨 Thème saisonnier automatique (Halloween, Noël, St-Valentin) — désactivable en un clic sur le badge de l'en-tête si besoin.",
-                "🧩 Widget \"Prochains événements\" embarquable ailleurs (description de salon Discord, Notion, autre site) : <code>widget/index.html?count=6</code>.",
-                "💬 Digest Discord hebdomadaire automatique (en plus du bouton manuel existant) — nécessite qu'un organisateur configure un webhook (voir README)."
-            ]
-        },
-        {
-            title: "🚀 Nouveautés",
-            items: [
-                "Rétrospective enrichie : mur des affiches, premier/dernier moment de l'année, jour de la semaine et tranche horaire préférés, événement qui revient le plus, taux de fiabilité du planning, plus longue série de semaines actives... Survolez un mois/jour du graphique pour un résumé, cliquez dessus pour la liste complète des sessions.",
-                "Aperçu automatique sur Discord : le lien copié (bouton 🔗 dans la modale) affiche désormais titre, date et affiche de l'événement dès qu'il est collé dans un salon, sans avoir à cliquer.",
-                "🎉 Rétrospective annuelle : un bilan visuel de l'année façon \"Wrapped\" (temps passé ensemble, répartition par catégorie, MVP organisateur, mois le plus actif, tags favoris...) — accessible à tous via le bouton 🎉 Rétrospective de l'en-tête, une année à la fois.",
-                "Rappels repensés : \"🔔 M'envoyer un rappel\" fonctionne sur n'importe quel événement — pour une série (dates hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion, pas seulement celle ouverte. Le bouton 🔔 Rappels de l'en-tête ouvre désormais la liste de vos abonnements, avec un interrupteur pour tout activer d'un coup.",
-                "Bouton 💬 Discord : copie en un clic un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.",
-                "Nouveaux boutons dans la modale : 💬 lien direct vers le salon Discord de l'événement (<code>@salon</code>), 🗳️ lien vers un sondage (<code>@sondage</code>) pour voter le prochain film/jeu.",
-                "Filtre par période (\"Du / Au\") dans la barre de filtres, et lien direct <code>?today=1</code> pour n'afficher que les sessions du jour.",
-                "Mode Kiosque (🖥️) : affichage plein écran sans interaction, idéal sur un écran dédié affiché en continu.",
-                "Top organisateurs de l'année ajouté au panneau Statistiques.",
-                "Durées d'épisodes qui varient trop pour une moyenne : une annotation <code>(1h,23min,45min,1h)</code> en fin de ligne datée donne la durée réelle de chacun."
-            ]
-        },
-        {
-            title: "🛠️ Corrections",
-            items: [
-                "Durée d'un épisode couvrant plusieurs semaines à la fois (ex: \"Episodes 3 à 6\") : n'est plus diluée à parts égales entre toutes les semaines de la série, mais répartie au prorata du nombre d'épisodes de chacune.",
-                "Discord et Kiosque sont désormais regroupés avec le mode Admin (moins utiles en usage courant), pour ne pas encombrer l'en-tête.",
-                "Nouvelle colonne <b>Tags</b> dans le tableur : toutes les balises (#tag, @host, @lieu...) peuvent désormais y être saisies séparément, en laissant Notes pour du texte libre uniquement.",
-                "Organisateur affiché par défaut : « Helldwin » si aucun @host n'est précisé, au lieu de rester vide.",
-                "Statuts Prévu/En Cours/Terminé recalculés plus finement par occurrence : une série sans durée réelle connue reste \"En Cours\" plutôt que d'être annoncée \"Terminée\" à tort.",
-                "Le bandeau \"En direct\" et la pastille animée ne se fient plus indéfiniment à un statut \"En Cours\" incertain : passé quelques heures sans confirmation, l'événement n'est plus annoncé comme diffusé \"maintenant\".",
-                "Vue Semaine : la plage horaire affichée est resserrée à la fenêtre réellement utilisée (14h → 2h du matin)."
-            ]
-        },
-        {
-            title: "ℹ️ À savoir",
-            items: [
-                "Le lieu par défaut des événements est désormais « Discord 2GETHER » sauf indication contraire.",
-                "Un événement peut toujours être annulé ou reporté à la dernière minute : pensez à vérifier le calendrier avant chaque session.",
-                "Le bouton 📅 .ics est un export ponctuel à réimporter manuellement ; pour une synchronisation automatique, préférez 🔗 S'abonner (lien webcal://, régénéré côté serveur toutes les heures)."
-            ]
-        }
-    ]
-};
+// Visite guidée interactive (V2.2, premier lancement) : présente les fonctionnalités majeures une
+// par une, chacune mise en surbrillance directement sur l'élément réel de la page - voir
+// startOnboardingTour dans OnboardingTour.js pour le moteur. Rejouable à tout moment (bouton
+// "Revoir la visite guidée" dans l'aide, voir setupHelpOverlay) sans que ça re-déclenche le popup
+// "Quoi de neuf ?" juste après (les deux marquent leurs propres clés en localStorage).
+const ONBOARDING_DONE_KEY = 'onboarding:completed';
+const ONBOARDING_STEPS = [
+    { target: null, title: 'Bienvenue sur 2GELOG 👋', text: "Le planning communautaire de 2GETHER. Petit tour rapide des fonctionnalités principales - passez-le à tout moment, vous pourrez le revoir depuis l'aide (?)." },
+    { target: '#btn-goto-today', title: "☀️ Aujourd'hui", text: 'Le programme du jour en un coup d\'œil, avec un repère sur ce qui est en cours ou à venir. Raccourci clavier : T.' },
+    { target: '#btn-toggle-timeline', title: '🗓️ Vue Frise', text: "Toute l'année organisée en frise chronologique, les séries (hebdo ou à épisodes) regroupées en un seul bloc plutôt qu'éparpillées. Raccourci : F." },
+    { target: '#btn-toggle-map', title: '📍 Vue Carte', text: 'Les meetups IRL localisés sur une carte interactive, avec un mini-profil par lieu. Raccourci : C.' },
+    { target: '#recherche', title: '🔍 Recherche', text: 'Cherchez un jeu, un stream, un organisateur, un #tag... Raccourci clavier : / pour y accéder directement.' },
+    { target: '#filters-sidebar', title: '🗂️ Filtres', text: 'Affinez par catégorie, type, tag ou organisateur - vos choix (et vos vues favorites) sont mémorisés pour la prochaine visite.' },
+    { target: '#sidebar-panel', title: '📊 Tableau de bord', text: "Statistiques de l'année, mini-calendrier, activité récente et prochains événements, toujours sous la main." },
+    { target: '#btn-open-reminders', title: '🔔 Rappels', text: "Abonnez-vous à un événement (ou une série entière) pour être notifié avant chaque diffusion." },
+    { target: '#btn-open-retrospective', title: '🎉 Rétrospective', text: "Un bilan visuel façon \"Wrapped\" de toute une année vécue ensemble : temps passé, MVP, mois le plus actif..." },
+    { target: '#btn-toggle-theme', title: '🌗 Thème clair/sombre', text: "Basculez l'apparence selon vos préférences, à tout moment." },
+    { target: '#btn-help', title: "Besoin d'aide ?", text: "Toute la légende (catégories, statuts, raccourcis clavier...) est ici, ainsi qu'un lien pour revoir cette visite guidée. Bonne visite sur 2GELOG !" }
+];
 
-// Popup "Quoi de neuf ?" affichée une seule fois par version (localStorage).
+function setupOnboardingTour() {
+    const launch = () => startOnboardingTour(ONBOARDING_STEPS, {
+        onDone: () => {
+            localStorage.setItem(ONBOARDING_DONE_KEY, '1');
+            // Évite un second popup "Quoi de neuf ?" juste après la visite (V2.2, voir
+            // setupPatchNotes) : la visite guidée vient déjà de couvrir "ce qu'il y a à savoir".
+            localStorage.setItem('patchnotes:seenVersion', PATCH_NOTES_HISTORY[0].version);
+        }
+    });
+
+    document.getElementById('btn-replay-onboarding').addEventListener('click', () => {
+        document.getElementById('help-overlay').classList.add('hidden');
+        document.getElementById('help-overlay').classList.remove('flex');
+        launch();
+    });
+
+    if (!localStorage.getItem(ONBOARDING_DONE_KEY)) launch();
+}
+
+// Historique des notes de version (V2.2, "vue dédiée incluant l'historique des mises à jour") :
+// un tableau plutôt qu'un objet unique - chaque nouvelle mise à jour s'AJOUTE en tête (la plus
+// récente en premier) au lieu d'écraser la précédente, pour que la vue "Nouveautés" reste un
+// vrai historique consultable, pas juste "ce qui a changé la dernière fois". Pour publier une
+// nouvelle version : ajoutez un nouvel objet EN TÊTE de ce tableau (même forme que le premier),
+// avec un `version` différent (déclenche à nouveau la popup automatique une fois par visiteur).
+// Historique reconstruit (V2.2) à partir des VRAIS commits git ("revois tous les précédents
+// commits pour refaire le détail des versions précédentes") : chaque ancienne version avait déjà
+// son propre PATCH_NOTES dans le code à l'époque (voir `git show <hash>:src/main.js`), mais new
+// écrasait toujours l'ancien plutôt que de l'archiver - les entrées "V2" et "V2.1" ci-dessous sont
+// donc le texte ORIGINAL de l'auteur à ces dates-là (git show 95648af / 61ec710), pas une
+// reformulation. "V1" (avant l'existence même d'un PATCH_NOTES dans le code) et "V2.2" (jamais
+// documentée nulle part avant aujourd'hui) ont dû être reconstruites depuis les diffs réels.
+const PATCH_NOTES_HISTORY = [
+    {
+        version: "2026-08-14b",
+        label: "V2.4",
+        sections: [
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "🗓️ Nouvelle vue Année : les 12 mois d'un coup d'oeil, chaque jour cliquable pour sauter directement dessus en vue Calendrier.",
+                    "📜 \"Toute l'histoire\" dans la Rétrospective : un résumé de chaque année disponible en un seul défilement, plutôt que naviguée une par une.",
+                    "🔥 Carte des lieux : les pins se teintent désormais selon la fréquentation relative (plus foncé = plus de sessions), en plus du chiffre déjà affiché.",
+                    "📍 Filtre carte par rayon : centrez sur une ville reconnue et limitez l'affichage à un rayon choisi (50 à 500 km).",
+                    "🔠 Mode \"grand texte\" (accessibilité) dans l'aide, pour agrandir tout le texte de l'appli en un clic.",
+                    "⌨️ Navigation clavier complète de la grille du calendrier (Mois) : flèches pour se déplacer entre les jours, Entrée pour ouvrir la vue Jour."
+                ]
+            }
+        ]
+    },
+    {
+        version: "2026-08-14",
+        label: "V2.3",
+        sections: [
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "⏱️ Compte à rebours en direct sur vos rappels suivis (panneau Rappels et modale d'un événement) : \"dans 2j 4h\", \"dans 45 min\"...",
+                    "🔔 Alerte automatique si une session que vous suivez change d'horaire ou est annulée, détectée d'une visite à l'autre.",
+                    "🖼️ Image récap de la rétrospective annuelle téléchargeable (même principe que le profil organisateur), pour la partager où vous voulez.",
+                    "🔗 Lien qui encode tous vos filtres actifs (catégorie, type, tag, organisateur, recherche, période) : copiez-le pour partager exactement la vue que vous regardez.",
+                    "🖼️ Image téléchargeable du planning affiché : bouton dédié dans la barre du calendrier, grille structurée façon planning plutôt qu'une simple capture d'écran.",
+                    "📊 La rétrospective compare désormais chaque catégorie à l'année précédente (▲/▼ %), en plus du total déjà comparé.",
+                    "📅 \"Il y a un an, ce jour-là\" sur la page Aujourd'hui : un petit rappel de ce qui s'est passé à la même date l'an dernier, quand il y a quelque chose à montrer.",
+                    "🔮 Nouveau widget \"Semaine prochaine\" dans le panneau Statistiques, distinct de \"Prochainement\" : uniquement les sessions de la semaine calendaire qui suit.",
+                    "🔊 Signal sonore discret optionnel sur les rappels et le résumé quotidien, à activer dans le panneau Rappels.",
+                    "🎂 Bandeau anniversaire sur la page Aujourd'hui, alimenté par la liste des membres l'ayant partagé volontairement."
+                ]
+            }
+        ]
+    },
+    {
+        version: "2026-08-12",
+        label: "V2.2",
+        sections: [
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "☀️ Nouvelle page \"Aujourd'hui sur 2GETHER\" (bouton dédié de l'en-tête) : le programme du jour à part entière, avec un repère \"maintenant\" sur la session en cours ou à venir.",
+                    "⭐ Vues favorites : enregistrez un jeu de filtres (catégories, types, tags, organisateur) sous un nom, pour le rappeler en un clic depuis la barre de filtres.",
+                    "🙈 Masquez durablement une catégorie de TOUTES les vues (pas juste un filtre ponctuel qu'il faut refaire à chaque visite), directement depuis la barre de filtres.",
+                    "🗓️ Mini-calendrier désormais intégré en permanence dans le panneau Statistiques (remplace l'ancien popover \"Aller à une date...\").",
+                    "📋 Densité d'affichage des cartes (Confortable / Compact), pour voir plus de sessions à l'écran sans défiler.",
+                    "🌙 \"Ne pas déranger\" : coupe temporairement tous les rappels (globaux et individuels) sans avoir à se désabonner de quoi que ce soit.",
+                    "🔔 Résumé quotidien en une seule notification groupée, au lieu d'une par session.",
+                    "📲 Badge sur l'icône de l'app installée : nombre de sessions du jour visible sans avoir à l'ouvrir.",
+                    "Rétrospective encore enrichie : mur des affiches, premier/dernier moment de l'année, l'événement qui revient le plus, répartition par tranche horaire de la journée.",
+                    "Vues Semaine/Jour repensées pour mobile : Planning et Jour proposés par défaut sur petit écran, plage horaire ajustée automatiquement aux horaires réellement utilisés.",
+                    "Nouveau jeu d'icônes dans tout le \"chrome\" de l'appli (en-tête, menus, boutons des modales), à la place des emoji.",
+                    "Menu \"⋯\" qui regroupe les outils d'organisateur (Discord, Webhook, Kiosque, Admin) pour désencombrer l'en-tête.",
+                    "Fiche complète pour chaque lieu de meetup sur la vue Carte (historique + sessions à venir), en plus du profil par organisateur."
+                ]
+            }
+        ]
+    },
+    {
+        version: "2026-07-26c",
+        label: "V2.1",
+        sections: [
+            {
+                title: "🚀 V2.1",
+                items: [
+                    "🗓️ Nouvelle vue Frise : la sélection filtrée organisée par mois, une série entière (hebdo ou notée) regroupée en un seul bloc plutôt que dispersée en autant de lignes que de diffusions.",
+                    "🗺️ Nouvelle vue Carte : les meetups IRL localisés sur une carte interactive (Montpellier, Paris, Grenoble pour commencer, facilement extensible).",
+                    "🏅 Badges communautaires dans la rétrospective (régularité, diversité, fiabilité...), et un mini-profil par organisateur (cliquez son nom dans \"Top organisateurs\" ou dans la modale d'un événement) avec ses propres badges.",
+                    "📲 App installable : ajoutez 2GELOG à votre écran d'accueil, fonctionne même hors-ligne avec les dernières données connues.",
+                    "🎨 Thème saisonnier automatique (Halloween, Noël, St-Valentin) — désactivable en un clic sur le badge de l'en-tête si besoin.",
+                    "🧩 Widget \"Prochains événements\" embarquable ailleurs (description de salon Discord, Notion, autre site) : <code>widget/index.html?count=6</code>.",
+                    "💬 Digest Discord hebdomadaire automatique (en plus du bouton manuel existant) — nécessite qu'un organisateur configure un webhook (voir README)."
+                ]
+            },
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "Rétrospective enrichie : mur des affiches, premier/dernier moment de l'année, jour de la semaine et tranche horaire préférés, événement qui revient le plus, taux de fiabilité du planning, plus longue série de semaines actives... Survolez un mois/jour du graphique pour un résumé, cliquez dessus pour la liste complète des sessions.",
+                    "Aperçu automatique sur Discord : le lien copié (bouton 🔗 dans la modale) affiche désormais titre, date et affiche de l'événement dès qu'il est collé dans un salon, sans avoir à cliquer.",
+                    "🎉 Rétrospective annuelle : un bilan visuel de l'année façon \"Wrapped\" (temps passé ensemble, répartition par catégorie, MVP organisateur, mois le plus actif, tags favoris...) — accessible à tous via le bouton 🎉 Rétrospective de l'en-tête, une année à la fois.",
+                    "Rappels repensés : \"🔔 M'envoyer un rappel\" fonctionne sur n'importe quel événement — pour une série (dates hebdo ou notées), le même abonnement suit automatiquement chaque prochaine diffusion, pas seulement celle ouverte. Le bouton 🔔 Rappels de l'en-tête ouvre désormais la liste de vos abonnements, avec un interrupteur pour tout activer d'un coup.",
+                    "Bouton 💬 Discord : copie en un clic un message prêt à coller dans un salon d'annonces, avec le programme des 7 prochains jours.",
+                    "Nouveaux boutons dans la modale : 💬 lien direct vers le salon Discord de l'événement (<code>@salon</code>), 🗳️ lien vers un sondage (<code>@sondage</code>) pour voter le prochain film/jeu.",
+                    "Filtre par période (\"Du / Au\") dans la barre de filtres, et lien direct <code>?today=1</code> pour n'afficher que les sessions du jour.",
+                    "Mode Kiosque (🖥️) : affichage plein écran sans interaction, idéal sur un écran dédié affiché en continu.",
+                    "Top organisateurs de l'année ajouté au panneau Statistiques.",
+                    "Durées d'épisodes qui varient trop pour une moyenne : une annotation <code>(1h,23min,45min,1h)</code> en fin de ligne datée donne la durée réelle de chacun."
+                ]
+            },
+            {
+                title: "🛠️ Corrections",
+                items: [
+                    "Durée d'un épisode couvrant plusieurs semaines à la fois (ex: \"Episodes 3 à 6\") : n'est plus diluée à parts égales entre toutes les semaines de la série, mais répartie au prorata du nombre d'épisodes de chacune.",
+                    "Discord et Kiosque sont désormais regroupés avec le mode Admin (moins utiles en usage courant), pour ne pas encombrer l'en-tête.",
+                    "Nouvelle colonne <b>Tags</b> dans le tableur : toutes les balises (#tag, @host, @lieu...) peuvent désormais y être saisies séparément, en laissant Notes pour du texte libre uniquement.",
+                    "Organisateur affiché par défaut : « Helldwin » si aucun @host n'est précisé, au lieu de rester vide.",
+                    "Statuts Prévu/En Cours/Terminé recalculés plus finement par occurrence : une série sans durée réelle connue reste \"En Cours\" plutôt que d'être annoncée \"Terminée\" à tort.",
+                    "Le bandeau \"En direct\" et la pastille animée ne se fient plus indéfiniment à un statut \"En Cours\" incertain : passé quelques heures sans confirmation, l'événement n'est plus annoncé comme diffusé \"maintenant\".",
+                    "Vue Semaine : la plage horaire affichée est resserrée à la fenêtre réellement utilisée (14h → 2h du matin)."
+                ]
+            },
+            {
+                title: "ℹ️ À savoir",
+                items: [
+                    "Le lieu par défaut des événements est désormais « Discord 2GETHER » sauf indication contraire.",
+                    "Un événement peut toujours être annulé ou reporté à la dernière minute : pensez à vérifier le calendrier avant chaque session.",
+                    "Le bouton 📅 .ics est un export ponctuel à réimporter manuellement ; pour une synchronisation automatique, préférez 🔗 S'abonner (lien webcal://, régénéré côté serveur toutes les heures)."
+                ]
+            }
+        ]
+    },
+    {
+        version: "2026-07-06",
+        label: "V2",
+        sections: [
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "Recherche améliorée : les soirées répétées (saisons, soirées hebdo) sont regroupées en une seule ligne avec le détail de chaque date et la durée cumulée.",
+                    "Statut 🔵 Prévu / 🟢 En Cours / ⚪ Terminé affiché directement sur chaque tuile du calendrier.",
+                    "Mode Admin (rétrospectives annuelles + détection d'anomalies dans le tableur), protégé par mot de passe.",
+                    "Barre de filtres et panneau de statistiques désormais repliables, pour un calendrier plus dégagé.",
+                    "Meilleure prise en charge sur mobile."
+                ]
+            },
+            {
+                title: "ℹ️ À savoir",
+                items: [
+                    "Le lieu par défaut des événements est désormais « Discord 2GETHER » sauf indication contraire, et certains horaires par défaut ont été corrigés dans le tableur.",
+                    "Un événement peut toujours être annulé ou reporté à la dernière minute : pensez à vérifier le calendrier avant chaque session."
+                ]
+            }
+        ]
+    },
+    {
+        version: "2026-05-04",
+        label: "Lancement",
+        sections: [
+            {
+                title: "🚀 Au programme dès le premier jour",
+                items: [
+                    "Calendrier communautaire alimenté en direct par un Google Sheet public (aucune saisie manuelle côté site, tout se passe dans le tableur).",
+                    "Icônes et couleurs dédiées par type de soirée (Jeux, Film, Série, JDR, Minecraft, Meet Up, événements spéciaux).",
+                    "Statistiques cumulées de temps Visionnage / Gaming.",
+                    "Recherche et filtres par catégorie.",
+                    "Détection automatique des soirées annulées ou reportées, des soirées partenaires/sanctuaires, et génération des séries hebdomadaires à partir des notes.",
+                    "Modale de détail au clic sur un événement."
+                ]
+            }
+        ]
+    }
+];
+
+// Popup "Quoi de neuf ?" affichée une seule fois par version (localStorage) - voir aussi
+// #btn-open-patchnotes (V2.2) qui rouvre la même vue à tout moment, historique complet inclus.
 function setupPatchNotes() {
     const overlay = document.getElementById('patchnotes-overlay');
     const content = document.getElementById('patchnotes-content');
+    const latestVersion = PATCH_NOTES_HISTORY[0].version;
 
-    content.innerHTML = PATCH_NOTES.sections.map(section => `
-        <div>
-            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">${section.title}</h3>
-            <ul class="space-y-1.5 list-disc list-inside">
-                ${section.items.map(item => `<li>${item}</li>`).join('')}
-            </ul>
+    // Historique complet (V2.2) : chaque entrée de PATCH_NOTES_HISTORY sous son propre en-tête de
+    // version, la plus récente en premier - un seul rendu sert à la fois pour la popup "Quoi de
+    // neuf ?" automatique ET pour la vue rouverte à la demande (#btn-open-patchnotes).
+    content.innerHTML = PATCH_NOTES_HISTORY.map((release, i) => `
+        <div class="space-y-4 ${i > 0 ? 'pt-4 border-t border-white/10' : ''}">
+            <div class="flex items-center gap-2">
+                ${release.label ? `<span class="text-2xs font-black text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md uppercase tracking-wider">${escapeHtml(release.label)}</span>` : ''}
+                <span class="text-2xs text-slate-500">${escapeHtml(release.version)}</span>
+            </div>
+            ${release.sections.map(section => `
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">${section.title}</h3>
+                    <ul class="space-y-1.5 list-disc list-inside">
+                        ${section.items.map(item => `<li>${item}</li>`).join('')}
+                    </ul>
+                </div>
+            `).join('')}
         </div>
     `).join('');
 
     const close = () => {
         overlay.classList.add('hidden');
         overlay.classList.remove('flex');
-        localStorage.setItem('patchnotes:seenVersion', PATCH_NOTES.version);
+        localStorage.setItem('patchnotes:seenVersion', latestVersion);
     };
-
-    document.getElementById('btn-close-patchnotes').addEventListener('click', close);
-    document.getElementById('btn-dismiss-patchnotes').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-    if (localStorage.getItem('patchnotes:seenVersion') !== PATCH_NOTES.version) {
+    const open = () => {
         // classList.add('flex') en plus de remove('hidden') : sans ça, l'overlay retombe en
         // display:block par défaut (aucune classe flex/grid statique) et "items-center
         // justify-center" n'a plus aucun effet - la carte se retrouve collée en haut à gauche
         // au lieu d'être centrée (même mécanique que reminders-overlay/help-overlay).
+        content.scrollTop = 0;
         overlay.classList.remove('hidden');
         overlay.classList.add('flex');
+    };
+
+    document.getElementById('btn-close-patchnotes').addEventListener('click', close);
+    document.getElementById('btn-dismiss-patchnotes').addEventListener('click', close);
+    // Bouton permanent d'en-tête (V2.2, QOL) : rouvre l'historique complet à tout moment, pas
+    // seulement à la sortie d'une nouvelle version - marque aussi la version comme "vue" pour ne
+    // pas redéclencher la popup automatique juste après une consultation volontaire.
+    document.getElementById('btn-open-patchnotes').addEventListener('click', () => {
+        localStorage.setItem('patchnotes:seenVersion', latestVersion);
+        open();
+    });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    // Pas de popup automatique pour un tout nouveau visiteur (V2.2) : la visite guidée
+    // (setupOnboardingTour) couvre déjà "ce qu'il y a à savoir maintenant" - un historique de
+    // changements n'a pas de sens avant d'avoir vu l'appli une première fois. Reste accessible
+    // à tout moment via #btn-open-patchnotes.
+    const isFirstEverVisit = !localStorage.getItem(ONBOARDING_DONE_KEY) && !localStorage.getItem('patchnotes:seenVersion');
+    if (!isFirstEverVisit && localStorage.getItem('patchnotes:seenVersion') !== latestVersion) {
+        open();
     }
 }
 
@@ -1114,7 +1518,7 @@ function updateBlanketReminderButton() {
     const enabled = isBlanketRemindersEnabled();
     btn.innerHTML = `<span class="inline-flex items-center gap-1.5">${enabled ? Icons.bell('w-3.5 h-3.5 shrink-0') : Icons.bellOff('w-3.5 h-3.5 shrink-0')}${enabled ? 'Activé' : 'Désactivé'}</span>`;
     btn.setAttribute('aria-pressed', String(enabled));
-    btn.className = `shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
+    btn.className = `shrink-0 text-xxs font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
 }
 
 function updateDailyDigestButton() {
@@ -1122,7 +1526,26 @@ function updateDailyDigestButton() {
     const enabled = hasNotificationPermission() && localStorage.getItem(DAILY_DIGEST_ENABLED_KEY) === '1';
     btn.innerHTML = `<span class="inline-flex items-center gap-1.5">${enabled ? Icons.bell('w-3.5 h-3.5 shrink-0') : Icons.bellOff('w-3.5 h-3.5 shrink-0')}${enabled ? 'Activé' : 'Désactivé'}</span>`;
     btn.setAttribute('aria-pressed', String(enabled));
-    btn.className = `shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
+    btn.className = `shrink-0 text-xxs font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
+}
+
+// Contrairement aux autres boutons "Activé/Désactivé" de ce panneau, celui-ci ne dépend d'aucune
+// permission navigateur (Web Audio n'en demande pas) : bascule directement, sans passage par
+// Notification.requestPermission().
+function updateNotifSoundButton() {
+    const btn = document.getElementById('btn-toggle-notif-sound');
+    const enabled = localStorage.getItem(NOTIF_SOUND_KEY) === '1';
+    btn.innerHTML = `<span class="inline-flex items-center gap-1.5">${enabled ? '🔊' : '🔕'}${enabled ? 'Activé' : 'Désactivé'}</span>`;
+    btn.setAttribute('aria-pressed', String(enabled));
+    btn.className = `shrink-0 text-xxs font-bold px-3 py-1.5 rounded-lg border transition-all ${enabled ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'}`;
+}
+function toggleNotifSound() {
+    const enabled = localStorage.getItem(NOTIF_SOUND_KEY) === '1';
+    localStorage.setItem(NOTIF_SOUND_KEY, enabled ? '0' : '1');
+    updateNotifSoundButton();
+    // Aperçu immédiat au clic (V2.3) : sans ça, impossible de savoir à quoi ressemble le son
+    // avant qu'une vraie notification finisse par se déclencher.
+    if (!enabled) playNotificationSound();
 }
 
 function updateDndUI() {
@@ -1173,6 +1596,35 @@ async function toggleDailyDigest() {
 // Programme du jour en une seule notification (QOL #9), plutôt qu'une par session - vérifié à
 // chaque appel de checkUpcomingNotifications (toutes les 30s) mais n'envoie réellement qu'une
 // fois par jour civil (DAILY_DIGEST_SENT_KEY retient la date du dernier envoi effectif).
+// Son discret optionnel (V2.3) : petit carillon à deux notes généré via Web Audio API
+// (pas de fichier audio à charger/héberger, fonctionne hors-ligne comme le reste de l'app) -
+// désactivé par défaut, voir #btn-toggle-notif-sound dans le panneau Rappels.
+const NOTIF_SOUND_KEY = 'notif:soundEnabled';
+function playNotificationSound() {
+    if (localStorage.getItem(NOTIF_SOUND_KEY) !== '1') return;
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const now = ctx.currentTime;
+        [880, 1318.5].forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            const start = now + i * 0.12;
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(0.15, start + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(start);
+            osc.stop(start + 0.32);
+        });
+        setTimeout(() => ctx.close(), 600);
+    } catch {
+        // Web Audio indisponible/bloqué (ex: politique navigateur exigeant une interaction
+        // utilisateur préalable) : échoue silencieusement, la notification reste affichée.
+    }
+}
+
 function checkDailyDigest() {
     if (!hasNotificationPermission() || isDndActive()) return;
     if (localStorage.getItem(DAILY_DIGEST_ENABLED_KEY) !== '1') return;
@@ -1192,6 +1644,7 @@ function checkDailyDigest() {
         : todayEvents.slice(0, 4).map(e => `${e.heure ? e.heure + ' ' : ''}${e.title}`).join('\n') + (todayEvents.length > 4 ? `\n+${todayEvents.length - 4} autre(s)` : '');
 
     new Notification(`🌅 ${todayEvents.length} session${todayEvents.length > 1 ? 's' : ''} aujourd'hui`, { body, tag: 'daily-digest-' + todayStr });
+    playNotificationSound();
 }
 
 // Panneau "Suivis individuellement" (abonnements ReminderService, par titre) : affiche la
@@ -1199,26 +1652,41 @@ function checkDailyDigest() {
 function renderRemindersList() {
     const container = document.getElementById('reminders-list');
     const reminders = ReminderService.getAll();
+    document.getElementById('btn-clear-all-reminders').classList.toggle('hidden', reminders.length === 0);
 
     if (reminders.length === 0) {
-        container.innerHTML = `<div class="text-[11px] text-slate-600 italic">Aucun événement suivi individuellement pour l'instant. Ouvrez-en un et cliquez sur "M'envoyer un rappel".</div>`;
+        container.innerHTML = `<div class="text-xxs text-slate-600 italic">Aucun événement suivi individuellement pour l'instant. Ouvrez-en un et cliquez sur "M'envoyer un rappel".</div>`;
         return;
     }
 
     const now = new Date();
     const all = repo.getAll();
-    container.innerHTML = reminders.map(({ title }) => {
-        const next = all
+    // Triés par prochaine occurrence (V2.2, QOL) - le plus proche en premier, ceux sans date
+    // connue relégués en fin de liste plutôt que mélangés dans l'ordre d'abonnement d'origine.
+    const withNext = reminders.map(({ title }) => ({
+        title,
+        next: all
             .filter(e => e.title === title && !e.isCanceled && new Date(e.start) > now)
-            .sort((a, b) => a.start.localeCompare(b.start))[0];
+            .sort((a, b) => a.start.localeCompare(b.start))[0] || null
+    })).sort((a, b) => {
+        if (!a.next && !b.next) return 0;
+        if (!a.next) return 1;
+        if (!b.next) return -1;
+        return a.next.start.localeCompare(b.next.start);
+    });
+
+    container.innerHTML = withNext.map(({ title, next }) => {
         const nextLabel = next
             ? new Date(next.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + (next.heure ? ' · ' + next.heure : '')
             : "Aucune prochaine date connue";
+        // Compte à rebours (V2.3, QOL #2) : "dans 2j 4h" en plus de la date, pour ne pas avoir à
+        // calculer soi-même l'écart avec aujourd'hui - voir formatCountdown dans utils/Format.js.
+        const countdown = next ? formatCountdown(next.start, now) : null;
         return `
             <div class="glass-card flex items-center justify-between gap-2 p-2.5 rounded-xl">
                 <div class="min-w-0">
                     <div class="text-xs font-bold text-slate-200 truncate">${escapeHtml(title)}</div>
-                    <div class="text-[11px] text-slate-500">Prochaine : ${escapeHtml(nextLabel)}</div>
+                    <div class="text-xxs text-slate-500">Prochaine : ${escapeHtml(nextLabel)}${countdown ? ` <span class="text-indigo-400 font-bold">· ${escapeHtml(countdown)}</span>` : ''}</div>
                 </div>
                 <button data-remove-title="${escapeHtml(title)}" title="Ne plus suivre" aria-label="Ne plus suivre ${escapeHtml(title)}" class="shrink-0 text-slate-500 hover:text-rose-400 text-xs p-1.5 rounded-md hover:bg-rose-500/10 transition-all">✕</button>
             </div>
@@ -1232,6 +1700,7 @@ function setupRemindersOverlay() {
     const open = () => {
         updateBlanketReminderButton();
         updateDailyDigestButton();
+        updateNotifSoundButton();
         updateDndUI();
         leadSelect.value = String(getReminderLeadMinutes());
         renderRemindersList();
@@ -1246,6 +1715,7 @@ function setupRemindersOverlay() {
 
     document.getElementById('btn-toggle-all-reminders').addEventListener('click', toggleBlanketReminders);
     document.getElementById('btn-toggle-daily-digest').addEventListener('click', toggleDailyDigest);
+    document.getElementById('btn-toggle-notif-sound').addEventListener('click', toggleNotifSound);
 
     leadSelect.addEventListener('change', () => {
         localStorage.setItem(NOTIF_LEAD_KEY, leadSelect.value);
@@ -1271,6 +1741,12 @@ function setupRemindersOverlay() {
         ReminderService.remove(btn.dataset.removeTitle);
         renderRemindersList();
         updateUIState(); // Rafraîchit le badge 🔔 sur les tuiles concernées.
+    });
+
+    document.getElementById('btn-clear-all-reminders').addEventListener('click', () => {
+        ReminderService.clear();
+        renderRemindersList();
+        updateUIState();
     });
 }
 
@@ -1302,6 +1778,51 @@ function updatePwaBadge() {
 // individuel) et déclenche une notification navigateur une seule fois chacun. Vérifie aussi le
 // résumé quotidien (QOL #9) et le badge d'icône (QOL #10) au passage, sur le même intervalle
 // (voir son appel dans initApp).
+// Alerte de changement (V2.3) : signale qu'un événement individuellement suivi (voir
+// ReminderService) a changé d'heure ou a été annulé depuis la dernière visite - pas seulement
+// "vous serez prévenu avant qu'il commence" (checkUpcomingNotifications ci-dessous), mais "ce que
+// vous attendiez a bougé". Contrainte du site 100% statique (pas de backend, pas de push) : ne
+// peut comparer qu'à la dernière fois que CETTE PAGE a été chargée (voir SUBSCRIPTION_SNAPSHOT_KEY),
+// pas en temps réel pendant qu'un onglet reste ouvert sans être rechargé - suffisant pour la
+// plupart des usages (on rouvre le site plutôt que de garder un onglet ouvert en permanence).
+const SUBSCRIPTION_SNAPSHOT_KEY = 'reminders:snapshot';
+function checkSubscriptionChanges() {
+    const subs = ReminderService.getAll();
+    let snapshot;
+    try { snapshot = JSON.parse(localStorage.getItem(SUBSCRIPTION_SNAPSHOT_KEY) || '{}'); } catch { snapshot = {}; }
+    if (subs.length === 0) { localStorage.setItem(SUBSCRIPTION_SNAPSHOT_KEY, '{}'); return; }
+
+    const now = new Date();
+    const all = repo.getAll();
+    const nextSnapshot = {};
+
+    subs.forEach(({ title }) => {
+        const sameTitle = all.filter(e => e.title === title && !e.isPlanned);
+        const nextReal = sameTitle
+            .filter(e => !e.isCanceled && new Date(e.start) > now)
+            .sort((a, b) => a.start.localeCompare(b.start))[0];
+        if (nextReal) nextSnapshot[title] = { start: nextReal.start, heure: nextReal.heure || null };
+
+        // Ne compare que si la précédente "prochaine occurrence connue" pour ce titre devrait
+        // ENCORE être à venir aujourd'hui - sinon elle a simplement eu lieu normalement entre
+        // temps, pas "changé".
+        const prev = snapshot[title];
+        if (!prev || new Date(prev.start) <= now) return;
+        const stillThere = sameTitle.some(e => e.start === prev.start && !e.isCanceled);
+        if (stillThere) return;
+
+        const nowCanceled = sameTitle.some(e => e.start === prev.start && e.isCanceled);
+        if (nowCanceled) {
+            showToast(`🚫 "${title}" a été annulé`, { icon: Icons.xCircle('w-3.5 h-3.5 shrink-0 text-rose-300') });
+        } else if (nextReal) {
+            const dateLabel = new Date(nextReal.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+            showToast(`⏰ "${title}" a changé d'horaire : ${dateLabel}${nextReal.heure ? ' · ' + nextReal.heure : ''}`, { icon: Icons.bell('w-3.5 h-3.5 shrink-0 text-indigo-300') });
+        }
+    });
+
+    localStorage.setItem(SUBSCRIPTION_SNAPSHOT_KEY, JSON.stringify(nextSnapshot));
+}
+
 function checkUpcomingNotifications() {
     checkDailyDigest();
     updatePwaBadge();
@@ -1324,6 +1845,9 @@ function checkUpcomingNotifications() {
         });
         notified.add(e.id);
     });
+    // Un seul son pour tout le lot (V2.3), pas un par événement dû : plusieurs
+    // notifications simultanées ne doivent pas rejouer le même carillon en rafale.
+    playNotificationSound();
 
     // Purge les ids de plus de 2 jours pour ne pas faire grossir indéfiniment le localStorage
     // (l'id embarque la date de début : "2026-07-14T20:00:00__Titre", voir EventGenerator).
@@ -1415,27 +1939,81 @@ function setupKioskMode() {
 }
 
 // Thème saisonnier (voir SeasonalTheme.js) : purement cosmétique (teinte de fond + pastille
-// d'en-tête), jamais bloquant. Le badge affiché sert aussi de bouton pour le désactiver le
-// temps de la saison, au cas où certains visiteurs préfèrent le thème neutre habituel.
+// d'en-tête), jamais bloquant. Couvre désormais TOUTE l'année (V2.2, voir SEASONS dans
+// SeasonalTheme.js) - toujours "compris en un coup d'oeil" via le badge + son survol (title), et
+// signalé par un toast au moment où la saison change réellement (pas à chaque rechargement).
+const SEASON_LAST_SEEN_KEY = 'seasonal-theme:lastSeenId';
+
+// Dernier emoji de particule effectivement rendu (V2.2) : évite de reconstruire le nuage de
+// particules (et de faire sauter leur animation en cours) quand refreshSeasonalTheme() est
+// rappelé sans que la saison n'ait réellement changé (ex: réouverture du sélecteur sur "Auto").
+let lastRenderedParticle = undefined;
+
+/**
+ * (Re)construit le nuage de particules discrètes de la saison active (❄️ à Noël/en hiver, 🍂 en
+ * automne...) dans #seasonal-particles, voir le champ `particle` de SEASONS. Purement décoratif
+ * et non-interactif (pointer-events:none sur le conteneur) : entièrement sauté sous
+ * prefers-reduced-motion plutôt que figé, comme les autres animations d'ambiance de l'app.
+ * @param {string|null} season
+ */
+function setupSeasonalParticles(season) {
+    const container = document.getElementById('seasonal-particles');
+    const cfg = season && SEASONS[season];
+    const particle = cfg?.particle || null;
+
+    if (particle === lastRenderedParticle) return;
+    lastRenderedParticle = particle;
+    container.innerHTML = '';
+
+    if (!particle) return;
+    if (!window.matchMedia('(prefers-reduced-motion: no-preference)').matches) return;
+
+    const COUNT = 16;
+    for (let i = 0; i < COUNT; i++) {
+        const span = document.createElement('span');
+        span.className = 'seasonal-particle';
+        span.textContent = particle;
+        span.style.left = `${Math.random() * 100}%`;
+        span.style.fontSize = `${10 + Math.random() * 14}px`;
+        span.style.setProperty('--particle-opacity', String(0.25 + Math.random() * 0.35));
+        span.style.setProperty('--particle-drift', `${(Math.random() - 0.5) * 120}px`);
+        const duration = 9 + Math.random() * 10;
+        span.style.animationDuration = `${duration}s`;
+        span.style.animationDelay = `-${Math.random() * duration}s`;
+        container.appendChild(span);
+    }
+}
+
 function refreshSeasonalTheme() {
     const season = resolveActiveSeason();
     const cfg = applySeasonalTheme(season);
+    setupSeasonalParticles(season);
     const badge = document.getElementById('seasonal-badge');
     if (!cfg) {
         badge.classList.add('hidden');
         return;
     }
     badge.textContent = `${cfg.emoji} ${cfg.label}`;
+    badge.title = cfg.note;
     badge.style.color = cfg.color;
     badge.style.borderColor = `${cfg.color}40`;
     badge.style.background = `${cfg.color}1a`;
     badge.classList.remove('hidden');
+
+    // Un petit mot dans un toast (pas une vraie popup à fermer) quand la saison affichée vient de
+    // changer par rapport au dernier chargement connu - jamais en mode forcé manuellement (ça
+    // spammerait le toast à chaque rechargement d'une saison choisie exprès, pas juste "détectée").
+    if (getManualOverride() === 'auto' && localStorage.getItem(SEASON_LAST_SEEN_KEY) !== season) {
+        localStorage.setItem(SEASON_LAST_SEEN_KEY, season);
+        showToast(`${cfg.emoji} ${cfg.label} — ${cfg.note}`);
+    }
 }
 
 // Thème saisonnier : "Auto" (par défaut) suit la date réelle, ou un choix manuel (forcer un
 // thème toute l'année, ou le désactiver complètement) via le sélecteur d'en-tête - persisté
-// dans localStorage (voir SeasonalTheme.js). Le badge n'est plus qu'un indicatif visuel du
-// thème actif, ce sélecteur est l'unique commande.
+// dans localStorage (voir SeasonalTheme.js). Cliquer le badge rappelle son petit mot (title déjà
+// posé par refreshSeasonalTheme, sans effet réel au survol tactile sur mobile - ce clic couvre
+// ce cas), il ne désactive rien : le sélecteur reste l'unique commande pour ça.
 function setupSeasonalTheme() {
     const select = document.getElementById('theme-select');
     select.value = getManualOverride();
@@ -1445,6 +2023,36 @@ function setupSeasonalTheme() {
         setManualOverride(select.value);
         refreshSeasonalTheme();
     });
+
+    document.getElementById('seasonal-badge').addEventListener('click', () => {
+        const season = resolveActiveSeason();
+        const cfg = season && SEASONS[season];
+        if (cfg) showToast(`${cfg.emoji} ${cfg.label} — ${cfg.note}`);
+    });
+}
+
+// Thème clair/sombre (V2.2) : bascule manuelle indépendante du thème SAISONNIER ci-dessus (celui-
+// ci ne fait que teinter le fond sombre par défaut, jamais l'inverser) - persisté en localStorage,
+// posé en attribut sur <html> pour que tout le CSS clair (voir index.html) s'applique d'un coup.
+const THEME_KEY = 'ui-theme';
+function getStoredTheme() {
+    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
+}
+function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    document.getElementById('theme-toggle-icon-moon').classList.toggle('hidden', theme === 'light');
+    document.getElementById('theme-toggle-icon-sun').classList.toggle('hidden', theme !== 'light');
+    // Couleur de la barre système/PWA (meta theme-color) : suit le thème actif, comme le reste du chrome.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f5f7' : '#161b22');
+}
+function setupThemeToggle() {
+    applyTheme(getStoredTheme());
+    document.getElementById('btn-toggle-theme').addEventListener('click', () => {
+        const next = getStoredTheme() === 'light' ? 'dark' : 'light';
+        localStorage.setItem(THEME_KEY, next);
+        applyTheme(next);
+    });
 }
 
 async function sha256Hex(text) {
@@ -1452,7 +2060,7 @@ async function sha256Hex(text) {
     return [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Menu déroulant "⋯" regroupant les outils d'organisateur (V2.5, voir #admin-tools-menu dans
+// Menu déroulant "⋯" regroupant les outils d'organisateur (V2.2, voir #admin-tools-menu dans
 // index.html) — même mécanique clic-dehors-pour-fermer que le popover du mini-calendrier
 // (setupMiniCalendar) : pas un vrai overlay géré par setupEscapeToClose(), juste un petit menu.
 function setupAdminToolsMenu() {
@@ -1522,12 +2130,52 @@ function setupAdminMode() {
     document.getElementById('btn-close-admin').addEventListener('click', () => {
         overlay.classList.add('hidden');
     });
+
+    // Lignes d'anomalies cliquables (V2.2, QOL) quand un événement correspondant a pu être
+    // retrouvé (voir renderAnomaliesSection dans AdminView.js) - ferme l'Admin avant d'ouvrir la
+    // modale (ModalView z-50 est sous Admin z-60, resterait invisible sinon).
+    content.addEventListener('click', (e) => {
+        const row = e.target.closest('[data-event-id]');
+        if (!row) return;
+        overlay.classList.add('hidden');
+        openEventById(row.dataset.eventId);
+    });
 }
 
 let currentRetrospectiveYear = null;
+// "Toute l'histoire" (V2.4, "9") : bascule entre le détail d'une année (renderRetrospective,
+// par défaut) et le résumé multi-années (renderAllYearsHistory) - voir btn-retro-history dans
+// setupRetrospective. Remise à false à chaque (ré)ouverture de l'overlay.
+let retroShowingHistory = false;
 // Événements du dernier mois/jour de semaine ouvert en détail (voir openBucketDetail) :
 // indexé de la même façon que le rendu, pour retrouver l'objet complet au clic sur une carte.
 let bucketDetailCache = [];
+// D'où vient le détail actuellement affiché (V2.2, voir renderBucketBreadcrumb) : conditionne le
+// texte du fil d'ariane ET le comportement du bouton "retour" (closeBucketDetail) puisque les
+// deux parents possibles ne se comportent pas pareil - la Rétrospective reste visible en dessous
+// (bucket-detail-overlay est simplement posé par-dessus, même z-index empilable), alors que le
+// Profil organisateur, lui, est explicitement masqué avant l'ouverture du détail (voir
+// openOrganizerWeekdayDetail) et doit donc être explicitement réaffiché au retour.
+let bucketDetailOrigin = null;
+
+/** Fil d'ariane "vous êtes ici" du détail mois/jour de semaine : 1er segment cliquable = retour au parent. */
+function renderBucketBreadcrumb(parentLabel, currentLabel) {
+    document.getElementById('bucket-detail-breadcrumb').innerHTML = `
+        <button id="bucket-detail-breadcrumb-back" class="hover:text-indigo-300 transition-colors">${escapeHtml(parentLabel)}</button>
+        <span aria-hidden="true">›</span>
+        <span class="text-slate-300">${escapeHtml(currentLabel)}</span>
+    `;
+}
+
+/** Rend bucketDetailCache (déjà rempli par l'appelant) dans #bucket-detail-title/#bucket-detail-content et affiche l'overlay - factorisé entre les 4 origines possibles (mois/jour de semaine × rétrospective/profil, + "événement récurrent" ci-dessous). */
+function fillBucketDetailOverlay(titleText) {
+    document.getElementById('bucket-detail-title').textContent = titleText;
+    document.getElementById('bucket-detail-content').innerHTML = bucketDetailCache.map((e, idx) => {
+        const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+    }).join('');
+    document.getElementById('bucket-detail-overlay').classList.remove('hidden');
+}
 
 /**
  * Liste complète (et non plus seulement le résumé "top 3" de l'infobulle) des sessions d'un
@@ -1536,17 +2184,42 @@ let bucketDetailCache = [];
  */
 function openBucketDetail(kind, label, index) {
     bucketDetailCache = getBucketEvents(repo.getAll(), currentRetrospectiveYear, kind, index);
-
-    const title = document.getElementById('bucket-detail-title');
-    const content = document.getElementById('bucket-detail-content');
+    bucketDetailOrigin = 'retrospective';
+    renderBucketBreadcrumb(`Rétrospective ${currentRetrospectiveYear}`, label);
     const count = bucketDetailCache.length;
-    title.textContent = `${label} ${currentRetrospectiveYear} · ${count} session${count > 1 ? 's' : ''}`;
-    content.innerHTML = bucketDetailCache.map((e, idx) => {
-        const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
-        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
-    }).join('');
+    fillBucketDetailOverlay(`${label} ${currentRetrospectiveYear} · ${count} session${count > 1 ? 's' : ''}`);
+}
 
-    document.getElementById('bucket-detail-overlay').classList.remove('hidden');
+// Toutes les occurrences d'un même titre (voir renderMostRecurringEvent dans RetrospectiveView.js,
+// V2.2 : "augmenter les interactions" de la rétrospective) - ouvert au clic sur la tuile "l'évènement
+// qui revient le plus", pour lister ses séances au lieu de se contenter du résumé (nombre + durée).
+function openRetroRecurringDetail(title) {
+    bucketDetailCache = repo.getAll()
+        .filter(e => !e.isCanceled && !e.isPlanned && new Date(e.start).getFullYear() === currentRetrospectiveYear && e.title === title)
+        .sort((a, b) => new Date(b.start) - new Date(a.start));
+    bucketDetailOrigin = 'retrospective';
+    renderBucketBreadcrumb(`Rétrospective ${currentRetrospectiveYear}`, title);
+    fillBucketDetailOverlay(`${title} · ${bucketDetailCache.length} session${bucketDetailCache.length > 1 ? 's' : ''}`);
+}
+
+// Ouvre l'événement (poster/carte "premier/dernier moment") référencé par data-event-id dans les
+// sections enrichies de la rétrospective/du profil organisateur (V2.2) - recherche dans TOUT le
+// dépôt plutôt que dans un sous-ensemble : ces tuiles montrent un événement précis et unique,
+// identifié par son id stable, pas une position dans une liste filtrée qui pourrait avoir bougé.
+function openEventById(id) {
+    const event = repo.getAll().find(e => e.id === id);
+    if (event) ModalView.open(event);
+}
+
+// Lance une recherche par tag depuis un tag cliqué dans la rétrospective/le profil organisateur
+// (V2.2) - même geste que le clic sur un tag DANS la modale d'événement (voir ModalView.init),
+// pour que "cliquer un tag" se comporte pareil partout dans l'app.
+function applyTagSearchFromOverlay(tag) {
+    document.getElementById('recherche').value = `#${tag}`;
+    document.getElementById('btn-clear-search').classList.remove('hidden');
+    document.getElementById('search-icon').classList.add('hidden');
+    currentSearchQuery = `#${tag}`;
+    updateUIState();
 }
 
 // Sessions du dernier organisateur ouvert en profil (voir openOrganizerProfile) : indexé de la
@@ -1597,33 +2270,38 @@ function openOrganizerProfile(hostName) {
     const yearStats = StatsService.compute(allEvents.filter(e => new Date(e.start).getFullYear() === currentYear));
     const isTopHostThisYear = (topN(yearStats.byHost, 1)[0] || [])[0] === normalized;
 
-    document.getElementById('organizer-profile-title').innerHTML = `<span class="inline-flex items-center gap-2">${Icons.user('w-4 h-4 shrink-0 text-slate-400')}<span class="capitalize">${escapeHtml(hostName)}</span></span>`;
+    document.getElementById('organizer-profile-title').innerHTML = `<span class="inline-flex items-center gap-2">${renderAvatarInitials(hostName, 'w-6 h-6 text-2xs')}<span class="capitalize">${escapeHtml(hostName)}</span></span>`;
     document.getElementById('organizer-profile-summary').innerHTML = `
         <div class="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-3">
             <div class="glass-panel rounded-xl p-3 text-center">
-                <div class="text-xl font-black text-white">${facts.totalSessions}</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Sessions organisées</div>
+                <div id="op-stat-sessions" class="text-xl font-black text-white">0</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">Sessions organisées</div>
             </div>
             <div class="glass-panel rounded-xl p-3 text-center">
-                <div class="text-xl font-black text-indigo-400">${formatMinutes(facts.totalTime)}</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Temps animé (cumulé)</div>
+                <div id="op-stat-time" class="text-xl font-black text-indigo-400">${formatMinutes(0)}</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">Temps animé (cumulé)</div>
             </div>
             <div class="glass-panel rounded-xl p-3 text-center">
-                <div class="text-xl font-black text-white">${facts.distinctTypes}</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Types différents</div>
+                <div id="op-stat-types" class="text-xl font-black text-white">0</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">Types différents</div>
             </div>
             <div class="glass-panel rounded-xl p-3 text-center">
-                <div class="text-xl font-black text-emerald-400">${facts.reliabilityPct}%</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Sessions maintenues</div>
+                <div id="op-stat-reliability" class="text-xl font-black text-emerald-400">0%</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">Sessions maintenues</div>
             </div>
             <div class="glass-panel rounded-xl p-3 text-center">
-                <div class="text-xl font-black text-white">${facts.streak}</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">${facts.streak > 1 ? "Semaines d'affilée (record)" : 'Semaine active'}</div>
+                <div id="op-stat-streak" class="text-xl font-black text-white">0</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">${facts.streak > 1 ? "Semaines d'affilée (record)" : 'Semaine active'}</div>
             </div>
         </div>
         ${isTopHostThisYear ? `<div class="inline-flex items-center gap-1.5 w-full justify-center text-xs font-bold text-amber-300 mb-3">${Icons.crown('w-3.5 h-3.5 shrink-0')}MVP de ${currentYear}</div>` : ''}
         ${renderBadgeShelf(computeBadges(facts))}
     `;
+    animateCountUp(document.getElementById('op-stat-sessions'), facts.totalSessions);
+    animateCountUp(document.getElementById('op-stat-time'), facts.totalTime, formatMinutes);
+    animateCountUp(document.getElementById('op-stat-types'), facts.distinctTypes);
+    animateCountUp(document.getElementById('op-stat-reliability'), facts.reliabilityPct, (n) => `${n}%`);
+    animateCountUp(document.getElementById('op-stat-streak'), facts.streak);
 
     // Sections enrichies : mêmes briques que la rétrospective annuelle (voir RetrospectiveView.js),
     // réutilisées telles quelles mais recentrées sur les seules sessions de CET organisateur.
@@ -1664,20 +2342,24 @@ function openOrganizerWeekdayDetail(label, index) {
     bucketDetailCache = organizerWeekdayCache
         .filter(e => (new Date(e.start).getDay() + 6) % 7 === index)
         .sort((a, b) => new Date(b.start) - new Date(a.start));
-
-    const title = document.getElementById('bucket-detail-title');
-    const content = document.getElementById('bucket-detail-content');
-    const count = bucketDetailCache.length;
-    title.textContent = `${label} · ${count} session${count > 1 ? 's' : ''}`;
-    content.innerHTML = bucketDetailCache.map((e, idx) => {
-        const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
-    }).join('');
-
-    // Ferme le profil avant d'ouvrir le détail (même raison que openBucketDetail plus haut :
-    // ModalView/bucket-detail-overlay ne sont pas empilables par z-index avec ce panneau).
+    bucketDetailOrigin = 'organizer';
+    renderBucketBreadcrumb(`Profil de ${currentOrganizerHostName}`, label);
+    // Ferme le profil avant d'ouvrir le détail (ModalView/bucket-detail-overlay ne sont pas
+    // empilables par z-index avec ce panneau, voir bucketDetailOrigin plus haut).
     document.getElementById('organizer-profile-overlay').classList.add('hidden');
-    document.getElementById('bucket-detail-overlay').classList.remove('hidden');
+    fillBucketDetailOverlay(`${label} · ${bucketDetailCache.length} session${bucketDetailCache.length > 1 ? 's' : ''}`);
+}
+
+// Même idée qu'openRetroRecurringDetail, mais recentrée sur CET organisateur (toutes années
+// confondues, voir currentOrganizerFacts.realSessions déjà scopé par openOrganizerProfile).
+function openHostRecurringDetail(title) {
+    bucketDetailCache = (currentOrganizerFacts?.realSessions || [])
+        .filter(e => e.title === title)
+        .sort((a, b) => new Date(b.start) - new Date(a.start));
+    bucketDetailOrigin = 'organizer';
+    renderBucketBreadcrumb(`Profil de ${currentOrganizerHostName}`, title);
+    document.getElementById('organizer-profile-overlay').classList.add('hidden');
+    fillBucketDetailOverlay(`${title} · ${bucketDetailCache.length} session${bucketDetailCache.length > 1 ? 's' : ''}`);
 }
 
 function setupOrganizerProfile() {
@@ -1696,6 +2378,14 @@ function setupOrganizerProfile() {
         if (e.target === overlay) { close(); return; }
         const bar = e.target.closest('[data-bucket-kind="hostWeekday"]');
         if (bar) { openOrganizerWeekdayDetail(bar.dataset.bucketLabel, Number(bar.dataset.bucketIndex)); return; }
+        // Sections enrichies cliquables (V2.2, "augmenter les interactions") : mêmes
+        // data-attributes que la rétrospective annuelle, voir RetrospectiveView.js.
+        const recurringTile = e.target.closest('[data-recurring-title]');
+        if (recurringTile) { openHostRecurringDetail(recurringTile.dataset.recurringTitle); return; }
+        const tagBtn = e.target.closest('button[data-tag]');
+        if (tagBtn) { close(); applyTagSearchFromOverlay(tagBtn.dataset.tag); return; }
+        const eventTile = e.target.closest('[data-event-id]');
+        if (eventTile) { close(); openEventById(eventTile.dataset.eventId); return; }
         const card = e.target.closest('[data-idx]');
         if (!card) return;
         const ev = organizerProfileCache[Number(card.dataset.idx)];
@@ -1718,16 +2408,13 @@ function setupOrganizerProfile() {
 
     // Lien direct vers ce profil (QOL #13, ?host=<nom>) - même geste que 🔗 dans la modale
     // d'un événement (copie, ou repli sur window.prompt si le presse-papiers est indisponible).
-    document.getElementById('btn-organizer-copy-link').addEventListener('click', async (e) => {
+    document.getElementById('btn-organizer-copy-link').addEventListener('click', async () => {
         if (!currentOrganizerHostName) return;
         const url = new URL(window.location.href);
         url.searchParams.set('host', currentOrganizerHostName);
-        const btn = e.currentTarget;
         try {
             await navigator.clipboard.writeText(url.href);
-            const original = btn.innerHTML;
-            btn.innerHTML = '✅';
-            setTimeout(() => { btn.innerHTML = original; }, 1500);
+            showToast('Lien copié !', { icon: Icons.link('w-3.5 h-3.5 shrink-0 text-indigo-300') });
         } catch {
             window.prompt("Copiez ce lien :", url.href);
         }
@@ -1741,7 +2428,7 @@ function setupOrganizerProfile() {
 }
 
 /**
- * Fiche d'un lieu de meetup IRL (vue Carte, refonte V2.5) : résumé + sessions à venir + tout
+ * Fiche d'un lieu de meetup IRL (vue Carte, refonte V2.2) : résumé + sessions à venir + tout
  * l'historique - toujours calculée sur TOUT le dépôt (comme le profil organisateur), pas les
  * événements actuellement filtrés à l'écran, pour rester une vraie mémoire du lieu.
  * @param {string} cityKey - Clé ville normalisée (voir CityCoordinates.js), ex: "montpellier"
@@ -1775,19 +2462,21 @@ function openLocationProfile(cityKey) {
     document.getElementById('location-profile-summary').innerHTML = `
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-1">
             <div class="glass-panel rounded-xl p-3 text-center">
-                <div class="text-xl font-black text-white">${cityEvents.length}</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Sessions au total</div>
+                <div id="lp-stat-total" class="text-xl font-black text-white">0</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">Sessions au total</div>
             </div>
             <div class="glass-panel rounded-xl p-3 text-center">
-                <div class="text-xl font-black text-indigo-400">${upcoming.length}</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">À venir</div>
+                <div id="lp-stat-upcoming" class="text-xl font-black text-indigo-400">0</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">À venir</div>
             </div>
             <div class="glass-panel rounded-xl p-3 text-center">
                 <div class="text-xl font-black text-white">${first ? new Date(first.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}</div>
-                <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5">Premier meetup ici</div>
+                <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5">Premier meetup ici</div>
             </div>
         </div>
     `;
+    animateCountUp(document.getElementById('lp-stat-total'), cityEvents.length);
+    animateCountUp(document.getElementById('lp-stat-upcoming'), upcoming.length);
 
     const upcomingSection = document.getElementById('location-profile-upcoming-section');
     upcomingSection.classList.toggle('hidden', upcoming.length === 0);
@@ -1841,16 +2530,13 @@ function setupLocationProfile() {
     });
 
     // Lien direct vers cette fiche (?lieu=<clé>) - même geste que pour le profil organisateur.
-    document.getElementById('btn-location-copy-link').addEventListener('click', async (e) => {
+    document.getElementById('btn-location-copy-link').addEventListener('click', async () => {
         if (!currentLocationKey) return;
         const url = new URL(window.location.href);
         url.searchParams.set('lieu', currentLocationKey);
-        const btn = e.currentTarget;
         try {
             await navigator.clipboard.writeText(url.href);
-            const original = btn.innerHTML;
-            btn.innerHTML = '✅';
-            setTimeout(() => { btn.innerHTML = original; }, 1500);
+            showToast('Lien copié !', { icon: Icons.link('w-3.5 h-3.5 shrink-0 text-indigo-300') });
         } catch {
             window.prompt("Copiez ce lien :", url.href);
         }
@@ -1870,13 +2556,24 @@ function setupRetrospective() {
     const overlay = document.getElementById('retrospective-overlay');
     const content = document.getElementById('retrospective-content');
 
-    const renderCurrentYear = () => renderRetrospective(content, repo.getAll(), currentRetrospectiveYear);
+    const historyBtn = document.getElementById('btn-retro-history');
+    const renderCurrentYear = () => {
+        if (retroShowingHistory) {
+            renderAllYearsHistory(content, repo.getAll(), getAvailableYears(repo.getAll()));
+        } else {
+            renderRetrospective(content, repo.getAll(), currentRetrospectiveYear);
+        }
+        historyBtn.setAttribute('aria-pressed', String(retroShowingHistory));
+        historyBtn.classList.toggle('text-indigo-300', retroShowingHistory);
+        historyBtn.classList.toggle('bg-indigo-500/10', retroShowingHistory);
+    };
 
     const open = () => {
         const years = getAvailableYears(repo.getAll());
         const thisYear = new Date().getFullYear();
         // Ouvre sur l'année en cours si elle a des données, sinon la plus récente disponible.
         currentRetrospectiveYear = years.includes(thisYear) ? thisYear : (years[0] || thisYear);
+        retroShowingHistory = false;
         renderCurrentYear();
         overlay.classList.remove('hidden');
     };
@@ -1886,12 +2583,47 @@ function setupRetrospective() {
     document.getElementById('btn-close-retrospective').addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
+    historyBtn.addEventListener('click', () => {
+        retroShowingHistory = !retroShowingHistory;
+        renderCurrentYear();
+    });
+
+    // Image récap partageable de l'année (V2.3) - voir generateRetrospectiveRecapImage. N'a de
+    // sens que sur le détail d'une année précise (masqué en vue "Toute l'histoire").
+    document.getElementById('btn-retro-export-image').addEventListener('click', () => {
+        if (retroShowingHistory) return;
+        const facts = computeYearFacts(repo.getAll(), currentRetrospectiveYear);
+        generateRetrospectiveRecapImage(currentRetrospectiveYear, facts);
+    });
+
     content.addEventListener('click', (e) => {
         const bar = e.target.closest('[data-bucket-kind]');
         if (bar) {
             openBucketDetail(bar.dataset.bucketKind, bar.dataset.bucketLabel, Number(bar.dataset.bucketIndex));
             return;
         }
+        // Sections enrichies cliquables (V2.2, "augmenter les interactions") : affiche/mur des
+        // affiches/tags favoris/évènement récurrent - voir RetrospectiveView.js pour les
+        // data-attributes correspondants posés sur chaque tuile. close() d'abord pour data-event-id
+        // (ModalView, z-50, sous la rétrospective z-62 - resterait invisible sinon) ; pas pour
+        // data-recurring-title (bucket-detail-overlay, z-63, déjà au-dessus, se pose par-dessus
+        // sans avoir besoin de fermer, voir openBucketDetail au-dessus qui fait pareil).
+        const eventTile = e.target.closest('[data-event-id]');
+        if (eventTile) { close(); openEventById(eventTile.dataset.eventId); return; }
+        const recurringTile = e.target.closest('[data-recurring-title]');
+        if (recurringTile) { openRetroRecurringDetail(recurringTile.dataset.recurringTitle); return; }
+        const tagBtn = e.target.closest('button[data-tag]');
+        if (tagBtn) { close(); applyTagSearchFromOverlay(tagBtn.dataset.tag); return; }
+
+        // Carte "Toute l'histoire" (V2.4, "9") : rebascule sur le détail de l'année cliquée.
+        const historyCard = e.target.closest('[data-history-year]');
+        if (historyCard) {
+            currentRetrospectiveYear = Number(historyCard.dataset.historyYear);
+            retroShowingHistory = false;
+            renderCurrentYear();
+            return;
+        }
+
         const btn = e.target.closest('button[data-retro-year]');
         if (!btn || btn.disabled) return;
         currentRetrospectiveYear = Number(btn.dataset.retroYear);
@@ -1902,14 +2634,36 @@ function setupRetrospective() {
     content.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         const bar = e.target.closest('[data-bucket-kind]');
-        if (!bar) return;
-        e.preventDefault();
-        openBucketDetail(bar.dataset.bucketKind, bar.dataset.bucketLabel, Number(bar.dataset.bucketIndex));
+        if (bar) { e.preventDefault(); openBucketDetail(bar.dataset.bucketKind, bar.dataset.bucketLabel, Number(bar.dataset.bucketIndex)); return; }
+        const eventTile = e.target.closest('[data-event-id]');
+        if (eventTile) { e.preventDefault(); close(); openEventById(eventTile.dataset.eventId); return; }
+        const recurringTile = e.target.closest('[data-recurring-title]');
+        if (recurringTile) { e.preventDefault(); openRetroRecurringDetail(recurringTile.dataset.recurringTitle); return; }
+        const historyCard = e.target.closest('[data-history-year]');
+        if (historyCard) {
+            e.preventDefault();
+            currentRetrospectiveYear = Number(historyCard.dataset.historyYear);
+            retroShowingHistory = false;
+            renderCurrentYear();
+        }
     });
 
     const bucketOverlay = document.getElementById('bucket-detail-overlay');
-    const closeBucketDetail = () => bucketOverlay.classList.add('hidden');
+    // Origin-aware (V2.2, voir bucketDetailOrigin) : depuis le Profil organisateur, ce dernier a
+    // été explicitement masqué à l'ouverture du détail (z-index non empilable avec bucket-detail,
+    // voir openOrganizerWeekdayDetail) et doit donc être explicitement réaffiché ici - depuis la
+    // Rétrospective, elle est restée visible en dessous tout du long, rien d'autre à faire.
+    const closeBucketDetail = () => {
+        bucketOverlay.classList.add('hidden');
+        if (bucketDetailOrigin === 'organizer') {
+            document.getElementById('organizer-profile-overlay').classList.remove('hidden');
+        }
+        bucketDetailOrigin = null;
+    };
     document.getElementById('btn-close-bucket-detail').addEventListener('click', closeBucketDetail);
+    document.getElementById('bucket-detail-breadcrumb').addEventListener('click', (e) => {
+        if (e.target.closest('#bucket-detail-breadcrumb-back')) closeBucketDetail();
+    });
     bucketOverlay.addEventListener('click', (e) => {
         if (e.target === bucketOverlay) { closeBucketDetail(); return; }
         const card = e.target.closest('[data-idx]');
@@ -2035,6 +2789,94 @@ function generateOrganizerRecapImage(hostName, facts) {
     }, 'image/png');
 }
 
+// Image récap partageable de la rétrospective annuelle (V2.3) : même gabarit que
+// generateOrganizerRecapImage (voir ci-dessus) - canvas 1080x1080, aucune dépendance externe -
+// mais avec les chiffres-clés de l'année entière plutôt que d'un seul organisateur.
+function generateRetrospectiveRecapImage(year, facts) {
+    const SIZE = 1080;
+    const canvas = document.createElement('canvas');
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+    const ctx = canvas.getContext('2d');
+    const FONT = "'Plus Jakarta Sans', sans-serif";
+
+    const bgGrad = ctx.createRadialGradient(SIZE / 2, 0, 0, SIZE / 2, 0, SIZE);
+    bgGrad.addColorStop(0, '#111827');
+    bgGrad.addColorStop(1, '#06080c');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    ctx.fillStyle = '#6366f1';
+    ctx.font = `800 32px ${FONT}`;
+    ctx.textAlign = 'left';
+    ctx.fillText('2GELOG', 64, 96);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `600 26px ${FONT}`;
+    ctx.fillText('RÉTROSPECTIVE ANNUELLE', 64, 130);
+
+    ctx.fillStyle = '#f0f6fc';
+    ctx.font = `900 120px ${FONT}`;
+    ctx.fillText(String(year), 64, 260);
+
+    if (facts.topHost) {
+        ctx.fillStyle = '#a5b4fc';
+        ctx.font = `700 30px ${FONT}`;
+        ctx.fillText(`👑 Organisateur le plus actif : ${facts.topHost}`, 64, 300);
+    }
+
+    const tiles = [
+        { value: String(facts.totalSessions), label: 'SESSIONS ORGANISÉES', color: '#f0f6fc' },
+        { value: formatDurationLong(facts.totalTime), label: 'TEMPS CUMULÉ', color: '#818cf8' },
+        { value: `${facts.reliabilityPct}%`, label: 'SESSIONS MAINTENUES', color: '#34d399' },
+        { value: String(facts.distinctHosts), label: 'ORGANISATEURS DIFFÉRENTS', color: '#f0f6fc' }
+    ];
+    const tileW = (SIZE - 64 * 2 - 24) / 2;
+    const tileH = 190;
+    const tileTop = 380;
+    tiles.forEach((t, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const x = 64 + col * (tileW + 24);
+        const y = tileTop + row * (tileH + 24);
+        ctx.fillStyle = 'rgba(255,255,255,0.04)';
+        roundRect(ctx, x, y, tileW, tileH, 24);
+        ctx.fill();
+        ctx.fillStyle = t.color;
+        ctx.font = `900 64px ${FONT}`;
+        ctx.fillText(t.value, x + 32, y + 90, tileW - 64);
+        ctx.fillStyle = '#8b949e';
+        ctx.font = `700 22px ${FONT}`;
+        ctx.fillText(t.label, x + 32, y + 130, tileW - 64);
+    });
+
+    const achieved = computeBadges(facts).filter(b => b.achieved);
+    if (achieved.length > 0) {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = `700 24px ${FONT}`;
+        ctx.fillText('BADGES DÉBLOQUÉS', 64, tileTop + 2 * (tileH + 24) + 40);
+        ctx.font = `56px ${FONT}`;
+        ctx.fillStyle = '#f0f6fc';
+        ctx.fillText(achieved.map(b => b.emoji).join('   '), 64, tileTop + 2 * (tileH + 24) + 110);
+    }
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = `600 22px ${FONT}`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`Généré le ${new Date().toLocaleDateString('fr-FR')} · planning.2gether-asso.fr`, SIZE - 64, SIZE - 48);
+
+    canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `retrospective-${year}-2gelog.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    }, 'image/png');
+}
+
 /** Rectangle aux coins arrondis, réutilisé par generateOrganizerRecapImage (pas de roundRect natif fiable sur tous les navigateurs ciblés). */
 function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
@@ -2044,6 +2886,131 @@ function roundRect(ctx, x, y, w, h, r) {
     ctx.arcTo(x, y + h, x, y, r);
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
+}
+
+// Image structurée de la grille du calendrier affiché (V2.3, "10", bouton 🖼️ Image de
+// CalendarView.js) : remplace l'approche window.print()/@media print initiale (mise en page
+// navigateur - marges, sauts de page - trop peu fiable d'un navigateur/OS à l'autre pour un
+// rendu garanti) par un canvas dessiné nous-mêmes, sur le même principe que
+// generateOrganizerRecapImage/generateRetrospectiveRecapImage ci-dessus mais en vrai
+// quadrillage 7 colonnes (comme le planning à l'écran) plutôt qu'en tuiles de stats. Fond clair
+// (contrairement aux deux autres images récap) : pensé pour être imprimé/partagé tel quel, un
+// fond sombre y gaspillerait de l'encre. `lastFilteredEvents` (pas repo.getAll()) : reflète les
+// filtres actuellement actifs, comme les autres exports (.ics...).
+function generateMonthCalendarImage(calendar) {
+    const view = calendar.view;
+    const monthStart = view.currentStart;
+    const gridStart = view.activeStart;
+    const gridEnd = view.activeEnd;
+    const monthLabel = monthStart.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    const capMonthLabel = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+
+    const days = [];
+    for (let d = new Date(gridStart); d < gridEnd; d.setDate(d.getDate() + 1)) days.push(new Date(d));
+    const numWeeks = Math.max(1, Math.round(days.length / 7));
+
+    const byDay = {};
+    lastFilteredEvents.forEach(e => {
+        if (e.isPlanned) return;
+        const key = e.start.split('T')[0];
+        (byDay[key] = byDay[key] || []).push(e);
+    });
+    Object.values(byDay).forEach(list => list.sort((a, b) => a.start.localeCompare(b.start)));
+
+    const CELL_W = 240, CELL_H = 190, PAD = 56, HEADER_H = 100, DOW_H = 40;
+    const WIDTH = PAD * 2 + 7 * CELL_W;
+    const HEIGHT = PAD * 2 + HEADER_H + DOW_H + numWeeks * CELL_H;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const ctx = canvas.getContext('2d');
+    const FONT = "'Plus Jakarta Sans', sans-serif";
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#6366f1';
+    ctx.font = `800 24px ${FONT}`;
+    ctx.fillText('2GELOG', PAD, PAD + 26);
+    ctx.fillStyle = '#14161b';
+    ctx.font = `900 42px ${FONT}`;
+    ctx.fillText(capMonthLabel, PAD, PAD + 78);
+
+    const dowY = PAD + HEADER_H;
+    WEEKDAY_LABELS.forEach((label, i) => {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = `700 18px ${FONT}`;
+        ctx.textAlign = 'center';
+        ctx.fillText(label.toUpperCase(), PAD + i * CELL_W + CELL_W / 2, dowY + DOW_H - 12);
+    });
+
+    const gridTop = dowY + DOW_H;
+    const todayStr = DateUtils.toLocalDateStr(new Date());
+    const MAX_ROWS = 4;
+
+    days.forEach((day, idx) => {
+        const col = idx % 7;
+        const row = Math.floor(idx / 7);
+        const x = PAD + col * CELL_W;
+        const y = gridTop + row * CELL_H;
+        const dayStr = DateUtils.toLocalDateStr(day);
+        const inMonth = day.getMonth() === monthStart.getMonth();
+        const isToday = dayStr === todayStr;
+
+        ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, CELL_W, CELL_H);
+        if (isToday) {
+            ctx.fillStyle = 'rgba(99,102,241,0.08)';
+            ctx.fillRect(x, y, CELL_W, CELL_H);
+        }
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = inMonth ? (isToday ? '#6366f1' : '#14161b') : '#c3c7cf';
+        ctx.font = `800 20px ${FONT}`;
+        ctx.fillText(String(day.getDate()), x + CELL_W - 12, y + 26);
+
+        const dayEvents = byDay[dayStr] || [];
+        let chipY = y + 42;
+        dayEvents.slice(0, MAX_ROWS).forEach(e => {
+            ctx.fillStyle = e.col || '#6366f1';
+            ctx.fillRect(x + 8, chipY, 4, 18);
+            ctx.textAlign = 'left';
+            ctx.fillStyle = e.isCanceled ? '#c3c7cf' : '#2a2f3a';
+            ctx.font = `${e.isCanceled ? '400' : '600'} 14px ${FONT}`;
+            const label = (e.heure ? e.heure + ' ' : '') + e.title;
+            let display = label;
+            while (ctx.measureText(display).width > CELL_W - 28 && display.length > 3) display = display.slice(0, -2);
+            if (display !== label) display += '…';
+            ctx.fillText(display, x + 18, chipY + 14);
+            chipY += 22;
+        });
+        if (dayEvents.length > MAX_ROWS) {
+            ctx.fillStyle = '#8b949e';
+            ctx.font = `700 12px ${FONT}`;
+            ctx.textAlign = 'left';
+            ctx.fillText(`+${dayEvents.length - MAX_ROWS} de plus`, x + 18, chipY + 10);
+        }
+    });
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = `600 15px ${FONT}`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`Généré le ${new Date().toLocaleDateString('fr-FR')} · planning.2gether-asso.fr`, WIDTH - PAD, HEIGHT - 18);
+
+    canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `planning-${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}-2gelog.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    }, 'image/png');
 }
 
 // Affiche l'heure de la dernière synchronisation réussie (sur la pastille d'en-tête, déjà
@@ -2070,8 +3037,17 @@ async function loadData() {
     loadingEl.classList.remove('hidden');
 
     try {
-        const rawRows = await CSVParser.fetch(CONFIG.CSV_URL);
+        const [rawRows, fetchedBirthdays] = await Promise.all([
+            CSVParser.fetch(CONFIG.CSV_URL),
+            fetchBirthdays()
+        ]);
+        birthdaysList = fetchedBirthdays;
         dataAnomalies = validateRows(rawRows);
+        // Badge (V2.2, QOL) : signale des anomalies dans le tableur sans attendre qu'un
+        // organisateur pense à ouvrir le Mode Admin par curiosité (voir renderAnomaliesSection).
+        const anomalyBadge = document.getElementById('admin-anomaly-badge');
+        anomalyBadge.textContent = dataAnomalies.length;
+        anomalyBadge.classList.toggle('hidden', dataAnomalies.length === 0);
 
         repo.clear();
         rawRows.forEach(row => {
@@ -2081,8 +3057,8 @@ async function loadData() {
         computeAndMarkNewEvents(repo.getAll());
 
         updateTagsFilterBar(repo.getAll());
-        renderTypeFilterBar();
-        renderCategoryFilterBar();
+        renderTypeFilterBar(repo.getAll());
+        renderCategoryFilterBar(repo.getAll());
         renderHostFilterBar(repo.getAll());
         // currentViewMode peut déjà valoir 'timeline' au tout premier rendu (défaut mobile, voir
         // sa déclaration plus haut) : sans cet appel ici, le bouton Frise de l'en-tête ne
@@ -2090,6 +3066,7 @@ async function loadData() {
         applyViewButtonStyles();
         updateUIState();
         updateNextEventBanner();
+        checkSubscriptionChanges();
         checkUpcomingNotifications();
         renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
         openEventFromUrl();
@@ -2142,6 +3119,18 @@ function pushSearchHistory(query) {
     localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory));
 }
 
+// Gestion manuelle de l'historique (V2.2, QOL) : jusque-là seul le repli automatique "8 dernières
+// requêtes" existait, sans moyen de retirer une entrée gênante (recherche tapée par erreur) ou de
+// tout effacer d'un coup - même logique de reset que btn-hidden-categories pour les catégories masquées.
+function removeSearchHistoryItem(query) {
+    searchHistory = searchHistory.filter(q => q !== query);
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory));
+}
+function clearSearchHistory() {
+    searchHistory = [];
+    localStorage.removeItem(SEARCH_HISTORY_KEY);
+}
+
 function setupSearchInput() {
     const input = document.getElementById('recherche');
     const clearBtn = document.getElementById('btn-clear-search');
@@ -2162,10 +3151,21 @@ function setupSearchInput() {
 
     const hideSuggestions = () => suggestions.classList.add('hidden');
     const renderSuggestions = () => {
-        if (searchHistory.length === 0) { hideSuggestions(); return; }
+        // Vide aussi le contenu (pas seulement masqué) : sans ça, effacer l'historique en cours
+        // de session (voir data-clear-history plus bas, V2.2) laissait les anciens boutons morts
+        // dans le DOM, invisibles mais toujours là - inoffensif visuellement, mais pas propre.
+        if (searchHistory.length === 0) { suggestions.innerHTML = ''; hideSuggestions(); return; }
         suggestions.innerHTML = `
-            <div class="text-[9px] font-bold uppercase tracking-wider text-slate-500 px-2 pt-1 pb-1.5">🕓 Recherches récentes</div>
-            ${searchHistory.map(q => `<button data-query="${escapeHtml(q)}" class="w-full text-left text-xs text-slate-300 hover:text-white hover:bg-white/5 px-2 py-1.5 rounded-lg truncate transition-all">${escapeHtml(q)}</button>`).join('')}
+            <div class="flex items-center justify-between px-2 pt-1 pb-1.5">
+                <span class="text-3xs font-bold uppercase tracking-wider text-slate-500">🕓 Recherches récentes</span>
+                <button data-clear-history class="text-3xs font-bold text-slate-500 hover:text-rose-300 transition-colors">Effacer</button>
+            </div>
+            ${searchHistory.map(q => `
+                <div class="flex items-center group">
+                    <button data-query="${escapeHtml(q)}" class="flex-1 min-w-0 text-left text-xs text-slate-300 hover:text-white hover:bg-white/5 px-2 py-1.5 rounded-lg truncate transition-all">${escapeHtml(q)}</button>
+                    <button data-remove-query="${escapeHtml(q)}" title="Retirer cette recherche" aria-label="Retirer cette recherche" class="shrink-0 p-1.5 rounded-lg text-slate-600 hover:text-rose-300 hover:bg-rose-500/10 opacity-0 group-hover:opacity-100 transition-all">${Icons.x('w-3 h-3 shrink-0')}</button>
+                </div>
+            `).join('')}
         `;
         suggestions.classList.remove('hidden');
     };
@@ -2185,6 +3185,10 @@ function setupSearchInput() {
     input.addEventListener('blur', () => setTimeout(hideSuggestions, 150));
 
     suggestions.addEventListener('click', (e) => {
+        const clearHistoryBtn = e.target.closest('button[data-clear-history]');
+        if (clearHistoryBtn) { clearSearchHistory(); renderSuggestions(); return; }
+        const removeBtn = e.target.closest('button[data-remove-query]');
+        if (removeBtn) { removeSearchHistoryItem(removeBtn.dataset.removeQuery); renderSuggestions(); return; }
         const btn = e.target.closest('button[data-query]');
         if (!btn) return;
         input.value = btn.dataset.query;
@@ -2216,11 +3220,41 @@ function setupSearchInput() {
     });
 }
 
+// Halo qui suit le curseur au survol d'une carte (V2.2, voir .glass-card::before dans index.html) :
+// UN SEUL écouteur mousemove délégué sur tout le document plutôt qu'un par carte (des dizaines à
+// des centaines de cartes existent selon la vue) - throttlé via requestAnimationFrame pour ne
+// jamais poser plus d'une mise à jour de style par frame, même si mousemove se déclenche plus
+// souvent que ça. Ignore lui-même le tactile (aucun mousemove n'y est émis de toute façon), la
+// media query (hover:hover) dans le CSS s'occupe déjà d'exclure visuellement ce cas.
+function setupCardCursorGlow() {
+    let pendingEvent = null;
+    let rafScheduled = false;
+
+    const apply = () => {
+        rafScheduled = false;
+        const card = pendingEvent.target.closest('.glass-card');
+        if (!card) return;
+        const rect = card.getBoundingClientRect();
+        card.style.setProperty('--mouse-x', `${pendingEvent.clientX - rect.left}px`);
+        card.style.setProperty('--mouse-y', `${pendingEvent.clientY - rect.top}px`);
+    };
+
+    document.addEventListener('mousemove', (e) => {
+        pendingEvent = e;
+        if (!rafScheduled) {
+            rafScheduled = true;
+            requestAnimationFrame(apply);
+        }
+    });
+}
+
 // Raccourcis clavier supplémentaires (QOL #20), en plus de "/" (recherche, voir
-// setupSearchInput) et Échap (voir setupEscapeToClose) : T pour aujourd'hui, ←/→ pour
-// naviguer dans le calendrier - toujours désactivés pendant la frappe dans un champ, et les
-// flèches seulement quand le calendrier est bien la vue affichée (pas en recherche/Frise/Carte,
-// où elles n'auraient aucun sens et pourraient surprendre en cas de focus resté sur la page).
+// setupSearchInput) et Échap (voir setupEscapeToClose) : T pour aujourd'hui, F/C pour Frise/Carte
+// (V2.2, cohérence : T avait son raccourci mais pas ses deux voisins du même groupe de boutons
+// d'en-tête), ←/→ pour naviguer dans le calendrier - toujours désactivés pendant la frappe dans
+// un champ, et les flèches seulement quand le calendrier est bien la vue affichée (pas en
+// recherche/Frise/Carte, où elles n'auraient aucun sens et pourraient surprendre en cas de focus
+// resté sur la page).
 function setupExtraKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
         if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -2230,6 +3264,16 @@ function setupExtraKeyboardShortcuts() {
         if (e.key === 't' || e.key === 'T') {
             e.preventDefault();
             goToTodayView();
+            return;
+        }
+        if (e.key === 'f' || e.key === 'F') {
+            e.preventDefault();
+            document.getElementById('btn-toggle-timeline').click();
+            return;
+        }
+        if (e.key === 'c' || e.key === 'C') {
+            e.preventDefault();
+            document.getElementById('btn-toggle-map').click();
             return;
         }
         if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -2274,6 +3318,7 @@ async function initApp() {
         // Purement cosmétique et indépendant des données du tableur : posé tôt, avant même
         // le chargement du CSV.
         setupSeasonalTheme();
+        setupThemeToggle();
 
         // PWA : coquille + dernier CSV connu mis en cache pour un fonctionnement hors-ligne
         // (voir sw.js). Ignoré silencieusement sur un navigateur qui ne supporte pas les
@@ -2288,6 +3333,10 @@ async function initApp() {
         // Restaure les filtres de la dernière visite avant le premier rendu, pour que
         // les barres de filtres et le calendrier reflètent directement le bon état.
         restoreFiltersFromStorage();
+        // Un lien partagé (voir buildFiltersShareUrl) prime sur les filtres restaurés du
+        // localStorage - même logique que ?today=1 ci-dessous : intention explicite de la
+        // personne qui vient de cliquer ce lien précis.
+        applyFiltersFromUrl();
         loadHiddenCategories();
         loadSavedViews();
         renderSavedViewsSelect();
@@ -2314,8 +3363,22 @@ async function initApp() {
             if (ev) ModalView.open(ev);
         });
 
+        // Idem pour le widget "Semaine prochaine" (V2.3, "16").
+        document.getElementById('nextweek-list').addEventListener('click', (e) => {
+            const card = e.target.closest('[data-idx]');
+            if (!card) return;
+            const ev = nextWeekEventsCache[Number(card.dataset.idx)];
+            if (ev) ModalView.open(ev);
+        });
+
         // Idem pour le listing complet affiché lors d'une recherche.
         document.getElementById('search-results').addEventListener('click', (e) => {
+            const orderToggle = e.target.closest('[data-search-order-toggle]');
+            if (orderToggle) {
+                searchResultsSortOrder = searchResultsSortOrder === 'asc' ? 'desc' : 'asc';
+                updateUIState();
+                return;
+            }
             const card = e.target.closest('[data-idx]');
             if (!card) return;
             const ev = searchResultsCache[Number(card.dataset.idx)];
@@ -2328,6 +3391,12 @@ async function initApp() {
             if (orderToggle) {
                 timelineSortOrder = timelineSortOrder === 'asc' ? 'desc' : 'asc';
                 updateUIState();
+                return;
+            }
+            // Bouton persistant "Aujourd'hui" (V2.2, QOL) : re-scroll jusqu'au repère sans
+            // attendre le seul auto-scroll à l'ouverture de la Frise (voir justOpened plus bas).
+            if (e.target.closest('[data-timeline-scroll-today]')) {
+                document.getElementById('timeline-today-marker')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 return;
             }
             const yearBtn = e.target.closest('[data-timeline-year]');
@@ -2345,9 +3414,11 @@ async function initApp() {
         // Idem pour la vue "Aujourd'hui" (voir TodayView.js).
         document.getElementById('today-view').addEventListener('click', (e) => {
             const card = e.target.closest('[data-idx]');
-            if (!card) return;
-            const ev = todayViewCache[Number(card.dataset.idx)];
-            if (ev) ModalView.open(ev);
+            if (card) { const ev = todayViewCache[Number(card.dataset.idx)]; if (ev) ModalView.open(ev); return; }
+            // "Il y a un an, ce jour-là" (V2.3, "14") : ces tuiles ne font pas partie de
+            // todayViewCache (voir TodayView.js) - identifiées par data-event-id, pas data-idx.
+            const yearAgoCard = e.target.closest('[data-event-id]');
+            if (yearAgoCard) openEventById(yearAgoCard.dataset.eventId);
         });
 
         // Bascule Calendrier <-> Frise/Carte : la recherche (isSearching) prime toujours sur ce
@@ -2371,30 +3442,59 @@ async function initApp() {
             applyViewButtonStyles();
             if (currentViewMode === 'map') {
                 const map = initMeetupMap('meetup-map');
-                // Le conteneur était caché (display:none) lors de l'init : Leaflet a calculé sa
-                // taille sur une boîte à 0px, invalidateSize() la recalcule maintenant qu'elle
-                // est visible (sinon la carte reste tronquée/mal centrée tant qu'on ne zoome pas).
-                setTimeout(() => map.invalidateSize(), 50);
+                // Le conteneur est encore caché (display:none) à ce stade - Leaflet mesurerait une
+                // boîte à 0px s'il fallait attendre updateUIState() plus bas pour le révéler (V2.2,
+                // bug corrigé après retour : le cadrage automatique fitBounds du tout premier
+                // affichage, calculé par updateMeetupMap DANS updateUIState juste après, se basait
+                // alors sur cette taille à 0px et produisait un cadrage aberrant - un
+                // invalidateSize() différé de 50ms ne le rattrapait pas, puisqu'il ne fait que
+                // corriger la taille, jamais refaire le fitBounds lui-même). Révélé et mesuré ICI,
+                // avant tout calcul de cadrage, pour que updateMeetupMap parte d'une taille correcte.
+                document.getElementById('map-view').classList.remove('hidden');
+                map.invalidateSize();
             }
             updateUIState();
         });
 
+        // Vue Année (V2.4, "5") - même bascule que Frise/Carte/Aujourd'hui ci-dessus.
+        const yearBtn = document.getElementById('btn-toggle-year');
+        yearBtn.addEventListener('click', () => {
+            currentViewMode = currentViewMode === 'year' ? 'calendar' : 'year';
+            // Reparle toujours de l'année en cours à l'ouverture (même logique que timelineYear
+            // pour la Frise) : "commence par défaut par aujourd'hui" doit rester vrai même après
+            // être resté sur une autre année lors d'une visite précédente de cette vue.
+            if (currentViewMode === 'year') yearViewYear = new Date().getFullYear();
+            applyViewButtonStyles();
+            updateUIState();
+        });
+        document.getElementById('year-view').addEventListener('click', (e) => {
+            if (e.target.closest('#year-view-prev')) { yearViewYear--; renderYearView(document.getElementById('year-view'), repo.getAll(), yearViewYear); return; }
+            if (e.target.closest('#year-view-next')) { yearViewYear++; renderYearView(document.getElementById('year-view'), repo.getAll(), yearViewYear); return; }
+            const dateBtn = e.target.closest('button[data-year-date]');
+            if (dateBtn) jumpToDate(dateBtn.dataset.yearDate);
+        });
+
         document.getElementById('btn-goto-today').addEventListener('click', goToTodayView);
         setupDensityToggle();
+        setupLargeTextToggle();
+        setupMapRadiusFilter();
 
         setupSidebarToggle();
         setupStatsToggle();
         setupUpcomingToggle();
+        setupNextWeekToggle();
         setupFiltersSidebarToggle();
         setupAdminToolsMenu();
         setupAdminMode();
         setupRetrospective();
         setupOrganizerProfile();
         setupLocationProfile();
+        setupOnboardingTour();
         setupPatchNotes();
         setupHelpOverlay();
         setupEscapeToClose();
         setupExtraKeyboardShortcuts();
+        setupCardCursorGlow();
         setupRemindersOverlay();
         setupKioskMode();
 
@@ -2417,43 +3517,40 @@ async function initApp() {
         document.getElementById('btn-export-ics').addEventListener('click', () => {
             const filename = `planning-2gelog-${DateUtils.toLocalDateStr(new Date())}.ics`;
             IcsExporter.download(lastFilteredEvents, filename);
+            // Toast (V2.2, QOL - cohérence avec btn-subscribe-ics/btn-export-discord qui
+            // confirment déjà leur action) : sans ça, rien à l'écran ne confirmait que le
+            // téléchargement avait bien démarré.
+            showToast(`Fichier .ics téléchargé (${lastFilteredEvents.length} événement${lastFilteredEvents.length > 1 ? 's' : ''})`, { icon: Icons.calendarPlus('w-3.5 h-3.5 shrink-0 text-indigo-300') });
         });
 
         // Lien d'abonnement (webcal://) vers le flux régénéré en continu par la CI (voir
         // scripts/generate-ics.js) : à la différence du bouton 📅 .ics ci-dessus (un instantané
         // ponctuel à réimporter à la main), ce lien ne se copie qu'une fois dans l'appli
         // calendrier de l'utilisateur, qui se resynchronise ensuite tout seul.
-        document.getElementById('btn-subscribe-ics').addEventListener('click', async (e) => {
+        document.getElementById('btn-subscribe-ics').addEventListener('click', async () => {
             const webcalUrl = CONFIG.SITE_URL.replace(/^https?:\/\//, 'webcal://') + 'ics/planning.ics';
-            const btn = e.currentTarget;
             try {
                 await navigator.clipboard.writeText(webcalUrl);
-                const original = btn.innerHTML;
-                btn.innerHTML = '✅ Copié !';
-                setTimeout(() => { btn.innerHTML = original; }, 1500);
+                showToast("Lien d'abonnement copié !", { icon: Icons.rss('w-3.5 h-3.5 shrink-0 text-indigo-300') });
             } catch {
                 window.prompt("Copiez ce lien d'abonnement dans votre appli calendrier :", webcalUrl);
             }
         });
 
-        document.getElementById('btn-export-discord').addEventListener('click', async (e) => {
-            const btn = e.currentTarget;
-            const original = btn.innerHTML;
+        document.getElementById('btn-export-discord').addEventListener('click', async () => {
             const copied = await DiscordExporter.copyToClipboard(repo.getAll());
-            if (copied) {
-                btn.innerHTML = '✅ Copié !';
-                setTimeout(() => { btn.innerHTML = original; }, 1500);
-            }
+            if (copied) showToast('Message copié !', { icon: Icons.messageCircle('w-3.5 h-3.5 shrink-0 text-indigo-300') });
         });
 
         // CalendarView pilote entièrement l'instance FullCalendar (rendu + clic).
-        calendarInstance = CalendarView.create('calendar', (ev) => ModalView.open(ev));
+        calendarInstance = CalendarView.create('calendar', (ev) => ModalView.open(ev), (cal) => generateMonthCalendarImage(cal));
         calendarInstance.render();
 
         setupSearchInput();
         setupDateRangeFilter();
         setupSavedViews();
         setupMiniCalendar();
+        setupActivityHeatmapJump();
 
         document.getElementById('filter-categories-container').addEventListener('click', (e) => {
             const hideBtn = e.target.closest('button[data-hide-cat]');
@@ -2465,15 +3562,19 @@ async function initApp() {
                 // vouloir ne plus jamais voir) - repli sur "Tous".
                 if (currentCategory === cat && hiddenCategories.has(cat)) currentCategory = 'all';
                 saveHiddenCategories();
-                renderCategoryFilterBar();
+                renderCategoryFilterBar(repo.getAll());
                 saveFiltersToStorage();
                 updateUIState();
                 return;
             }
             const btn = e.target.closest('button[data-cat]');
             if (!btn) return;
-            setActiveCategoryButton(btn);
-            currentCategory = btn.dataset.cat;
+            // Reclique sur la catégorie déjà active -> repli sur "Tous" (V2.2, cohérence avec
+            // types/tags/organisateurs qui basculent tous de la même façon sur un second clic) :
+            // avant, seul le bouton "Tous" permettait de désactiver un filtre de catégorie.
+            const cat = btn.dataset.cat;
+            currentCategory = (currentCategory === cat && cat !== 'all') ? 'all' : cat;
+            setActiveCategoryButton(document.querySelector(`#filter-categories-container button[data-cat="${currentCategory === 'all' ? 'all' : CSS.escape(currentCategory)}"]`));
             saveFiltersToStorage();
             updateUIState();
         });
@@ -2481,7 +3582,7 @@ async function initApp() {
         document.getElementById('btn-hidden-categories').addEventListener('click', () => {
             hiddenCategories.clear();
             saveHiddenCategories();
-            renderCategoryFilterBar();
+            renderCategoryFilterBar(repo.getAll());
             updateUIState();
         });
 
@@ -2490,7 +3591,7 @@ async function initApp() {
             if (!btn) return;
             const type = btn.dataset.type;
             currentTypeFilter = (currentTypeFilter === type || type === "") ? null : type;
-            renderTypeFilterBar();
+            renderTypeFilterBar(repo.getAll());
             saveFiltersToStorage();
             updateUIState();
         });

@@ -8,7 +8,7 @@ import { Icons } from './Icons.js';
 const ICON_ASPECT_CLASS = "aspect-[8/9]";
 
 // Pastille pleine plutôt qu'un emoji rond (🔵🟢⚪) : rendu identique quel que soit l'OS/
-// navigateur (V2.5, voir Icons.js pour la même logique côté icônes SVG).
+// navigateur (V2.2, voir Icons.js pour la même logique côté icônes SVG).
 const STATUS_STYLES = {
     "Prévu": { dot: "bg-sky-400", classes: "text-sky-400 bg-sky-500/10 border-sky-500/20" },
     "En Cours": { dot: "bg-emerald-400", classes: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
@@ -22,7 +22,7 @@ const STATUS_STYLES = {
 export function renderStatusBadge(status) {
     const style = STATUS_STYLES[status];
     if (!style) return '';
-    return `<span class="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md border ${style.classes}"><span class="w-1.5 h-1.5 rounded-full ${style.dot} shrink-0" aria-hidden="true"></span>${escapeHtml(status)}</span>`;
+    return `<span class="inline-flex items-center gap-1 text-xxs font-bold px-2 py-0.5 rounded-md border ${style.classes}"><span class="w-1.5 h-1.5 rounded-full ${style.dot} shrink-0" aria-hidden="true"></span>${escapeHtml(status)}</span>`;
 }
 
 /**
@@ -76,6 +76,28 @@ export function isGenuinelyLive(e) {
     return (new Date() - new Date(e.start)) <= CONFIG.LIVE_GRACE_HOURS * 3600000;
 }
 
+/**
+ * Pourcentage écoulé d'un événement "En Cours" dont la fin est connue et fiable (V2.2) - null
+ * si non applicable (pas en direct, annulé, pas de fin connue, ou fin seulement estimée : voir
+ * isGenuinelyLive, mêmes critères de confiance que la pastille/le bandeau "Prochain événement").
+ * @param {Object} e
+ * @returns {number|null} 0-100, ou null
+ */
+export function liveProgressPercent(e) {
+    if (!isGenuinelyLive(e) || e.isCanceled || !e.end || e.endIsEstimate) return null;
+    const start = new Date(e.start).getTime();
+    const end = new Date(e.end).getTime();
+    if (!(end > start)) return null;
+    return Math.max(0, Math.min(100, ((Date.now() - start) / (end - start)) * 100));
+}
+
+/** Fine barre de progression en bas de carte pour un "En Cours" dont la fin est fiable (V2.2). */
+function renderLiveProgressBar(e) {
+    const pct = liveProgressPercent(e);
+    if (pct === null) return '';
+    return `<div class="absolute bottom-0 left-0 right-0 h-[3px] bg-black/40" aria-hidden="true"><div class="h-full bg-emerald-400" style="width:${pct.toFixed(1)}%"></div></div>`;
+}
+
 /** Petite pastille animée pour les événements "En Cours", en plus du badge de statut texte. */
 function renderLiveDot(e) {
     if (!isGenuinelyLive(e) || e.isCanceled) return '';
@@ -90,13 +112,13 @@ function renderLiveDot(e) {
 /** Badge "Nouveau" pour un événement ajouté au tableur depuis la dernière visite (voir main.js). */
 function renderNewBadge(e) {
     if (!e.isNew) return '';
-    return `<span class="inline-flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.badgePlus('w-3 h-3 shrink-0')}Nouveau</span>`;
+    return `<span class="inline-flex items-center gap-1 text-xxs font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">${Icons.badgePlus('w-3 h-3 shrink-0')}Nouveau</span>`;
 }
 
 /** Badge "Rappel activé" si ce titre (série entière) est suivi, voir ReminderService/ModalView. */
 function renderReminderBadge(e) {
     if (!ReminderService.isSet(e.title)) return '';
-    return `<span class="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">${Icons.bell('w-3 h-3 shrink-0')}Rappel activé</span>`;
+    return `<span class="inline-flex items-center gap-1 text-xxs font-bold text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">${Icons.bell('w-3 h-3 shrink-0')}Rappel activé</span>`;
 }
 
 /**
@@ -113,22 +135,24 @@ function renderCompactRow(e, readableDate) {
     const detailsEpisode = escapeHtml(getEpisodeLabel(e));
     const iconSrc = getIconSrc(e);
 
+    const liveBorderCompact = isGenuinelyLive(e) && !e.isCanceled ? 'live-glow-border' : '';
     return `
-        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden ${e.isCanceled ? 'opacity-30 line-through' : ''}">
+        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorderCompact}" style="border-left: 3px solid ${e.col};">
             <img src="${iconSrc}" alt="" class="w-6 ${ICON_ASPECT_CLASS} rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
                     ${renderLiveDot(e)}
                     <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
-                    ${e.heure ? `<span class="inline-flex items-center gap-1 text-[11px] font-extrabold text-indigo-400 shrink-0">${Icons.clock('w-3 h-3 shrink-0')}${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
+                    ${e.heure ? `<span class="inline-flex items-center gap-1 text-xxs font-extrabold text-indigo-400 shrink-0">${Icons.clock('w-3 h-3 shrink-0')}${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
-                    <span class="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded border border-white/5 bg-black/20" style="color: ${e.col}" title="${type}">${type}</span>
+                    <span class="text-2xs font-bold shrink-0 px-1.5 py-0.5 rounded border" style="color:${e.col}; background:linear-gradient(135deg, ${e.col}26, ${e.col}0d); border-color:${e.col}40;" title="${type}">${type}</span>
                     ${renderStatusBadge(e.progressStatus)}
-                    ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
-                    ${readableDate ? `<span class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</span>` : ''}
+                    ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-xxs font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
+                    ${readableDate ? `<span class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</span>` : ''}
                 </div>
             </div>
+            ${renderLiveProgressBar(e)}
         </div>
     `;
 }
@@ -152,7 +176,7 @@ export function renderEventCard(e, readableDate = null) {
 
     const tagsRender = (e.tags && e.tags.length > 0)
         ? `<div class="flex flex-wrap gap-1 mt-1.5">
-            ${e.tags.slice(0, 4).map(t => `<span class="text-[11px] bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`).join('')}
+            ${e.tags.slice(0, 4).map(t => `<span class="text-xxs bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`).join('')}
            </div>`
         : '';
 
@@ -161,8 +185,13 @@ export function renderEventCard(e, readableDate = null) {
            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/50 to-black/20"></div>`
         : '';
 
+    const liveBorder = isGenuinelyLive(e) && !e.isCanceled ? 'live-glow-border' : '';
+    // `has-poster` (V2.2, thème clair) : le dégradé sombre de posterLayer ci-dessus reste sombre
+    // dans les deux thèmes (lisibilité du texte sur une AFFICHE/photo, indépendante du thème de
+    // l'appli) - cette classe permet à index.html de restaurer le texte clair par-dessus en thème
+    // clair, là où le reste du texte de l'appli passe sombre (voir html[data-theme="light"] .has-poster).
     return `
-        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 my-1 rounded-xl ${e.isCanceled ? 'opacity-30 line-through' : ''}">
+        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 my-1 rounded-xl ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorder} ${posterUrl ? 'has-poster' : ''}" style="border-left: 3px solid ${e.col};">
             ${posterLayer}
             <div class="relative z-10 flex flex-col">
                 <div class="flex items-start justify-between space-x-1.5 w-full">
@@ -173,25 +202,26 @@ export function renderEventCard(e, readableDate = null) {
                                 ${renderLiveDot(e)}
                                 <div class="text-sm font-bold text-slate-100 truncate tracking-tight" title="${title}">${title}</div>
                             </div>
-                            <div class="text-[11px] font-bold text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
-                                <span class="text-[11px] tracking-wide text-indigo-400 bg-indigo-500/5 border border-indigo-500/10 px-1.5 py-0.5 rounded-md" style="color: ${e.col}">${type}</span>
+                            <div class="text-xxs font-bold text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
+                                <span class="text-xxs tracking-wide px-1.5 py-0.5 rounded-md border" style="color:${e.col}; background:linear-gradient(135deg, ${e.col}26, ${e.col}0d); border-color:${e.col}40;">${type}</span>
                                 ${e.heure ? `<span class="inline-flex items-center gap-1 text-indigo-400 font-extrabold">${Icons.clock('w-3 h-3 shrink-0')}${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
                             </div>
                         </div>
                     </div>
-                    ${readableDate ? `<div class="text-[11px] font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</div>` : ''}
+                    ${readableDate ? `<div class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</div>` : ''}
                 </div>
 
                 <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
                     ${renderStatusBadge(e.progressStatus)}
                     ${renderNewBadge(e)}
                     ${renderReminderBadge(e)}
-                    ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
-                    ${location ? `<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
+                    ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-xxs font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
+                    ${location ? `<span class="inline-flex items-center gap-1 text-xxs font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
                 </div>
 
                 ${tagsRender}
             </div>
+            ${renderLiveProgressBar(e)}
         </div>
     `;
 }
@@ -212,8 +242,8 @@ export function renderContinuationChip(e, isLastSegment) {
     const suffix = isLastSegment && endHeure ? ` · jusqu'à ${escapeHtml(endHeure)}` : ' (suite)';
     return `
         <div class="flex items-center gap-1 w-full h-full px-1.5 py-0.5 overflow-hidden rounded-md border-l-2 opacity-80 ${e.isCanceled ? 'line-through' : ''}" style="background: ${color}1a; border-color: ${color};">
-            <span class="text-[11px] text-white/60 shrink-0">↳</span>
-            <span class="text-[11px] text-white/70 truncate">${title}${suffix}</span>
+            <span class="text-xxs text-white/60 shrink-0">↳</span>
+            <span class="text-xxs text-white/70 truncate">${title}${suffix}</span>
         </div>
     `;
 }
@@ -237,9 +267,9 @@ export function renderCompactEventChip(e) {
             <div class="min-w-0 flex-1 leading-tight">
                 <div class="flex items-center gap-1 min-w-0">
                     ${renderLiveDot(e)}
-                    <div class="text-[13px] font-bold text-white truncate" title="${title}">${title}</div>
+                    <div class="text-13 font-bold text-white truncate" title="${title}">${title}</div>
                 </div>
-                <div class="text-[11px] text-white/70 truncate">${e.heure ? e.heure + getOvernightSuffix(e) : ''}${detailsEpisode ? ' · ' + detailsEpisode : ''}</div>
+                <div class="text-xxs text-white/70 truncate">${e.heure ? e.heure + getOvernightSuffix(e) : ''}${detailsEpisode ? ' · ' + detailsEpisode : ''}</div>
             </div>
         </div>
     `;

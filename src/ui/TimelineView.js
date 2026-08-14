@@ -1,6 +1,8 @@
 import { groupByTitle, renderRow, renderGroupRow, wireGroupToggle } from './SearchResultsView.js';
 import { Icons } from './Icons.js';
 import { DateUtils } from '../utils/DateUtils.js';
+import { EmptyIllustrations, renderEmptyState } from './EmptyState.js';
+import { getAvailableYears } from './RetrospectiveView.js';
 
 const MONTH_LABELS_LONG = [
     'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -37,14 +39,19 @@ function todayDot() {
     </span>`;
 }
 
-function renderYearNav(year) {
+// `availableYears` (V2.2, QOL - cohérence avec le sélecteur d'année de la Rétrospective, voir
+// RetrospectiveView.js) : désactive prev/next vers une année sans aucun événement, plutôt que de
+// naviguer dans le vide et ne s'en apercevoir qu'après (état vide affiché seulement APRÈS le saut).
+function renderYearNav(year, availableYears) {
     const currentYear = new Date().getFullYear();
+    const hasPrev = availableYears.includes(year - 1);
+    const hasNext = availableYears.includes(year + 1);
     return `
         <div class="flex items-center justify-center gap-3 sm:gap-4 mb-2">
-            <button data-timeline-year="${year - 1}" aria-label="Année précédente" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronLeft('w-5 h-5')}</button>
+            <button data-timeline-year="${year - 1}" ${hasPrev ? '' : 'disabled'} aria-label="Année précédente" class="text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronLeft('w-5 h-5')}</button>
             <h2 class="text-xl sm:text-2xl font-black text-white">Frise ${year}</h2>
-            ${year !== currentYear ? `<button data-timeline-year="${currentYear}" title="Revenir à l'année en cours" class="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md uppercase tracking-wider">Aujourd'hui</button>` : ''}
-            <button data-timeline-year="${year + 1}" aria-label="Année suivante" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronRight('w-5 h-5')}</button>
+            ${year !== currentYear ? `<button data-timeline-year="${currentYear}" title="Revenir à l'année en cours" class="text-2xs font-bold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md uppercase tracking-wider">Aujourd'hui</button>` : ''}
+            <button data-timeline-year="${year + 1}" ${hasNext ? '' : 'disabled'} aria-label="Année suivante" class="text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 p-1.5 rounded-lg hover:bg-white/5 transition-all">${Icons.chevronRight('w-5 h-5')}</button>
         </div>
     `;
 }
@@ -70,11 +77,16 @@ function renderYearNav(year) {
  */
 export function renderTimeline(container, events, order = 'asc', year = new Date().getFullYear(), scrollToToday = false) {
     const yearEvents = events.filter(e => new Date(e.start).getFullYear() === year);
+    const isCurrentYear = year === new Date().getFullYear();
     const headerHtml = `
         <div class="max-w-2xl mx-auto mb-2">
-            ${renderYearNav(year)}
-            <div class="flex justify-end">
-                <button data-timeline-order-toggle title="Inverser l'ordre chronologique de la frise" class="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+            ${renderYearNav(year, getAvailableYears(events))}
+            <div class="flex justify-end gap-2">
+                ${isCurrentYear ? `
+                <button data-timeline-scroll-today title="Revenir au repère Aujourd'hui" class="inline-flex items-center gap-1.5 text-xxs font-bold text-rose-300 hover:text-rose-200 px-3 py-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 transition-all">
+                    ${Icons.mapPin('w-3.5 h-3.5 shrink-0')}Aujourd'hui
+                </button>` : ''}
+                <button data-timeline-order-toggle title="Inverser l'ordre chronologique de la frise" class="inline-flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                     ${order === 'asc' ? `${Icons.arrowDown('w-3.5 h-3.5 shrink-0')}Plus ancien d'abord` : `${Icons.arrowUp('w-3.5 h-3.5 shrink-0')}Plus récent d'abord`}
                 </button>
             </div>
@@ -82,7 +94,10 @@ export function renderTimeline(container, events, order = 'asc', year = new Date
     `;
 
     if (yearEvents.length === 0) {
-        container.innerHTML = `${headerHtml}<div class="text-center text-sm text-slate-500 py-20">Aucun événement à afficher pour ${year} avec ces filtres.</div>`;
+        container.innerHTML = `${headerHtml}${renderEmptyState({
+            illustration: EmptyIllustrations.calendarEmpty('w-16 h-16'),
+            title: `Aucun événement à afficher pour ${year} avec ces filtres.`
+        })}`;
         return [];
     }
 
@@ -122,7 +137,7 @@ export function renderTimeline(container, events, order = 'asc', year = new Date
     if (showTodayMarker && !byMonth.has(todayMonth)) byMonth.set(todayMonth, []);
 
     const monthOrder = [...byMonth.keys()].sort((a, b) => order === 'asc' ? a - b : b - a);
-    const todayMarkerHtml = `<div id="timeline-today-marker" class="inline-flex items-center gap-1 text-[11px] font-black text-rose-400 uppercase tracking-widest pt-0.5">${Icons.mapPin('w-3 h-3 shrink-0')}Aujourd'hui — ${now.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</div>`;
+    const todayMarkerHtml = `<div id="timeline-today-marker" class="inline-flex items-center gap-1 text-xxs font-black text-rose-400 uppercase tracking-widest pt-0.5">${Icons.mapPin('w-3 h-3 shrink-0')}Aujourd'hui — ${now.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</div>`;
 
     let nodesHtml = '';
     monthOrder.forEach(m => {
@@ -157,8 +172,17 @@ export function renderTimeline(container, events, order = 'asc', year = new Date
     if (scrollToToday) {
         // scrollIntoView cible l'ancêtre scrollable réel (le conteneur #timeline-view a son
         // propre overflow-y-auto) : { block: 'center' } centre le repère dans CE conteneur,
-        // pas dans la fenêtre entière.
-        container.querySelector('#timeline-today-marker')?.scrollIntoView({ block: 'center', behavior: 'auto' });
+        // pas dans la fenêtre entière. Double requestAnimationFrame (V2.2, bug corrigé après test :
+        // appelé tout de suite après avoir posé innerHTML, la mise en page n'était pas toujours
+        // stabilisée - le repère se retrouvait scrollé hors-vue malgré l'appel) - laisse le
+        // navigateur terminer un cycle complet de mise en page + peinture avant de mesurer où
+        // scroller, même mécanique de principe que le setTimeout de highlightCalendarDate dans
+        // main.js pour la même catégorie de souci de timing.
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                container.querySelector('#timeline-today-marker')?.scrollIntoView({ block: 'center', behavior: 'auto' });
+            });
+        });
     }
 
     return yearEvents;

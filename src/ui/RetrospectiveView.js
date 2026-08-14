@@ -5,6 +5,8 @@ import { CONFIG } from '../config.js';
 import { renderEventCard } from './EventCardTemplate.js';
 import { computeBadges } from '../services/BadgeService.js';
 import { Icons } from './Icons.js';
+import { animateCountUp } from '../utils/CountUp.js';
+import { EmptyIllustrations, renderEmptyState } from './EmptyState.js';
 
 export const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
 export const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -46,22 +48,33 @@ export function getAvailableYears(events) {
     return [...years].sort((a, b) => b - a);
 }
 
-function heroTile(value, label, accentClass = "text-white") {
+// `id`/`formatter` optionnels (V2.2) : quand fournis, la tuile s'affiche d'abord à 0 puis grimpe
+// jusqu'à `rawValue` via animateCountUp (appelé par le code appelant une fois le HTML monté au
+// DOM) - `rawValue` doit alors être le nombre brut (pas déjà formaté en texte).
+function heroTile(rawValue, label, accentClass = "text-white", id = null, formatter = (n) => String(n)) {
+    const display = id ? formatter(0) : formatter(rawValue);
     return `
         <div class="glass-panel rounded-2xl p-5 sm:p-6 text-center">
-            <div class="text-4xl sm:text-5xl font-black ${accentClass}">${value}</div>
-            <div class="text-[10px] sm:text-xs uppercase tracking-widest text-slate-500 mt-1.5">${label}</div>
+            <div ${id ? `id="${id}"` : ''} class="text-4xl sm:text-5xl font-black ${accentClass}">${display}</div>
+            <div class="text-2xs sm:text-xs uppercase tracking-widest text-slate-500 mt-1.5">${label}</div>
         </div>
     `;
 }
 
-// `iconHtml` : chaîne SVG déjà prête (voir Icons.js), pas un emoji brut (V2.5) - hérite
+// `iconHtml` : chaîne SVG déjà prête (voir Icons.js), pas un emoji brut (V2.2) - hérite
 // "currentColor" de la couleur du texte du <h3>, donc pas de classe de couleur à répéter ici.
 function sectionHeading(iconHtml, title) {
     return `<h3 class="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">${iconHtml}${escapeHtml(title)}</h3>`;
 }
 
-export function renderCategoryBreakdown(byCategory) {
+/**
+ * @param {Object} byCategory - stats.byCategory de l'année affichée (voir StatsService)
+ * @param {Object|null} [prevByCategory] - stats.byCategory de l'année précédente (V2.3, "12") :
+ *   quand fourni, chaque barre gagne un delta (▲/▼ %) par rapport à cette même catégorie l'an
+ *   dernier - absent (null) si l'année précédente n'a aucune donnée (voir renderRetrospective
+ *   hasPrevYear), une catégorie totalement nouvelle n'a alors rien à comparer.
+ */
+export function renderCategoryBreakdown(byCategory, prevByCategory = null) {
     // Une catégorie à 0 min (ex: Gazette, événements "instantanés" sans durée réelle propre -
     // voir EventGenerator) n'apporte rien à un classement par temps passé : juste un bruit
     // visuel (barre quasi invisible) dans une vue pensée pour célébrer, pas pour l'exhaustivité.
@@ -71,13 +84,22 @@ export function renderCategoryBreakdown(byCategory) {
 
     const rows = entries.map(([cat, stat]) => {
         const pct = maxTime > 0 ? Math.max(4, Math.round((stat.t / maxTime) * 100)) : 4;
+        const prevT = prevByCategory ? (prevByCategory[cat]?.t || 0) : null;
+        // Pas de delta si la catégorie n'existait pas du tout l'an dernier (division par zéro
+        // sans intérêt : "nouveau cette année" est déjà l'info la plus parlante dans ce cas).
+        const deltaHtml = prevT !== null && prevT > 0 ? (() => {
+            const deltaPct = Math.round(((stat.t - prevT) / prevT) * 100);
+            const isUp = deltaPct >= 0;
+            return `<span class="text-3xs font-bold ${isUp ? 'text-emerald-400' : 'text-slate-500'}">${isUp ? '▲' : '▼'}${Math.abs(deltaPct)}%</span>`;
+        })() : (prevT === 0 ? `<span class="text-3xs font-bold text-indigo-300">Nouveau</span>` : '');
         return `
             <div class="flex items-center gap-3">
                 <div class="w-20 sm:w-28 shrink-0 text-xs font-bold text-slate-300 truncate">${escapeHtml(formatCategoryLabel(cat))}</div>
                 <div class="flex-1 h-5 rounded-full bg-white/5 overflow-hidden">
                     <div class="h-full rounded-full transition-all" style="width:${pct}%; background:${categoryColor(cat)}"></div>
                 </div>
-                <div class="w-14 sm:w-20 shrink-0 text-right text-[11px] text-slate-400">${formatMinutes(stat.t)}</div>
+                <div class="w-14 sm:w-20 shrink-0 text-right text-xxs text-slate-400">${formatMinutes(stat.t)}</div>
+                <div class="w-12 shrink-0 text-right">${deltaHtml}</div>
             </div>
         `;
     }).join('');
@@ -86,6 +108,7 @@ export function renderCategoryBreakdown(byCategory) {
         <div class="glass-panel rounded-2xl p-5 space-y-3">
             ${sectionHeading(Icons.barChart('w-4 h-4 shrink-0'), 'Répartition du temps')}
             <div class="space-y-2.5">${rows}</div>
+            ${prevByCategory ? `<p class="text-3xs text-slate-500 text-right">vs. année précédente</p>` : ''}
         </div>
     `;
 }
@@ -174,7 +197,7 @@ export function getBucketEvents(events, year, kind, index) {
  * elle qu'un résumé (top 3) pour rester lisible.
  * @param {Array<string>} labels
  * @param {Array<{count:number, duration:number, events:Array}>} buckets
- * @param {string} iconHtml - Icône SVG déjà prête (voir Icons.js), pas un emoji brut (V2.5)
+ * @param {string} iconHtml - Icône SVG déjà prête (voir Icons.js), pas un emoji brut (V2.2)
  * @param {(peakLabel:string) => string} headingFor
  * @param {'month'|'weekday'} kind
  */
@@ -196,8 +219,8 @@ export function renderHoverBarChart(labels, buckets, iconHtml, headingFor, kind)
             tooltip = `
                 <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-36 sm:w-48 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-opacity duration-150 z-20">
                     <div class="glass-panel rounded-lg p-2.5 text-left shadow-xl space-y-1">
-                        <div class="text-[10px] font-black text-white">${labels[i]} · ${b.count} session${b.count > 1 ? 's' : ''} · ${formatMinutes(b.duration)}</div>
-                        <div class="text-[9px] text-slate-400 leading-snug space-y-0.5">${shown}${rest}</div>
+                        <div class="text-2xs font-black text-white">${labels[i]} · ${b.count} session${b.count > 1 ? 's' : ''} · ${formatMinutes(b.duration)}</div>
+                        <div class="text-3xs text-slate-400 leading-snug space-y-0.5">${shown}${rest}</div>
                     </div>
                 </div>
             `;
@@ -210,9 +233,9 @@ export function renderHoverBarChart(labels, buckets, iconHtml, headingFor, kind)
         return `
             <div class="relative group flex-1 flex flex-col items-center justify-end gap-1 h-full ${b.count > 0 ? 'cursor-pointer' : 'cursor-default'}" tabindex="${b.count > 0 ? '0' : '-1'}" ${interactiveAttrs}>
                 ${tooltip}
-                <div class="text-[9px] font-bold ${isPeak ? 'text-indigo-300' : 'text-slate-600'}">${b.count || ''}</div>
+                <div class="text-3xs font-bold ${isPeak ? 'text-indigo-300' : 'text-slate-600'}">${b.count || ''}</div>
                 <div class="w-full rounded-t ${isPeak ? 'bg-indigo-500' : 'bg-white/10'} transition-colors group-hover:bg-indigo-400 group-focus-within:bg-indigo-400" style="height:${heightPct}%"></div>
-                <div class="text-[9px] text-slate-500">${labels[i]}</div>
+                <div class="text-3xs text-slate-500">${labels[i]}</div>
             </div>
         `;
     }).join('');
@@ -221,7 +244,7 @@ export function renderHoverBarChart(labels, buckets, iconHtml, headingFor, kind)
         <div class="glass-panel rounded-2xl p-5 space-y-3 overflow-visible">
             ${sectionHeading(iconHtml, headingFor(labels[peakIndex]))}
             <div class="flex items-end gap-1 sm:gap-2 h-28">${bars}</div>
-            <p class="text-[10px] text-slate-600 text-center">Survolez pour un aperçu, cliquez sur une barre pour la liste complète.</p>
+            <p class="text-2xs text-slate-600 text-center">Survolez pour un aperçu, cliquez sur une barre pour la liste complète.</p>
         </div>
     `;
 }
@@ -233,17 +256,19 @@ export function renderHoverBarChart(labels, buckets, iconHtml, headingFor, kind)
  * qu'une fois, ce qui laisse surtout ressortir les vraies affiches saisies au cas par cas.
  */
 export function renderPosterWall(events) {
-    const seen = new Map(); // url -> titre (garde le premier événement rencontré pour l'alt)
+    const seen = new Map(); // url -> événement (garde le premier événement rencontré, pour l'alt ET le clic)
     events.forEach(e => {
         const url = sanitizeUrl(e.image);
-        if (url && !seen.has(url)) seen.set(url, e.title);
+        if (url && !seen.has(url)) seen.set(url, e);
     });
     const posters = [...seen.entries()].slice(0, 24);
     if (posters.length === 0) return '';
 
-    const tiles = posters.map(([url, title]) => `
-        <div class="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/10">
-            <img src="${url}" alt="${escapeHtml(title)}" title="${escapeHtml(title)}" loading="lazy" class="w-full h-full object-cover" onerror="this.closest('div').style.display='none'">
+    // Cliquable (V2.2, "augmenter les interactions") : rouvre l'événement source de l'affiche
+    // dans la modale, via son id stable (voir openEventById dans main.js).
+    const tiles = posters.map(([url, e]) => `
+        <div class="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/10 cursor-pointer hover:opacity-80 hover:border-indigo-400/40 transition-all" role="button" tabindex="0" aria-label="Voir ${escapeHtml(e.title)}" data-event-id="${escapeHtml(e.id)}">
+            <img src="${url}" alt="${escapeHtml(e.title)}" title="${escapeHtml(e.title)}" loading="lazy" class="w-full h-full object-cover" onerror="this.closest('div').style.display='none'">
         </div>
     `).join('');
 
@@ -282,11 +307,13 @@ export function renderBookendCards(realSessions, labels = {}) {
     const last = sorted[sorted.length - 1];
     const dateOf = (e) => new Date(e.start).toLocaleDateString('fr-FR', showYear ? { day: '2-digit', month: '2-digit', year: 'numeric' } : { day: '2-digit', month: '2-digit' });
 
+    // Cliquable (V2.2, "augmenter les interactions") : rouvre l'événement dans la modale, comme
+    // n'importe quelle carte de liste (data-event-id, voir openEventById dans main.js).
     if (first === last) {
         return `
             <div class="glass-panel rounded-2xl p-4 space-y-2">
                 ${sectionHeading(Icons.film('w-4 h-4 shrink-0'), onlyLabel)}
-                ${renderEventCard(first, dateOf(first))}
+                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(first.title)}" data-event-id="${escapeHtml(first.id)}">${renderEventCard(first, dateOf(first))}</div>
             </div>
         `;
     }
@@ -295,11 +322,11 @@ export function renderBookendCards(realSessions, labels = {}) {
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="glass-panel rounded-2xl p-4 space-y-2">
                 ${sectionHeading(Icons.film('w-4 h-4 shrink-0'), firstLabel)}
-                ${renderEventCard(first, dateOf(first))}
+                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(first.title)}" data-event-id="${escapeHtml(first.id)}">${renderEventCard(first, dateOf(first))}</div>
             </div>
             <div class="glass-panel rounded-2xl p-4 space-y-2">
                 ${sectionHeading(Icons.flag('w-4 h-4 shrink-0'), lastLabel)}
-                ${renderEventCard(last, dateOf(last))}
+                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(last.title)}" data-event-id="${escapeHtml(last.id)}">${renderEventCard(last, dateOf(last))}</div>
             </div>
         </div>
     `;
@@ -331,8 +358,11 @@ export function renderMostRecurringEvent(realSessions) {
            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent"></div>`
         : '';
 
+    // Cliquable (V2.2, "augmenter les interactions") : ouvre la liste de toutes ses occurrences
+    // (data-recurring-title, voir openRetroRecurringDetail/openHostRecurringDetail dans main.js),
+    // plutôt que de se limiter à ce résumé agrégé.
     return `
-        <div class="glass-panel rounded-2xl p-5 space-y-2 relative overflow-hidden">
+        <div class="glass-panel rounded-2xl p-5 space-y-2 relative overflow-hidden cursor-pointer hover:border-indigo-400/40 border border-transparent transition-all ${posterUrl ? 'has-poster' : ''}" role="button" tabindex="0" aria-label="Voir les ${stat.count} séances de ${escapeHtml(title)}" data-recurring-title="${escapeHtml(title)}">
             ${backdrop}
             <div class="relative z-10 space-y-2">
                 ${sectionHeading(Icons.repeat('w-4 h-4 shrink-0'), "L'évènement qui revient le plus")}
@@ -372,7 +402,7 @@ export function renderTimeOfDayBreakdown(events) {
                 <div class="flex-1 h-5 rounded-full bg-white/5 overflow-hidden">
                     <div class="h-full rounded-full transition-all" style="width:${pct}%; background:${bucket.color}"></div>
                 </div>
-                <div class="w-14 sm:w-16 shrink-0 text-right text-[11px] text-slate-400">${share}%</div>
+                <div class="w-14 sm:w-16 shrink-0 text-right text-xxs text-slate-400">${share}%</div>
             </div>
         `;
     }).join('');
@@ -443,6 +473,8 @@ export function computeOrganizerFacts(events, hostName) {
     };
 }
 
+// Cliquable (V2.2, "augmenter les interactions") : lance une recherche par ce tag (data-tag,
+// voir applyTagSearchFromOverlay dans main.js), comme le clic sur un tag dans la modale d'événement.
 export function renderTopTags(byTag) {
     const tags = topN(byTag, 8);
     if (tags.length === 0) return '';
@@ -450,7 +482,7 @@ export function renderTopTags(byTag) {
         <div class="glass-panel rounded-2xl p-5 space-y-3">
             ${sectionHeading(Icons.tag('w-4 h-4 shrink-0'), 'Tags favoris')}
             <div class="flex flex-wrap gap-2 justify-center">
-                ${tags.map(([tag]) => `<span class="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-bold text-indigo-300">#${escapeHtml(tag)}</span>`).join('')}
+                ${tags.map(([tag]) => `<button data-tag="${escapeHtml(tag)}" class="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-bold text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-400/40 transition-all">#${escapeHtml(tag)}</button>`).join('')}
             </div>
         </div>
     `;
@@ -473,7 +505,7 @@ function renderFunFacts(facts) {
                 <div class="glass-panel rounded-xl p-3 text-center">
                     <div class="flex justify-center text-indigo-400" aria-hidden="true">${t.icon('w-6 h-6')}</div>
                     <div class="text-base font-black text-white mt-1 truncate capitalize" title="${escapeHtml(String(t.value))}">${escapeHtml(String(t.value))}</div>
-                    <div class="text-[9px] uppercase tracking-wider text-slate-500 mt-0.5 leading-tight">${escapeHtml(t.label)}</div>
+                    <div class="text-3xs uppercase tracking-wider text-slate-500 mt-0.5 leading-tight">${escapeHtml(t.label)}</div>
                 </div>
             `).join('')}
         </div>
@@ -490,7 +522,7 @@ export function renderBadgeShelf(badges) {
     const tiles = badges.map(b => `
         <div class="glass-panel rounded-xl p-3 text-center transition-all ${b.achieved ? '' : 'opacity-30 grayscale'}" title="${escapeHtml(b.description)}">
             <div class="text-2xl" aria-hidden="true">${b.emoji}</div>
-            <div class="text-[10px] font-bold text-white mt-1 leading-tight">${escapeHtml(b.label)}</div>
+            <div class="text-2xs font-bold text-white mt-1 leading-tight">${escapeHtml(b.label)}</div>
         </div>
     `).join('');
 
@@ -560,6 +592,60 @@ export function computeYearFacts(events, year) {
     };
 }
 
+/**
+ * Vue "Toute l'histoire" (V2.4, "9") : un résumé compact de CHAQUE année disponible, empilé
+ * verticalement plutôt que naviguée une par une via renderYearNav - pour une vue d'ensemble de
+ * tout le parcours de la communauté en un seul défilement. Chaque carte reste cliquable
+ * (data-history-year, délégué par l'appelant dans main.js) pour rebasculer sur le détail complet
+ * de cette année précise (renderRetrospective).
+ * @param {HTMLElement} container
+ * @param {Array<Object>} events - Tous les événements du dépôt (toutes années confondues)
+ * @param {Array<number>} availableYears - voir getAvailableYears, triées récent -> ancien
+ */
+export function renderAllYearsHistory(container, events, availableYears) {
+    if (availableYears.length === 0) {
+        container.innerHTML = renderEmptyState({
+            illustration: EmptyIllustrations.calendarEmpty('w-16 h-16'),
+            title: "Aucun historique disponible."
+        });
+        return;
+    }
+
+    const cardsHtml = availableYears.map(year => {
+        const facts = computeYearFacts(events, year);
+        const achievedCount = computeBadges(facts).filter(b => b.achieved).length;
+        return `
+            <div data-history-year="${year}" class="glass-panel rounded-2xl p-4 sm:p-5 flex items-center gap-3 sm:gap-4 cursor-pointer hover:bg-white/10 transition-all" tabindex="0" role="button">
+                <div class="text-2xl sm:text-3xl font-black text-white w-16 sm:w-20 shrink-0">${year}</div>
+                <div class="flex-1 min-w-0 grid grid-cols-3 gap-2 text-center">
+                    <div>
+                        <div class="text-base sm:text-lg font-black text-white">${facts.totalSessions}</div>
+                        <div class="text-3xs uppercase tracking-wider text-slate-500">Sessions</div>
+                    </div>
+                    <div>
+                        <div class="text-base sm:text-lg font-black text-indigo-400">${formatDurationLong(facts.totalTime)}</div>
+                        <div class="text-3xs uppercase tracking-wider text-slate-500">Temps</div>
+                    </div>
+                    <div>
+                        <div class="text-base sm:text-lg font-black text-amber-300">${achievedCount}/10</div>
+                        <div class="text-3xs uppercase tracking-wider text-slate-500">Badges</div>
+                    </div>
+                </div>
+                <span class="shrink-0 text-slate-600" aria-hidden="true">${Icons.chevronRight('w-4 h-4')}</span>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="max-w-2xl mx-auto space-y-3">
+            <div class="text-center -mt-2 mb-4">
+                <p class="text-slate-400 text-sm">Toute l'histoire de 2GETHER, année par année 💙</p>
+            </div>
+            ${cardsHtml}
+        </div>
+    `;
+}
+
 export function renderRetrospective(container, events, year) {
     const availableYears = getAvailableYears(events);
     const facts = computeYearFacts(events, year);
@@ -571,9 +657,12 @@ export function renderRetrospective(container, events, year) {
 
     if (totalSessions === 0) {
         container.innerHTML = `
-            <div class="text-center py-20 space-y-3">
+            <div class="text-center space-y-1">
                 ${renderYearNav(year, availableYears)}
-                <div class="text-slate-500 text-sm">Aucun événement enregistré pour ${year}.</div>
+                ${renderEmptyState({
+                    illustration: EmptyIllustrations.calendarEmpty('w-16 h-16'),
+                    title: `Aucun événement enregistré pour ${year}.`
+                })}
             </div>
         `;
         return;
@@ -585,6 +674,10 @@ export function renderRetrospective(container, events, year) {
     const prevYearEvents = events.filter(e => new Date(e.start).getFullYear() === year - 1 && !e.isCanceled && !e.isPlanned);
     const hasPrevYear = availableYears.includes(year - 1);
     const prevTotal = hasPrevYear ? prevYearEvents.reduce((sum, e) => sum + (e.dur || 0), 0) : null;
+    // Répartition par catégorie d'une année sur l'autre (V2.3, "12") : même source que
+    // renderYearComparison ci-dessus (prevYearEvents), juste passée par StatsService pour en
+    // tirer le byCategory de l'an dernier plutôt que le seul total.
+    const prevByCategory = hasPrevYear ? StatsService.compute(prevYearEvents).byCategory : null;
 
     container.innerHTML = `
         <div class="max-w-2xl mx-auto space-y-4">
@@ -595,13 +688,13 @@ export function renderRetrospective(container, events, year) {
             </div>
 
             <div class="grid grid-cols-2 gap-3 sm:gap-4">
-                ${heroTile(totalSessions, 'Sessions organisées')}
-                ${heroTile(formatDurationLong(totalTime), 'Temps passé ensemble', 'text-indigo-400')}
+                ${heroTile(totalSessions, 'Sessions organisées', 'text-white', 'retro-hero-sessions')}
+                ${heroTile(totalTime, 'Temps passé ensemble', 'text-indigo-400', 'retro-hero-time', formatDurationLong)}
             </div>
 
             ${renderYearComparison(totalTime, prevTotal, year - 1)}
             ${renderBookendCards(realSessions)}
-            ${renderCategoryBreakdown(stats.byCategory)}
+            ${renderCategoryBreakdown(stats.byCategory, prevByCategory)}
             ${renderEventCarousel(realSessions)}
             ${renderPosterWall(realSessions)}
             ${renderMostRecurringEvent(realSessions)}
@@ -625,6 +718,9 @@ export function renderRetrospective(container, events, year) {
             <p class="text-center text-xs text-slate-600 pt-2 pb-1">Merci d'avoir fait vivre 2GETHER cette année 🎉</p>
         </div>
     `;
+
+    animateCountUp(document.getElementById('retro-hero-sessions'), totalSessions);
+    animateCountUp(document.getElementById('retro-hero-time'), totalTime, formatDurationLong);
 }
 
 function renderYearNav(year, availableYears) {

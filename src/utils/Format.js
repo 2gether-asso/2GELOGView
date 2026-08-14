@@ -56,3 +56,27 @@ export function formatDurationLong(totalMinutes) {
     const hours = Math.floor((totalMinutes % 1440) / 60);
     return hours > 0 ? `${days}j ${hours}h` : `${days}j`;
 }
+
+/**
+ * Compte à rebours lisible avant une date future (ex: "dans 2j 4h", "dans 45 min") - partagé par
+ * le panneau Rappels et la modale d'événement (V2.3, QOL #2). `null` si `target` est déjà passée
+ * (un abonnement dont la prochaine occurrence n'est plus dans le futur n'a rien à compter).
+ * @param {Date|string} target - Date/heure cible (Date ou chaîne parsable)
+ * @param {Date} [now]
+ * @returns {string|null}
+ */
+export function formatCountdown(target, now = new Date()) {
+    const targetDate = target instanceof Date ? target : new Date(target);
+    const diffMs = targetDate.getTime() - now.getTime();
+    if (diffMs <= 0) return null;
+
+    const totalMinutes = Math.round(diffMs / 60000);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+
+    if (days > 0) return `dans ${days}j${hours > 0 ? ` ${hours}h` : ''}`;
+    if (hours > 0) return `dans ${hours}h${minutes > 0 ? minutes + 'min' : ''}`;
+    if (minutes > 0) return `dans ${minutes} min`;
+    return "dans quelques instants";
+}

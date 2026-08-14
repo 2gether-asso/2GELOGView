@@ -40,38 +40,38 @@ function renderYearCard(year, s) {
 
             <div class="grid grid-cols-2 gap-3">
                 <div class="bg-black/20 p-3 rounded-xl border border-white/5">
-                    <div class="inline-flex items-center gap-1 text-[10px] text-slate-500 uppercase font-bold">${Icons.xCircle('w-3 h-3 shrink-0')}Annulés / Reportés</div>
+                    <div class="inline-flex items-center gap-1 text-2xs text-slate-500 uppercase font-bold">${Icons.xCircle('w-3 h-3 shrink-0')}Annulés / Reportés</div>
                     <div class="text-lg font-black text-rose-400">${s.counters.annulations}</div>
-                    <div class="text-[11px] text-slate-500">${s.counters.reports} report(s)</div>
+                    <div class="text-xxs text-slate-500">${s.counters.reports} report(s)</div>
                 </div>
                 <div class="bg-black/20 p-3 rounded-xl border border-white/5">
-                    <div class="inline-flex items-center gap-1 text-[10px] text-slate-500 uppercase font-bold">${Icons.arrowRightCircle('w-3 h-3 shrink-0')}Prévus</div>
+                    <div class="inline-flex items-center gap-1 text-2xs text-slate-500 uppercase font-bold">${Icons.arrowRightCircle('w-3 h-3 shrink-0')}Prévus</div>
                     <div class="text-lg font-black text-white">${s.counters.totalPlanned}</div>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div>
-                    <div class="inline-flex items-center gap-1 text-[10px] text-slate-500 uppercase font-bold mb-1">${Icons.barChart('w-3 h-3 shrink-0')}Par catégorie</div>
+                    <div class="inline-flex items-center gap-1 text-2xs text-slate-500 uppercase font-bold mb-1">${Icons.barChart('w-3 h-3 shrink-0')}Par catégorie</div>
                     <div class="space-y-1">${categories.map(([k, v]) => categoryRow(k, v)).join('') || emptyRow()}</div>
                 </div>
                 <div>
-                    <div class="inline-flex items-center gap-1 text-[10px] text-slate-500 uppercase font-bold mb-1">${Icons.tag('w-3 h-3 shrink-0')}Top Tags</div>
+                    <div class="inline-flex items-center gap-1 text-2xs text-slate-500 uppercase font-bold mb-1">${Icons.tag('w-3 h-3 shrink-0')}Top Tags</div>
                     <div class="space-y-1">${topN(s.byTag).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}</div>
                 </div>
                 <div>
-                    <div class="inline-flex items-center gap-1 text-[10px] text-slate-500 uppercase font-bold mb-1">${Icons.user('w-3 h-3 shrink-0')}Top Organisateurs</div>
+                    <div class="inline-flex items-center gap-1 text-2xs text-slate-500 uppercase font-bold mb-1">${Icons.user('w-3 h-3 shrink-0')}Top Organisateurs</div>
                     <div class="space-y-1">${topN(s.byHost).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}</div>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div>
-                    <div class="inline-flex items-center gap-1 text-[10px] text-slate-500 uppercase font-bold mb-1">${Icons.tv('w-3 h-3 shrink-0')}Top Plateformes</div>
+                    <div class="inline-flex items-center gap-1 text-2xs text-slate-500 uppercase font-bold mb-1">${Icons.tv('w-3 h-3 shrink-0')}Top Plateformes</div>
                     <div class="space-y-1">${topN(s.byPlatform).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}</div>
                 </div>
                 <div class="sm:col-span-2">
-                    <div class="inline-flex items-center gap-1 text-[10px] text-slate-500 uppercase font-bold mb-1">${Icons.film('w-3 h-3 shrink-0')}Répartition par type</div>
+                    <div class="inline-flex items-center gap-1 text-2xs text-slate-500 uppercase font-bold mb-1">${Icons.film('w-3 h-3 shrink-0')}Répartition par type</div>
                     <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                         ${topN(s.byType, 12).map(([k, v]) => rankedRow(k, v)).join('') || emptyRow()}
                     </div>
@@ -81,7 +81,11 @@ function renderYearCard(year, s) {
     `;
 }
 
-function renderAnomaliesSection(anomalies) {
+// Anomalies détectées AVANT génération (voir DataValidator.validateRows) : certaines (date
+// illisible, fin < début) empêchent EventGenerator de produire une instance pour cette ligne -
+// une anomalie n'a donc pas TOUJOURS d'événement correspondant dans le dépôt. Best-effort par
+// titre (premier événement trouvé) plutôt qu'un id précis, qu'une ligne cassée ne peut pas avoir.
+function renderAnomaliesSection(anomalies, events = []) {
     if (!anomalies || anomalies.length === 0) {
         return `
             <div class="glass-panel rounded-2xl p-5">
@@ -91,15 +95,24 @@ function renderAnomaliesSection(anomalies) {
         `;
     }
 
-    const rows = anomalies.map(a => `
-        <div class="flex items-start gap-2 px-3 py-2 rounded-lg ${a.severity === 'error' ? 'bg-rose-500/10 border border-rose-500/20' : 'bg-amber-500/10 border border-amber-500/20'}">
+    const byTitle = new Map();
+    events.forEach(e => { if (!byTitle.has(e.title)) byTitle.set(e.title, e); });
+
+    const rows = anomalies.map(a => {
+        const match = byTitle.get(a.title);
+        const interactiveAttrs = match
+            ? `role="button" tabindex="0" aria-label="Ouvrir ${escapeHtml(a.title)}" data-event-id="${escapeHtml(match.id)}" class="cursor-pointer hover:brightness-125 transition-all"`
+            : '';
+        return `
+        <div class="flex items-start gap-2 px-3 py-2 rounded-lg ${a.severity === 'error' ? 'bg-rose-500/10 border border-rose-500/20' : 'bg-amber-500/10 border border-amber-500/20'}" ${interactiveAttrs}>
             <span class="shrink-0 ${a.severity === 'error' ? 'text-rose-400' : 'text-amber-400'}">${a.severity === 'error' ? Icons.xCircle('w-4 h-4') : Icons.alertTriangle('w-4 h-4')}</span>
             <div class="min-w-0">
                 <div class="text-xs font-bold text-slate-200">Ligne ${a.row} — ${escapeHtml(a.title)}</div>
-                <div class="text-[11px] text-slate-400">${escapeHtml(a.message)}</div>
+                <div class="text-xxs text-slate-400">${escapeHtml(a.message)}</div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 
     return `
         <div class="glass-panel rounded-2xl p-5 space-y-2">
@@ -119,7 +132,7 @@ function renderAnomaliesSection(anomalies) {
 export function renderAdminView(container, events, anomalies = []) {
     const byYear = StatsService.computeByYear(events);
     const years = Object.keys(byYear);
-    const anomaliesHtml = renderAnomaliesSection(anomalies);
+    const anomaliesHtml = renderAnomaliesSection(anomalies, events);
 
     if (years.length === 0) {
         container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div class="text-center text-slate-500 py-24">Aucune donnée disponible.</div></div>`;

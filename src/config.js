@@ -1,6 +1,11 @@
 export const CONFIG = {
     CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVu8Z5ZxyDpRVG3eFFLuWH_iWKZyKuLWKvW617wBfAMT6no6UVah6HSqlhM8LDKjheEc4EBfSXgooM/pub?gid=0&single=true&output=csv",
 
+    // Tableur séparé (V2.3) listant les anniversaires des membres communiqués volontairement
+    // (colonne "Affiché sur le log" = filtre opt-in, voir BirthdayService.js) - distinct du
+    // planning principal ci-dessus, sans lien avec les événements CSV.
+    BIRTHDAY_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRiRmLQ7M3VN___uUAfYRQUDl3k6OXPgzNv66ZuQt2uOBZyY3RFGOSL4uBfNedc4LOyeVKKn4CkCRHu/pub?gid=0&single=true&output=csv",
+
     // URL publique du site déployé (domaine personnalisé, voir CNAME à la racine du dépôt) :
     // servi à la racine (pas de sous-chemin /2GELOGView/) contrairement à l'URL github.io brute.
     // Utilisée par les scripts CI (generate-embeds.js, generate-ics.js, post-discord-digest.js,

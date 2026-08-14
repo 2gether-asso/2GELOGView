@@ -46,6 +46,11 @@ export class ReminderService {
         this._writeAll(this._readAll().filter(r => r.title !== title));
     }
 
+    /** Désabonne tout d'un coup (V2.2, QOL) - même geste que le reset des catégories masquées. */
+    static clear() {
+        this._writeAll([]);
+    }
+
     /** Bascule l'abonnement et renvoie le nouvel état (true = maintenant suivi). */
     static toggle(title) {
         if (this.isSet(title)) {
