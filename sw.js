@@ -68,6 +68,17 @@ self.addEventListener('fetch', (event) => {
     if (request.method !== 'GET') return;
 
     const url = new URL(request.url);
-    const cacheName = url.hostname.endsWith('docs.google.com') ? CSV_CACHE : SHELL_CACHE;
+    const isSameOrigin = url.origin === self.location.origin;
+    const isCsvHost = url.hostname.endsWith('docs.google.com');
+    // Ce Service Worker ne gère QUE la coquille (même origine) et les tableurs CSV
+    // (docs.google.com, planning + anniversaires) - tout le reste (CDN FullCalendar/Tailwind/
+    // Leaflet/police, tuiles de carte, webhooks n8n des sondages V2.4...) file directement au
+    // réseau normal du navigateur, sans passer par ce cache "hors-ligne" conçu uniquement pour
+    // ces deux cas précis. Sans ce filtre, intercepter/mettre en cache des réponses tierces
+    // arbitraires n'apporte rien (rejouer un sondage périmé depuis le cache serait trompeur,
+    // pas un vrai bénéfice hors-ligne) et gonfle le cache pour rien.
+    if (!isSameOrigin && !isCsvHost) return;
+
+    const cacheName = isCsvHost ? CSV_CACHE : SHELL_CACHE;
     event.respondWith(networkFirst(request, cacheName));
 });

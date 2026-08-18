@@ -86,10 +86,15 @@ export function renderTodayView(container, events, birthdays = [], allEvents = [
     // événements ne font pas partie de `todayEvents` retourné à l'appelant pour la délégation
     // habituelle, un identifiant direct est plus simple qu'un second tableau à exposer.
     const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    // Le 29 février d'une année bissextile n'existe pas l'année précédente (non bissextile) :
+    // new Date() ne lève pas d'erreur, il déborde silencieusement sur le 1er mars - détecté ici
+    // via le mois obtenu (différent de celui demandé) pour traiter ce cas comme "rien l'an
+    // dernier ce jour-là" plutôt que d'afficher les événements de la mauvaise date sous ce titre.
+    const oneYearAgoValid = oneYearAgo.getMonth() === now.getMonth();
     const oneYearAgoStr = DateUtils.toLocalDateStr(oneYearAgo);
-    const lastYearEvents = allEvents
+    const lastYearEvents = oneYearAgoValid ? allEvents
         .filter(e => !e.isCanceled && !e.isPlanned && e.start.split('T')[0] === oneYearAgoStr)
-        .sort((a, b) => a.start.localeCompare(b.start));
+        .sort((a, b) => a.start.localeCompare(b.start)) : [];
     const yearAgoHtml = lastYearEvents.length > 0 ? `
         <div class="max-w-2xl mx-auto mb-6 space-y-2">
             <div class="flex items-center gap-1.5 justify-center text-2xs font-bold uppercase tracking-wider text-slate-500">

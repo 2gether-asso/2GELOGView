@@ -10,6 +10,8 @@ import { renderTimeline } from './ui/TimelineView.js';
 import { renderTodayView } from './ui/TodayView.js';
 import { renderYearView } from './ui/YearView.js';
 import { fetchBirthdays } from './services/BirthdayService.js';
+import { fetchCurrentPoll, submitVote, getMyVote } from './services/PollService.js';
+import { renderPoll } from './ui/PollView.js';
 import { initMeetupMap, updateMeetupMap, groupEventsByCity, cityLabel, getKnownCityKeys } from './ui/MeetupMapView.js';
 import { renderAdminView } from './ui/AdminView.js';
 import { StatsService } from './services/StatsService.js';
@@ -559,14 +561,14 @@ let miniCalendarDate = new Date();
 /**
  * Pour un mois donné : quels jours ont au moins un événement (pastille), et pour lesquels
  * peut-on afficher en fond la vignette d'un de ses événements (@image de l'événement, ou celle
- * par défaut du type - voir sanitizeUrl/getIconSrc) ? Toujours calculé sur TOUT le dépôt
- * (repo.getAll(), pas les événements filtrés) : comme "Aujourd'hui" ou le bandeau "Prochain
- * événement", ce calendrier reste une photo fidèle du programme réel, pas de ce qui est
- * actuellement filtré ailleurs dans l'appli - annuler un filtre ne doit pas faire "apparaître"
- * des pastilles qui semblaient absentes.
+ * par défaut du type - voir sanitizeUrl/getIconSrc) ? Calculé sur les événements FILTRÉS passés
+ * par l'appelant (V2.4 - avant ce correctif, toujours TOUT le dépôt quels que soient les
+ * filtres actifs ailleurs dans l'appli, sur le principe d'une "photo fidèle du programme réel" -
+ * retour utilisateur explicite : une recherche/un filtre doit aussi se voir reflété ici, ex.
+ * retirer la pastille d'un jour qui n'a rien de pertinent pour la recherche en cours).
  * @param {number} year
  * @param {number} month - 0-11
- * @param {Array<Object>} events
+ * @param {Array<Object>} events - Déjà filtrés par l'appelant
  * @returns {{ hasEvent: Set<number>, images: Map<number, string> }}
  */
 function computeMiniCalendarDayInfo(year, month, events) {
@@ -603,7 +605,7 @@ function renderMiniCalendarDay(dateStr, day, isToday, imageUrl, hasEvent) {
         </button>`;
 }
 
-function renderMiniCalendar() {
+function renderMiniCalendar(events = lastFilteredEvents) {
     const container = document.getElementById('sidebar-minical');
     if (!container) return;
     const year = miniCalendarDate.getFullYear();
@@ -614,7 +616,7 @@ function renderMiniCalendar() {
     const startOffset = (firstOfMonth.getDay() + 6) % 7; // 0 = Lundi
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const todayStr = DateUtils.toLocalDateStr(new Date());
-    const { hasEvent, images } = computeMiniCalendarDayInfo(year, month, repo.getAll());
+    const { hasEvent, images } = computeMiniCalendarDayInfo(year, month, events);
 
     let cells = '';
     for (let i = 0; i < startOffset; i++) cells += `<span></span>`;
@@ -814,6 +816,10 @@ function applyViewButtonStyles() {
         btn.classList.toggle('border-indigo-500/20', active);
         btn.classList.toggle('text-indigo-300', active);
     });
+    // Affordance "Retour au calendrier" (V2.4) : visible sur les 4 vues qui remplacent le
+    // calendrier (Aujourd'hui/Frise/Carte/Année), pas sur la Recherche (déjà son propre
+    // "✕ Annuler les filtres" pour en sortir en vidant la recherche).
+    document.getElementById('btn-close-secondary-view').classList.toggle('hidden', currentViewMode === 'calendar');
 }
 
 // Vue "Aujourd'hui" dédiée (QOL #6, voir TodayView.js) : une page de présentation du programme
@@ -1004,7 +1010,10 @@ function updateUIState() {
         // point de la fonction) donne la vraie réponse.
         const justOpened = lastVisiblePaneId !== 'timeline-view';
         timelineEl.classList.remove('hidden');
-        timelineCache = renderTimeline(timelineEl, filtered, timelineSortOrder, timelineYear, justOpened);
+        // getAvailableYears(repo.getAll()) (pas `filtered`) : un filtre ne doit jamais bloquer la
+        // navigation prev/next vers une année qui a bel et bien des événements, juste pas dans
+        // le filtre courant (voir doc du paramètre allYears dans TimelineView.js).
+        timelineCache = renderTimeline(timelineEl, filtered, timelineSortOrder, timelineYear, justOpened, getAvailableYears(repo.getAll()));
     } else if (currentViewMode === 'map') {
         // Cadrage automatique sur les marqueurs (V2.2, QOL) seulement à l'ouverture de la Carte
         // (même logique que justOpened pour la Frise ci-dessus) - pas à chaque filtre/recherche
@@ -1017,7 +1026,10 @@ function updateUIState() {
         todayViewCache = renderTodayView(todayEl, eventsForToday, birthdaysList, repo.getAll());
     } else if (currentViewMode === 'year') {
         yearEl.classList.remove('hidden');
-        renderYearView(yearEl, repo.getAll(), yearViewYear);
+        // filtered (pas repo.getAll()) : V2.4, mêmes raisons que renderMiniCalendar plus haut -
+        // la vue Année doit refléter les filtres/la recherche actifs, pas rester une photo figée
+        // de tout le dépôt.
+        renderYearView(yearEl, filtered, yearViewYear);
     } else {
         calendarEl.classList.remove('hidden');
         CalendarView.sync(calendarInstance, filtered);
@@ -1042,9 +1054,11 @@ function updateUIState() {
     renderDashboardStats(filtered);
     renderUpcomingSidebar(filtered);
     renderNextWeekSidebar(filtered);
-    // Indépendant des filtres (voir computeMiniCalendarDayInfo) : se rafraîchit ici simplement
-    // pour rester à jour à chaque rechargement des données, comme le reste de la sidebar.
-    renderMiniCalendar();
+    // Reflète les filtres actifs (V2.4, voir computeMiniCalendarDayInfo) : `filtered` passé
+    // explicitement plutôt que de laisser renderMiniCalendar retomber sur son défaut
+    // `lastFilteredEvents`, qui n'est mis à jour qu'à la ligne suivante - lire l'ancienne
+    // valeur ici afficherait les pastilles d'un cran de retard sur le tout dernier filtre.
+    renderMiniCalendar(filtered);
     lastFilteredEvents = filtered;
 
     const clearBtn = document.getElementById('btn-clear-filters');
@@ -1254,6 +1268,32 @@ function setupOnboardingTour() {
 // reformulation. "V1" (avant l'existence même d'un PATCH_NOTES dans le code) et "V2.2" (jamais
 // documentée nulle part avant aujourd'hui) ont dû être reconstruites depuis les diffs réels.
 const PATCH_NOTES_HISTORY = [
+    {
+        version: "2026-08-18",
+        label: "V2.5",
+        sections: [
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "🗳️ Sondage communautaire directement dans l'app : votez pour la prochaine soirée (film, jeu...), résultats en direct, changez d'avis à tout moment.",
+                    "🧭 Navigation rapide dans la Frise façon répertoire de contacts : un rail avec les mois de l'année, cliquez pour sauter directement dessus au lieu de tout faire défiler.",
+                    "🔠 Bouton \"Retour au calendrier\" clairement visible sur Aujourd'hui/Frise/Carte/Année, plutôt que de deviner qu'il fallait recliquer le même bouton pour en sortir.",
+                    "🖼️ L'image exportée du planning s'adapte maintenant à la vue affichée : une vraie liste en vue Planning/Jour, plutôt qu'une grille mensuelle qui ne ressemblait à rien à l'écran.",
+                    "🔍 Le mini-calendrier (panneau Statistiques) et la vue Année reflètent maintenant les filtres/la recherche actifs, comme le reste de l'app."
+                ]
+            },
+            {
+                title: "🛠️ Corrections",
+                items: [
+                    "Un filtre actif (ex: une catégorie) pouvait bloquer la navigation entre années dans la Frise, même quand l'année visée avait bel et bien d'autres événements (juste pas dans le filtre).",
+                    "Mode d'affichage Compact sans effet sur les vues Recherche et Frise.",
+                    "Bouton d'export image cliquable mais inactif en vue \"Toute l'histoire\" de la Rétrospective.",
+                    "Widget \"Il y a un an, ce jour-là\" affichant la mauvaise date les 29 février.",
+                    "Bouton \"Aujourd'hui\" stylé différemment des autres boutons de vue, pouvant laisser croire qu'il n'était pas cliquable."
+                ]
+            }
+        ]
+    },
     {
         version: "2026-08-14b",
         label: "V2.4",
@@ -1692,6 +1732,75 @@ function renderRemindersList() {
             </div>
         `;
     }).join('');
+}
+
+// Sondage communautaire (V2.4) : seule brique dynamique du site, portée par un service n8n
+// externe plutôt qu'un vrai backend (voir PollService.js/config.js) - le bouton reste caché
+// tant qu'aucun sondage actif n'a été trouvé au chargement, pour ne jamais afficher un bouton
+// mort si le service est en panne ou qu'il n'y a simplement rien à voter en ce moment.
+let currentPoll = null;
+function setupPoll() {
+    const overlay = document.getElementById('poll-overlay');
+    const content = document.getElementById('poll-content');
+    const btn = document.getElementById('btn-open-poll');
+
+    const renderCurrent = () => {
+        if (!currentPoll) return;
+        renderPoll(content, currentPoll, getMyVote(currentPoll.id));
+    };
+
+    const open = () => {
+        renderCurrent();
+        overlay.classList.remove('hidden');
+        overlay.classList.add('flex');
+    };
+    const close = () => { overlay.classList.add('hidden'); overlay.classList.remove('flex'); };
+
+    btn.addEventListener('click', open);
+    document.getElementById('btn-close-poll').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    content.addEventListener('click', async (e) => {
+        const optionBtn = e.target.closest('button[data-poll-option]');
+        if (!optionBtn || !currentPoll) return;
+        const chosen = optionBtn.dataset.pollOption;
+
+        // Mise à jour optimiste (V2.4) : le round-trip vers n8n peut prendre 1-2 secondes, assez
+        // pour qu'un écran figé donne l'impression que le clic n'a rien fait et pousse à
+        // recliquer plusieurs fois. On affiche donc IMMÉDIATEMENT le tally comme si le vote était
+        // déjà pris en compte (en retirant l'ancien vote de cette personne s'il y en avait un),
+        // avec un spinner pendant que la vraie requête part en arrière-plan - remplacé par la
+        // vraie réponse du serveur une fois arrivée (ou par un rollback silencieux si ça échoue,
+        // voir renderCurrent() dans le else ci-dessous).
+        const previousVote = getMyVote(currentPoll.id);
+        const optimisticPoll = {
+            ...currentPoll,
+            options: currentPoll.options.map(o => {
+                let count = o.count - (previousVote === o.label ? 1 : 0);
+                if (o.label === chosen) count++;
+                return { ...o, count };
+            })
+        };
+        optimisticPoll.total = optimisticPoll.options.reduce((sum, o) => sum + o.count, 0);
+        renderPoll(content, optimisticPoll, chosen, { pending: true });
+
+        const updated = await submitVote(currentPoll.id, chosen);
+        if (updated) {
+            currentPoll = updated;
+        } else {
+            showToast('Vote non enregistré, réessayez plus tard.', { icon: Icons.xCircle('w-3.5 h-3.5 shrink-0 text-rose-300') });
+        }
+        renderCurrent();
+    });
+
+    // Vérifié une seule fois au chargement, pas de polling continu ensuite : un sondage reste
+    // ouvert plusieurs heures/jours, pas besoin de solliciter en direct un service externe dont
+    // on ne maîtrise pas l'hébergement juste pour rafraîchir la pastille "actif" du bouton.
+    fetchCurrentPoll().then(poll => {
+        if (!poll) return;
+        currentPoll = poll;
+        btn.classList.remove('hidden');
+    });
 }
 
 function setupRemindersOverlay() {
@@ -2557,6 +2666,7 @@ function setupRetrospective() {
     const content = document.getElementById('retrospective-content');
 
     const historyBtn = document.getElementById('btn-retro-history');
+    const exportImageBtn = document.getElementById('btn-retro-export-image');
     const renderCurrentYear = () => {
         if (retroShowingHistory) {
             renderAllYearsHistory(content, repo.getAll(), getAvailableYears(repo.getAll()));
@@ -2566,6 +2676,10 @@ function setupRetrospective() {
         historyBtn.setAttribute('aria-pressed', String(retroShowingHistory));
         historyBtn.classList.toggle('text-indigo-300', retroShowingHistory);
         historyBtn.classList.toggle('bg-indigo-500/10', retroShowingHistory);
+        // N'a de sens que sur le détail d'une année précise (voir le handler de clic plus bas) -
+        // réellement masqué ici (pas juste un no-op silencieux au clic) pour ne jamais laisser un
+        // bouton cliquable qui ne fait rien en vue "Toute l'histoire".
+        exportImageBtn.classList.toggle('hidden', retroShowingHistory);
     };
 
     const open = () => {
@@ -2888,16 +3002,27 @@ function roundRect(ctx, x, y, w, h, r) {
     ctx.closePath();
 }
 
-// Image structurée de la grille du calendrier affiché (V2.3, "10", bouton 🖼️ Image de
-// CalendarView.js) : remplace l'approche window.print()/@media print initiale (mise en page
-// navigateur - marges, sauts de page - trop peu fiable d'un navigateur/OS à l'autre pour un
-// rendu garanti) par un canvas dessiné nous-mêmes, sur le même principe que
-// generateOrganizerRecapImage/generateRetrospectiveRecapImage ci-dessus mais en vrai
-// quadrillage 7 colonnes (comme le planning à l'écran) plutôt qu'en tuiles de stats. Fond clair
-// (contrairement aux deux autres images récap) : pensé pour être imprimé/partagé tel quel, un
-// fond sombre y gaspillerait de l'encre. `lastFilteredEvents` (pas repo.getAll()) : reflète les
-// filtres actuellement actifs, comme les autres exports (.ics...).
+// Image du planning affiché (V2.3, "10", bouton 🖼️ Image de CalendarView.js) : remplace
+// l'approche window.print()/@media print initiale (mise en page navigateur - marges, sauts de
+// page - trop peu fiable d'un navigateur/OS à l'autre pour un rendu garanti) par un canvas
+// dessiné nous-mêmes. Le VRAI rendu dépend de la vue FullCalendar affichée au moment du clic
+// (V2.4 - avant ce correctif, un quadrillage mensuel était généré même en vue Planning/Jour, ne
+// ressemblant à rien de ce qu'il y avait réellement à l'écran) : Mois/Semaine restent un
+// quadrillage (generateGridCalendarImage), Planning/Jour deviennent une vraie liste
+// (generateListCalendarImage) qui reprend la mise en page de la vue Planning de FullCalendar.
 function generateMonthCalendarImage(calendar) {
+    const viewType = calendar.view.type;
+    if (viewType === 'listMonth' || viewType === 'timeGridDay') {
+        generateListCalendarImage(calendar);
+    } else {
+        generateGridCalendarImage(calendar);
+    }
+}
+
+// Fond clair (contrairement aux images récap organisateur/rétrospective) : pensé pour être
+// imprimé/partagé tel quel, un fond sombre y gaspillerait de l'encre. `lastFilteredEvents` (pas
+// repo.getAll()) : reflète les filtres actuellement actifs, comme les autres exports (.ics...).
+function generateGridCalendarImage(calendar) {
     const view = calendar.view;
     const monthStart = view.currentStart;
     const gridStart = view.activeStart;
@@ -3006,6 +3131,117 @@ function generateMonthCalendarImage(calendar) {
         const a = document.createElement('a');
         a.href = url;
         a.download = `planning-${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}-2gelog.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    }, 'image/png');
+}
+
+// Rendu "Planning"/"Jour" (V2.4) : une vraie liste chronologique (bandeau de jour puis une ligne
+// par événement dessous), pas un quadrillage - reprend l'esprit de la vue Planning de
+// FullCalendar (.fc-list-day-cushion) plutôt que de forcer un gabarit mensuel qui ne ressemble à
+// rien de ce qu'il y a réellement à l'écran dans ces deux vues (voir generateMonthCalendarImage).
+function generateListCalendarImage(calendar) {
+    const view = calendar.view;
+    const gridStart = view.activeStart;
+    const gridEnd = view.activeEnd;
+    const rawTitle = view.title;
+    const title = rawTitle.charAt(0).toUpperCase() + rawTitle.slice(1);
+
+    const byDay = {};
+    lastFilteredEvents.forEach(e => {
+        if (e.isPlanned) return;
+        const dayStr = e.start.split('T')[0];
+        const d = new Date(dayStr + 'T12:00:00');
+        if (d < gridStart || d >= gridEnd) return;
+        (byDay[dayStr] = byDay[dayStr] || []).push(e);
+    });
+    const dayKeys = Object.keys(byDay).sort();
+    dayKeys.forEach(k => byDay[k].sort((a, b) => a.start.localeCompare(b.start)));
+
+    const PAD = 56, HEADER_H = 100, WIDTH = 900;
+    const DAY_HEADER_H = 52, ROW_H = 44, GAP_AFTER_DAY = 16;
+    const FONT = "'Plus Jakarta Sans', sans-serif";
+
+    let bodyHeight = 0;
+    dayKeys.forEach(k => { bodyHeight += DAY_HEADER_H + byDay[k].length * ROW_H + GAP_AFTER_DAY; });
+    const emptyMsgHeight = dayKeys.length === 0 ? 60 : 0;
+    const HEIGHT = Math.max(300, PAD * 2 + HEADER_H + bodyHeight + emptyMsgHeight);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#6366f1';
+    ctx.font = `800 24px ${FONT}`;
+    ctx.fillText('2GELOG', PAD, PAD + 26);
+    ctx.fillStyle = '#14161b';
+    ctx.font = `900 34px ${FONT}`;
+    ctx.fillText(title, PAD, PAD + 72, WIDTH - PAD * 2);
+
+    let y = PAD + HEADER_H;
+
+    if (dayKeys.length === 0) {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = `600 18px ${FONT}`;
+        ctx.fillText('Aucun événement à afficher avec les filtres actuels.', PAD, y + 30);
+    }
+
+    const todayStr = DateUtils.toLocalDateStr(new Date());
+    dayKeys.forEach(dayStr => {
+        const dateObj = new Date(dayStr + 'T12:00:00');
+        const isToday = dayStr === todayStr;
+        const dayLabel = dateObj.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+        const capDayLabel = dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1);
+
+        // Bandeau de jour (même esprit que .fc-list-day-cushion à l'écran : barre colorée à
+        // gauche, fond légèrement teinté pour "aujourd'hui").
+        ctx.fillStyle = isToday ? 'rgba(99,102,241,0.10)' : 'rgba(15,23,42,0.04)';
+        ctx.fillRect(PAD, y, WIDTH - PAD * 2, DAY_HEADER_H - 8);
+        ctx.fillStyle = isToday ? '#6366f1' : '#c3c7cf';
+        ctx.fillRect(PAD, y, 4, DAY_HEADER_H - 8);
+        ctx.fillStyle = isToday ? '#4338ca' : '#14161b';
+        ctx.font = `800 18px ${FONT}`;
+        ctx.textAlign = 'left';
+        ctx.fillText(capDayLabel, PAD + 16, y + (DAY_HEADER_H - 8) / 2 + 6);
+        y += DAY_HEADER_H;
+
+        byDay[dayStr].forEach(e => {
+            ctx.fillStyle = e.col || '#6366f1';
+            ctx.fillRect(PAD + 4, y + 8, 4, ROW_H - 20);
+            ctx.textAlign = 'left';
+            ctx.fillStyle = e.isCanceled ? '#c3c7cf' : '#475569';
+            ctx.font = `700 15px ${FONT}`;
+            ctx.fillText(e.heure || '', PAD + 20, y + ROW_H / 2 + 5, 70);
+
+            ctx.fillStyle = e.isCanceled ? '#c3c7cf' : '#14161b';
+            ctx.font = `${e.isCanceled ? '400' : '600'} 16px ${FONT}`;
+            let label = e.title;
+            while (ctx.measureText(label).width > WIDTH - PAD * 2 - 100 && label.length > 3) label = label.slice(0, -2);
+            if (label !== e.title) label += '…';
+            ctx.fillText(label, PAD + 100, y + ROW_H / 2 + 5);
+            y += ROW_H;
+        });
+        y += GAP_AFTER_DAY;
+    });
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = `600 15px ${FONT}`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`Généré le ${new Date().toLocaleDateString('fr-FR')} · planning.2gether-asso.fr`, WIDTH - PAD, HEIGHT - 18);
+
+    canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'planning-liste-2gelog.png';
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -3290,6 +3526,7 @@ function setupEscapeToClose() {
         ['patchnotes-overlay', 'btn-close-patchnotes'],
         ['help-overlay', 'btn-close-help'],
         ['reminders-overlay', 'btn-close-reminders'],
+        ['poll-overlay', 'btn-close-poll'],
         ['bucket-detail-overlay', 'btn-close-bucket-detail'],
         ['organizer-profile-overlay', 'btn-close-organizer-profile'],
         ['location-profile-overlay', 'btn-close-location-profile'],
@@ -3399,6 +3636,14 @@ async function initApp() {
                 document.getElementById('timeline-today-marker')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 return;
             }
+            // Rail de navigation rapide mois/année (V2.4) - voir renderMonthRail dans
+            // TimelineView.js. Un mois désactivé (sans id="timeline-month-N" dans le DOM, pas
+            // d'événement cette année-là) ne matche simplement aucun élément ici.
+            const monthJump = e.target.closest('[data-timeline-jump-month]');
+            if (monthJump) {
+                document.getElementById(`timeline-month-${monthJump.dataset.timelineJumpMonth}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                return;
+            }
             const yearBtn = e.target.closest('[data-timeline-year]');
             if (yearBtn) {
                 timelineYear = Number(yearBtn.dataset.timelineYear);
@@ -3468,13 +3713,21 @@ async function initApp() {
             updateUIState();
         });
         document.getElementById('year-view').addEventListener('click', (e) => {
-            if (e.target.closest('#year-view-prev')) { yearViewYear--; renderYearView(document.getElementById('year-view'), repo.getAll(), yearViewYear); return; }
-            if (e.target.closest('#year-view-next')) { yearViewYear++; renderYearView(document.getElementById('year-view'), repo.getAll(), yearViewYear); return; }
+            if (e.target.closest('#year-view-prev')) { yearViewYear--; renderYearView(document.getElementById('year-view'), lastFilteredEvents, yearViewYear); return; }
+            if (e.target.closest('#year-view-next')) { yearViewYear++; renderYearView(document.getElementById('year-view'), lastFilteredEvents, yearViewYear); return; }
             const dateBtn = e.target.closest('button[data-year-date]');
             if (dateBtn) jumpToDate(dateBtn.dataset.yearDate);
         });
 
         document.getElementById('btn-goto-today').addEventListener('click', goToTodayView);
+
+        // "Retour au calendrier" (V2.4) - voir applyViewButtonStyles pour l'affichage/masquage.
+        document.getElementById('btn-close-secondary-view').addEventListener('click', () => {
+            currentViewMode = 'calendar';
+            applyViewButtonStyles();
+            updateUIState();
+        });
+
         setupDensityToggle();
         setupLargeTextToggle();
         setupMapRadiusFilter();
@@ -3496,6 +3749,7 @@ async function initApp() {
         setupExtraKeyboardShortcuts();
         setupCardCursorGlow();
         setupRemindersOverlay();
+        setupPoll();
         setupKioskMode();
 
         document.getElementById('btn-retry-load').addEventListener('click', () => loadData());

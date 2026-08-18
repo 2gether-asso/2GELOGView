@@ -10,9 +10,44 @@ function shortDate(iso) {
     return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-export function renderRow(e, idx) {
+/** Gabarit compact (voir renderCompactRow dans EventCardTemplate.js, même principe/mêmes
+ * classes) pour la vue Recherche/Frise : ces deux vues ne passaient jusqu'ici jamais par
+ * renderEventCard et ignoraient donc html.density-compact - le mode Compact n'avait aucun
+ * effet dessus. 2 lignes plutôt que la carte complète (pas de notes/tags/affiche en fond). */
+function renderCompactSearchRow(e, idx, readableDate) {
     const iconSrc = getIconSrc(e);
+    const episode = escapeHtml(getEpisodeLabel(e));
+    const hostRaw = e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST;
+    const host = escapeHtml(hostRaw);
+    const title = escapeHtml(e.title);
+    const type = escapeHtml(e.type || 'Événement');
+
+    return `
+        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden cursor-pointer ${e.isCanceled ? 'opacity-30 line-through' : ''}" style="border-left: 3px solid ${e.col};" data-idx="${idx}">
+            <img src="${iconSrc}" alt="" class="w-6 aspect-[8/9] rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
+            <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
+                    <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
+                    <span class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</span>
+                </div>
+                <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
+                    <span class="text-2xs font-bold shrink-0 px-1.5 py-0.5 rounded border" style="color:${e.col}; background:linear-gradient(135deg, ${e.col}26, ${e.col}0d); border-color:${e.col}40;">${type}</span>
+                    ${renderStatusBadge(e.progressStatus)}
+                    ${episode ? `<span class="inline-flex items-center gap-1 text-xxs font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">${Icons.tv('w-3 h-3 shrink-0')}${episode}</span>` : ''}
+                    ${host ? `<span class="inline-flex items-center gap-1 text-xxs text-slate-300 bg-white/5 pl-0.5 pr-1.5 py-0.5 rounded border border-white/5">${renderAvatarInitials(hostRaw, 'w-3.5 h-3.5 text-4xs')}${host}</span>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+export function renderRow(e, idx) {
     const dateObj = new Date(e.start);
+    if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
+        const readableDateCompact = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
+        return renderCompactSearchRow(e, idx, readableDateCompact);
+    }
+    const iconSrc = getIconSrc(e);
     const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
     const episode = escapeHtml(getEpisodeLabel(e));
     const location = e.location && e.location !== CONFIG.DEFAULT_LOCATION ? escapeHtml(e.location) : "";
@@ -71,12 +106,62 @@ export function groupByTitle(events) {
     return order.map(title => map.get(title));
 }
 
+/** Gabarit compact du groupe replié (voir renderCompactSearchRow ci-dessus, même raison
+ * d'être) : icône/padding réduits, badges secondaires (durée cumulée, nouvelles, lieu, hôte,
+ * tags) retirés pour ne garder que l'essentiel - toujours dépliable pour retrouver le détail
+ * complet de chaque occurrence. */
+function renderCompactGroupRow(group, indexOf) {
+    const sorted = [...group].sort((a, b) => a.start.localeCompare(b.start));
+    const first = sorted[0];
+    const iconSrc = getIconSrc(first);
+    const canceledCount = group.filter(e => e.isCanceled).length;
+    const title = escapeHtml(first.title);
+    const type = escapeHtml(first.type || 'Événement');
+
+    const occurrencesHtml = sorted.map(e => {
+        const idx = indexOf(e);
+        const dateStr = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
+        return `
+            <div class="px-3 py-1.5 hover:bg-white/5 cursor-pointer text-13 flex items-center justify-between gap-2" data-idx="${idx}">
+                <span class="text-slate-300 ${e.isCanceled ? 'line-through opacity-50' : ''}">${dateStr}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</span>
+                ${renderStatusBadge(e.progressStatus)}
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="glass-card rounded-lg overflow-hidden my-0.5">
+            <div class="group-toggle relative flex items-start gap-2 px-2.5 py-1.5 cursor-pointer">
+                <img src="${iconSrc}" alt="" class="w-6 aspect-[8/9] rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
+                        <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
+                        <span class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${shortDate(sorted[0].start)} → ${shortDate(sorted[sorted.length - 1].start)}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
+                        <span class="text-2xs font-bold shrink-0 px-1.5 py-0.5 rounded border" style="color:${first.col}; background:linear-gradient(135deg, ${first.col}26, ${first.col}0d); border-color:${first.col}40;">${type}</span>
+                        <span class="inline-flex items-center gap-1 text-xxs text-slate-300 bg-white/5 px-1.5 py-0.5 rounded border border-white/5">${Icons.repeat('w-3 h-3 shrink-0')}${group.length}</span>
+                        ${canceledCount ? `<span class="inline-flex items-center gap-1 text-xxs text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">${Icons.xCircle('w-3 h-3 shrink-0')}${canceledCount}</span>` : ''}
+                    </div>
+                </div>
+                <span class="chevron relative z-10 flex items-center text-slate-500 text-xs shrink-0 mt-1 select-none">${Icons.chevronDown('chevron-icon w-3 h-3 shrink-0 transition-transform duration-200')}</span>
+            </div>
+            <div class="occurrences-panel hidden border-t border-white/5 divide-y divide-white/5">
+                ${occurrencesHtml}
+            </div>
+        </div>
+    `;
+}
+
 /**
  * Rendu d'un groupe de plusieurs occurrences (saison / soirée récurrente) : une seule
  * ligne résumant le total (occurrences, durée cumulée, plage de dates), dépliable pour
  * voir chaque date individuellement et l'ouvrir dans la modale.
  */
 export function renderGroupRow(group, indexOf) {
+    if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
+        return renderCompactGroupRow(group, indexOf);
+    }
     const sorted = [...group].sort((a, b) => a.start.localeCompare(b.start));
     const first = sorted[0];
     const iconSrc = getIconSrc(first);

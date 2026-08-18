@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2GELOG V2.4 - UwU</title>
+    <title>2GELOG V2.5 - UwU</title>
     <link rel="icon" type="image/png" href="./assets/img/icon.png">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="apple-touch-icon" href="./assets/img/pwa/icon-192.png">
@@ -82,11 +82,11 @@
            la prochaine fonctionnalité sache où se glisser au lieu de deviner.
              15 barre d'outils calendrier (sticky)   50 modale d'événement       66 aide
              30 suggestions/menus déroulants          60 admin                   67 rappels
-             40 en-tête                               61 fiche de lieu           70 chargement/erreur
-                                                       62 rétrospective           75 toasts
-                                                       63 détail (bucket)         80 quitter le kiosque
-                                                       64 profil organisateur     90 visite guidée
-                                                       65 notes de version */
+             40 en-tête                               61 fiche de lieu           68 sondage
+                                                       62 rétrospective           70 chargement/erreur
+                                                       63 détail (bucket)         75 toasts
+                                                       64 profil organisateur     80 quitter le kiosque
+                                                       65 notes de version        90 visite guidée */
         body {
             font-family: 'Plus Jakarta Sans', sans-serif;
             background: radial-gradient(circle at 50% 0%, #111827 0%, var(--bg-deep) 70%);
@@ -542,7 +542,7 @@
         <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer shrink-0">
             <div id="header-status-dot" class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
             <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
-                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-2xs bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.4</span>
+                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-2xs bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.5</span>
                 <span id="seasonal-badge" class="hidden font-bold text-2xs px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
             </h1>
         </div>
@@ -563,7 +563,7 @@
 
             <div class="hidden sm:block h-5 w-px bg-white/15 mx-1.5" aria-hidden="true"></div>
 
-            <button id="btn-goto-today" title="Aujourd'hui sur 2GETHER : le programme du jour (raccourci clavier T)" aria-label="Voir le programme d'aujourd'hui" class="flex items-center gap-1.5 text-xxs font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-2.5 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
+            <button id="btn-goto-today" title="Aujourd'hui sur 2GETHER : le programme du jour (raccourci clavier T)" aria-label="Voir le programme d'aujourd'hui" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line><line x1="4.6" y1="4.6" x2="6.8" y2="6.8"></line><line x1="17.2" y1="17.2" x2="19.4" y2="19.4"></line><line x1="4.6" y1="19.4" x2="6.8" y2="17.2"></line><line x1="17.2" y1="6.8" x2="19.4" y2="4.6"></line></svg>
                 <span class="hidden sm:inline">Aujourd'hui</span>
             </button>
@@ -597,6 +597,14 @@
             <button id="btn-open-reminders" title="Gérer vos rappels de notification" aria-label="Gérer vos rappels de notification" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
                 <span class="hidden sm:inline">Rappels</span>
+            </button>
+            <!-- Sondage communautaire (V2.4) : masqué tant qu'aucun sondage actif n'a été
+                 trouvé (voir setupPoll dans main.js) - pas de bouton mort si le service externe
+                 n8n est en panne ou qu'il n'y a simplement rien à voter en ce moment. -->
+            <button id="btn-open-poll" title="Sondage en cours" aria-label="Sondage en cours" class="hidden relative flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M8 12l2.5 2.5L16 9"></path></svg>
+                <span class="hidden sm:inline">Sondage</span>
+                <span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse ring-2 ring-[#0d1117]" aria-hidden="true"></span>
             </button>
             <button id="btn-open-retrospective" title="Rétrospective annuelle 2GETHER" aria-label="Rétrospective annuelle" class="flex items-center gap-1.5 text-xxs font-bold text-indigo-300 hover:text-white hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"></path><path d="M19 3v4"></path><path d="M17 5h4"></path></svg>
@@ -785,6 +793,16 @@
         </button>
 
         <section class="flex-1 p-4 h-full relative overflow-y-auto overflow-x-hidden custom-scroll bg-black/[0.05]">
+            <!-- Retour au calendrier (V2.4) : Aujourd'hui/Frise/Carte/Année se rouvraient/
+                 refermaient jusque-là uniquement en re-cliquant le MÊME bouton d'en-tête que celui
+                 qui les a ouverts - peu découvrable (retour utilisateur : personne ne pensait à
+                 recliquer dessus pour "fermer"). Affordance explicite unique, partagée par les 4
+                 vues plutôt que dupliquée dans chacune - voir applyViewButtonStyles dans main.js
+                 pour l'affichage/masquage. -->
+            <button id="btn-close-secondary-view" title="Retour au calendrier" aria-label="Retour au calendrier" class="hidden absolute top-3 right-3 z-20 flex items-center gap-1.5 text-xxs font-bold text-slate-300 hover:text-white bg-[var(--surface-2-90)] hover:bg-white/10 border border-white/10 px-3 py-1.5 rounded-lg shadow-lg backdrop-blur-md transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+                Retour au calendrier
+            </button>
             <div id="calendar" class="w-full min-h-full"></div>
             <div id="search-results" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
             <div id="timeline-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
@@ -1215,6 +1233,22 @@
                 <button id="btn-clear-all-reminders" title="Se désabonner de tous les suivis individuels" aria-label="Tout désabonner" class="hidden text-3xs font-bold text-slate-500 hover:text-rose-300 transition-colors">Tout désabonner</button>
             </div>
             <div id="reminders-list" class="space-y-1.5"></div>
+        </div>
+    </div>
+
+    <!-- Sondage communautaire (V2.4) : même carte centrée que Rappels/Aide - voir setupPoll et
+         PollView.js. Contenu injecté dans #poll-content, purement dérivé du JSON renvoyé par le
+         petit service n8n externe (voir PollService.js). -->
+    <div id="poll-overlay" class="hidden fixed inset-0 z-[68] items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+        <div class="w-full max-w-md rounded-2xl bg-[var(--surface-2-95)] border border-white/10 p-6 shadow-2xl max-h-[85vh] overflow-y-auto custom-scroll" role="dialog" aria-modal="true" aria-labelledby="poll-title">
+            <div class="flex items-start justify-between mb-3">
+                <h2 id="poll-title" class="flex items-center gap-2 text-lg font-black text-white">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 text-slate-400 shrink-0" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M8 12l2.5 2.5L16 9"></path></svg>
+                    Sondage
+                </h2>
+                <button id="btn-close-poll" title="Fermer" aria-label="Fermer" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all font-bold text-base">✕</button>
+            </div>
+            <div id="poll-content"></div>
         </div>
     </div>
 

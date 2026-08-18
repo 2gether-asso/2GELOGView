@@ -6,6 +6,13 @@ export const CONFIG = {
     // planning principal ci-dessus, sans lien avec les événements CSV.
     BIRTHDAY_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRiRmLQ7M3VN___uUAfYRQUDl3k6OXPgzNv66ZuQt2uOBZyY3RFGOSL4uBfNedc4LOyeVKKn4CkCRHu/pub?gid=0&single=true&output=csv",
 
+    // Sondages communautaires (V2.4) : seule brique dynamique du site, portée par une instance
+    // n8n externe (2 workflows -> Google Sheet "2GEPOLL") plutôt que par un vrai backend, pour
+    // rester sur du GitHub Pages 100% statique côté app (voir PollService.js). Une panne/absence
+    // de ce service ne doit jamais bloquer le reste de l'app - simplement pas de sondage affiché.
+    POLL_CURRENT_URL: "https://n8n.matiboux.com/webhook/poll/current",
+    POLL_VOTE_URL: "https://n8n.matiboux.com/webhook/vote",
+
     // URL publique du site déployé (domaine personnalisé, voir CNAME à la racine du dépôt) :
     // servi à la racine (pas de sous-chemin /2GELOGView/) contrairement à l'URL github.io brute.
     // Utilisée par les scripts CI (generate-embeds.js, generate-ics.js, post-discord-digest.js,

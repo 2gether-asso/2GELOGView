@@ -75,11 +75,11 @@ function renderMonthCard(year, month, events, todayStr) {
  * Vue "Année" (V2.4, "5") : les 12 mois de l'année en un coup d'oeil, pour visualiser la
  * densité globale plutôt que mois par mois - chaque jour reste cliquable (data-year-date,
  * délégué par l'appelant, voir jumpToDate dans main.js) pour sauter directement dessus en vue
- * Calendrier. Toujours calculée sur TOUT le dépôt (comme le mini-calendrier sidebar), pas les
- * événements déjà filtrés ailleurs - annuler un filtre ne doit pas faire "apparaître" des
- * pastilles qui semblaient absentes.
+ * Calendrier. Reflète les filtres/la recherche actifs (V2.4, comme le mini-calendrier sidebar,
+ * voir computeMiniCalendarDayInfo dans main.js) : une pastille disparaît si le jour n'a plus
+ * aucun événement correspondant au filtre en cours.
  * @param {HTMLElement} container
- * @param {Array<Object>} events - Tous les événements du dépôt (toutes années confondues)
+ * @param {Array<Object>} events - Déjà filtrés par l'appelant, toutes années confondues
  * @param {number} year
  */
 export function renderYearView(container, events, year) {
