@@ -122,6 +122,19 @@ function renderReminderBadge(e) {
 }
 
 /**
+ * Attributs `data-umami-event*` (tracking analytics Umami, voir docs.umami.is/docs/track-events)
+ * posés sur la tuile d'un événement, quelle que soit la vue qui l'affiche - Umami écoute les
+ * clics globalement via cet attribut, aucun écouteur JS dédié n'est nécessaire ici. `view`
+ * identifie l'endroit d'où vient le clic (calendrier, sidebar, recherche...) pour distinguer les
+ * vues dans les statistiques Umami sans dupliquer la logique de tracking à chaque appelant.
+ * @param {Object} e
+ * @param {string} [view]
+ */
+export function umamiCardAttrs(e, view = '') {
+    return `data-umami-event="planning-item-click" data-umami-event-view="${escapeHtml(view)}" data-umami-event-title="${escapeHtml(e.title || '')}" data-umami-event-type="${escapeHtml(e.type || '')}" data-umami-event-status="${escapeHtml(e.progressStatus || '')}"`;
+}
+
+/**
  * Gabarit compact (QOL #17, densité d'affichage) : 2 lignes plutôt que la carte complète
  * multi-blocs - pour voir davantage de sessions à l'écran sans défiler, sans pour autant tronquer
  * l'essentiel. Ligne 1 (identité + timing, ce qu'on scanne en premier) : Icône / Titre / Heure.
@@ -129,7 +142,7 @@ function renderReminderBadge(e) {
  * par renderEventCard selon html.density-compact (voir setupDensityToggle dans main.js). Tailles
  * de police/badges volontairement identiques au gabarit confortable habituel.
  */
-function renderCompactRow(e, readableDate) {
+function renderCompactRow(e, readableDate, view) {
     const title = escapeHtml(e.title);
     const type = escapeHtml(e.type || 'Événement');
     const detailsEpisode = escapeHtml(getEpisodeLabel(e));
@@ -137,7 +150,7 @@ function renderCompactRow(e, readableDate) {
 
     const liveBorderCompact = isGenuinelyLive(e) && !e.isCanceled ? 'live-glow-border' : '';
     return `
-        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorderCompact}" style="border-left: 3px solid ${e.col};">
+        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorderCompact}" style="border-left: 3px solid ${e.col};" ${umamiCardAttrs(e, view)}>
             <img src="${iconSrc}" alt="" class="w-6 ${ICON_ASPECT_CLASS} rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
@@ -157,9 +170,9 @@ function renderCompactRow(e, readableDate) {
     `;
 }
 
-export function renderEventCard(e, readableDate = null) {
+export function renderEventCard(e, readableDate = null, view = '') {
     if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
-        return renderCompactRow(e, readableDate);
+        return renderCompactRow(e, readableDate, view);
     }
 
     const detailsEpisode = escapeHtml(getEpisodeLabel(e));
@@ -191,7 +204,7 @@ export function renderEventCard(e, readableDate = null) {
     // l'appli) - cette classe permet à index.html de restaurer le texte clair par-dessus en thème
     // clair, là où le reste du texte de l'appli passe sombre (voir html[data-theme="light"] .has-poster).
     return `
-        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 my-1 rounded-xl ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorder} ${posterUrl ? 'has-poster' : ''}" style="border-left: 3px solid ${e.col};">
+        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 my-1 rounded-xl ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorder} ${posterUrl ? 'has-poster' : ''}" style="border-left: 3px solid ${e.col};" ${umamiCardAttrs(e, view)}>
             ${posterLayer}
             <div class="relative z-10 flex flex-col">
                 <div class="flex items-start justify-between space-x-1.5 w-full">
@@ -235,13 +248,13 @@ export function renderEventCard(e, readableDate = null) {
  * @param {Object} e
  * @param {boolean} isLastSegment - Vrai sur le dernier jour couvert (arg.isEnd)
  */
-export function renderContinuationChip(e, isLastSegment) {
+export function renderContinuationChip(e, isLastSegment, view = '') {
     const color = e.col || '#6366f1';
     const title = escapeHtml(e.title);
     const endHeure = e.end && e.end.includes('T') ? e.end.split('T')[1].slice(0, 5) : null;
     const suffix = isLastSegment && endHeure ? ` · jusqu'à ${escapeHtml(endHeure)}` : ' (suite)';
     return `
-        <div class="flex items-center gap-1 w-full h-full px-1.5 py-0.5 overflow-hidden rounded-md border-l-2 opacity-80 ${e.isCanceled ? 'line-through' : ''}" style="background: ${color}1a; border-color: ${color};">
+        <div class="flex items-center gap-1 w-full h-full px-1.5 py-0.5 overflow-hidden rounded-md border-l-2 opacity-80 ${e.isCanceled ? 'line-through' : ''}" style="background: ${color}1a; border-color: ${color};" ${umamiCardAttrs(e, view)}>
             <span class="text-xxs text-white/60 shrink-0">↳</span>
             <span class="text-xxs text-white/70 truncate">${title}${suffix}</span>
         </div>
@@ -252,7 +265,7 @@ export function renderContinuationChip(e, isLastSegment) {
  * Rendu compact pour les vues à créneaux horaires (semaine/jour) où la carte complète
  * ne tient pas dans une colonne étroite. Affiche l'essentiel : icône, heure, titre, épisode.
  */
-export function renderCompactEventChip(e) {
+export function renderCompactEventChip(e, view = '') {
     const iconSrc = getIconSrc(e);
     const detailsEpisode = escapeHtml(getEpisodeLabel(e));
     const title = escapeHtml(e.title);
@@ -262,7 +275,7 @@ export function renderCompactEventChip(e) {
     // on recrée l'accent couleur nous-mêmes sur ce wrapper interne pour distinguer
     // les événements les uns des autres dans une colonne horaire étroite.
     return `
-        <div class="flex items-center gap-1.5 w-full h-full px-1.5 py-1 overflow-hidden rounded-md border-l-2 ${e.isCanceled ? 'opacity-40 line-through' : ''}" style="background: ${color}26; border-color: ${color};">
+        <div class="flex items-center gap-1.5 w-full h-full px-1.5 py-1 overflow-hidden rounded-md border-l-2 ${e.isCanceled ? 'opacity-40 line-through' : ''}" style="background: ${color}26; border-color: ${color};" ${umamiCardAttrs(e, view)}>
             <img src="${iconSrc}" alt="" class="w-6 ${ICON_ASPECT_CLASS} rounded object-cover shrink-0" onerror="this.style.display='none'">
             <div class="min-w-0 flex-1 leading-tight">
                 <div class="flex items-center gap-1 min-w-0">

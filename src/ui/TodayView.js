@@ -102,7 +102,7 @@ export function renderTodayView(container, events, birthdays = [], allEvents = [
                 Il y a un an, ce jour-là
             </div>
             <div class="space-y-1.5">
-                ${lastYearEvents.map(e => `<div class="cursor-pointer opacity-90 hover:opacity-100 transition-opacity" data-event-id="${escapeHtml(e.id)}">${renderEventCard(e)}</div>`).join('')}
+                ${lastYearEvents.map(e => `<div class="cursor-pointer opacity-90 hover:opacity-100 transition-opacity" data-event-id="${escapeHtml(e.id)}">${renderEventCard(e, null, 'today-lastyear')}</div>`).join('')}
             </div>
         </div>
     ` : '';
@@ -160,7 +160,7 @@ export function renderTodayView(container, events, birthdays = [], allEvents = [
             nowMarkerInserted = true;
         }
         const live = isGenuinelyLive(e);
-        return `${marker}<div class="cursor-pointer ${live ? 'ring-2 ring-emerald-500/40 rounded-xl' : ''}" data-idx="${idx}">${renderEventCard(e)}</div>`;
+        return `${marker}<div class="cursor-pointer ${live ? 'ring-2 ring-emerald-500/40 rounded-xl' : ''}" data-idx="${idx}">${renderEventCard(e, null, 'today')}</div>`;
     }).join('');
 
     container.innerHTML = `

@@ -189,7 +189,7 @@ export function renderTimeline(container, events, order = 'asc', year = new Date
                     todayInserted = true;
                 }
             }
-            const rowHtml = group.length > 1 ? renderGroupRow(group, indexOf) : renderRow(group[0], indexOf(group[0]));
+            const rowHtml = group.length > 1 ? renderGroupRow(group, indexOf, 'timeline') : renderRow(group[0], indexOf(group[0]), 'timeline');
             nodesHtml += axisNode(eventDot(), rowHtml);
         });
         // Aujourd'hui est après TOUS les événements déjà listés ce mois-ci (ou le mois n'en a

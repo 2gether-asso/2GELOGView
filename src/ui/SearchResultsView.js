@@ -1,6 +1,6 @@
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
-import { renderStatusBadge, getEpisodeLabel, getIconSrc, getOvernightSuffix } from './EventCardTemplate.js';
+import { renderStatusBadge, getEpisodeLabel, getIconSrc, getOvernightSuffix, umamiCardAttrs } from './EventCardTemplate.js';
 import { formatMinutes } from '../utils/Format.js';
 import { Icons } from './Icons.js';
 import { renderAvatarInitials } from '../utils/Avatar.js';
@@ -14,7 +14,7 @@ function shortDate(iso) {
  * classes) pour la vue Recherche/Frise : ces deux vues ne passaient jusqu'ici jamais par
  * renderEventCard et ignoraient donc html.density-compact - le mode Compact n'avait aucun
  * effet dessus. 2 lignes plutôt que la carte complète (pas de notes/tags/affiche en fond). */
-function renderCompactSearchRow(e, idx, readableDate) {
+function renderCompactSearchRow(e, idx, readableDate, view) {
     const iconSrc = getIconSrc(e);
     const episode = escapeHtml(getEpisodeLabel(e));
     const hostRaw = e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST;
@@ -23,7 +23,7 @@ function renderCompactSearchRow(e, idx, readableDate) {
     const type = escapeHtml(e.type || 'Événement');
 
     return `
-        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden cursor-pointer ${e.isCanceled ? 'opacity-30 line-through' : ''}" style="border-left: 3px solid ${e.col};" data-idx="${idx}">
+        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden cursor-pointer ${e.isCanceled ? 'opacity-30 line-through' : ''}" style="border-left: 3px solid ${e.col};" data-idx="${idx}" ${umamiCardAttrs(e, view)}>
             <img src="${iconSrc}" alt="" class="w-6 aspect-[8/9] rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
@@ -41,11 +41,11 @@ function renderCompactSearchRow(e, idx, readableDate) {
     `;
 }
 
-export function renderRow(e, idx) {
+export function renderRow(e, idx, view = 'search') {
     const dateObj = new Date(e.start);
     if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
         const readableDateCompact = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
-        return renderCompactSearchRow(e, idx, readableDateCompact);
+        return renderCompactSearchRow(e, idx, readableDateCompact, view);
     }
     const iconSrc = getIconSrc(e);
     const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
@@ -68,7 +68,7 @@ export function renderRow(e, idx) {
         : '';
 
     return `
-        <div class="glass-card relative overflow-hidden flex gap-3 p-3 rounded-xl cursor-pointer items-start ${posterUrl ? 'has-poster' : ''}" data-idx="${idx}">
+        <div class="glass-card relative overflow-hidden flex gap-3 p-3 rounded-xl cursor-pointer items-start ${posterUrl ? 'has-poster' : ''}" data-idx="${idx}" ${umamiCardAttrs(e, view)}>
             ${posterLayer}
             <img src="${iconSrc}" alt="" class="relative z-10 w-14 aspect-[8/9] rounded-lg object-cover shrink-0" onerror="this.style.display='none'">
             <div class="relative z-10 flex-1 min-w-0 space-y-1.5">
@@ -110,7 +110,7 @@ export function groupByTitle(events) {
  * d'être) : icône/padding réduits, badges secondaires (durée cumulée, nouvelles, lieu, hôte,
  * tags) retirés pour ne garder que l'essentiel - toujours dépliable pour retrouver le détail
  * complet de chaque occurrence. */
-function renderCompactGroupRow(group, indexOf) {
+function renderCompactGroupRow(group, indexOf, view) {
     const sorted = [...group].sort((a, b) => a.start.localeCompare(b.start));
     const first = sorted[0];
     const iconSrc = getIconSrc(first);
@@ -122,7 +122,7 @@ function renderCompactGroupRow(group, indexOf) {
         const idx = indexOf(e);
         const dateStr = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
         return `
-            <div class="px-3 py-1.5 hover:bg-white/5 cursor-pointer text-13 flex items-center justify-between gap-2" data-idx="${idx}">
+            <div class="px-3 py-1.5 hover:bg-white/5 cursor-pointer text-13 flex items-center justify-between gap-2" data-idx="${idx}" ${umamiCardAttrs(e, view)}>
                 <span class="text-slate-300 ${e.isCanceled ? 'line-through opacity-50' : ''}">${dateStr}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</span>
                 ${renderStatusBadge(e.progressStatus)}
             </div>
@@ -158,9 +158,9 @@ function renderCompactGroupRow(group, indexOf) {
  * ligne résumant le total (occurrences, durée cumulée, plage de dates), dépliable pour
  * voir chaque date individuellement et l'ouvrir dans la modale.
  */
-export function renderGroupRow(group, indexOf) {
+export function renderGroupRow(group, indexOf, view = 'search') {
     if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
-        return renderCompactGroupRow(group, indexOf);
+        return renderCompactGroupRow(group, indexOf, view);
     }
     const sorted = [...group].sort((a, b) => a.start.localeCompare(b.start));
     const first = sorted[0];
@@ -190,7 +190,7 @@ export function renderGroupRow(group, indexOf) {
         const dateStr = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
         const ownNotes = !allSameNotes && e.notes ? escapeHtml(e.notes) : "";
         return `
-            <div class="px-3 py-2 hover:bg-white/5 cursor-pointer text-13" data-idx="${idx}">
+            <div class="px-3 py-2 hover:bg-white/5 cursor-pointer text-13" data-idx="${idx}" ${umamiCardAttrs(e, view)}>
                 <div class="flex items-center justify-between gap-2">
                     <span class="text-slate-300 ${e.isCanceled ? 'line-through opacity-50' : ''}">${dateStr}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</span>
                     <span class="flex items-center gap-2 min-w-0">
@@ -291,7 +291,7 @@ export function renderSearchResults(container, events, order = 'asc') {
     })();
 
     const rowsHtml = groupByTitle(events)
-        .map(group => group.length > 1 ? renderGroupRow(group, indexOf) : renderRow(group[0], indexOf(group[0])))
+        .map(group => group.length > 1 ? renderGroupRow(group, indexOf, 'search') : renderRow(group[0], indexOf(group[0]), 'search'))
         .join('');
 
     container.innerHTML = `

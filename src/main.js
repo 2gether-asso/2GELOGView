@@ -345,7 +345,7 @@ function renderUpcomingSidebar(events) {
             ${items.map(({ e, idx }) => {
                 const dateObj = new Date(e.start);
                 const readableDate = dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-                return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+                return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate, 'upcoming-sidebar')}</div>`;
             }).join('')}
         `).join('');
 }
@@ -384,7 +384,7 @@ function renderNextWeekSidebar(events) {
     container.innerHTML = nextWeek.map((e, idx) => {
         const dateObj = new Date(e.start);
         const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate, 'nextweek-sidebar')}</div>`;
     }).join('');
 }
 
@@ -2281,7 +2281,7 @@ function fillBucketDetailOverlay(titleText) {
     document.getElementById('bucket-detail-title').textContent = titleText;
     document.getElementById('bucket-detail-content').innerHTML = bucketDetailCache.map((e, idx) => {
         const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
-        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate, 'bucket-detail')}</div>`;
     }).join('');
     document.getElementById('bucket-detail-overlay').classList.remove('hidden');
 }
@@ -2437,7 +2437,7 @@ function openOrganizerProfile(hostName) {
 
     document.getElementById('organizer-profile-content').innerHTML = organizerProfileCache.map((e, idx) => {
         const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+        return `<div class="cursor-pointer" data-idx="${idx}">${renderEventCard(e, readableDate, 'organizer-profile')}</div>`;
     }).join('');
 
     document.getElementById('organizer-profile-overlay').classList.remove('hidden');
@@ -2591,14 +2591,14 @@ function openLocationProfile(cityKey) {
     upcomingSection.classList.toggle('hidden', upcoming.length === 0);
     document.getElementById('location-profile-upcoming').innerHTML = upcoming.map((e, idx) => {
         const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        return `<div class="cursor-pointer" data-upcoming-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+        return `<div class="cursor-pointer" data-upcoming-idx="${idx}">${renderEventCard(e, readableDate, 'location-profile-upcoming')}</div>`;
     }).join('');
 
     const historyContent = document.getElementById('location-profile-content');
     historyContent.innerHTML = history.length > 0
         ? history.map((e, idx) => {
             const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-            return `<div class="cursor-pointer" data-history-idx="${idx}">${renderEventCard(e, readableDate)}</div>`;
+            return `<div class="cursor-pointer" data-history-idx="${idx}">${renderEventCard(e, readableDate, 'location-profile-history')}</div>`;
         }).join('')
         : `<div class="text-center text-xs text-slate-600 py-8">Aucune session passée pour l'instant.</div>`;
 

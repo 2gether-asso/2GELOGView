@@ -38,7 +38,7 @@ async function init() {
         container.innerHTML = upcoming.map(e => {
             const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
             const targetUrl = `${CONFIG.SITE_URL}?event=${encodeURIComponent(e.id)}`;
-            return `<a href="${targetUrl}" target="_blank" rel="noopener" class="block">${renderEventCard(e, readableDate)}</a>`;
+            return `<a href="${targetUrl}" target="_blank" rel="noopener" class="block">${renderEventCard(e, readableDate, 'widget')}</a>`;
         }).join('');
     } catch (err) {
         container.innerHTML = `<p class="text-center text-sm text-rose-400 py-8">Impossible de charger le planning.</p>`;

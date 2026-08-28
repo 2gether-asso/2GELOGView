@@ -213,9 +213,9 @@ export class CalendarView {
                 // Seul le premier segment affiche la carte complète ; les suivants
                 // n'auraient qu'un fragment tronqué et redondant du même contenu.
                 if (originalData.isMultiDay && !arg.isStart) {
-                    wrapper.innerHTML = renderContinuationChip(originalData, arg.isEnd);
+                    wrapper.innerHTML = renderContinuationChip(originalData, arg.isEnd, 'calendar');
                 } else {
-                    wrapper.innerHTML = isTimeGrid ? renderCompactEventChip(originalData) : renderEventCard(originalData);
+                    wrapper.innerHTML = isTimeGrid ? renderCompactEventChip(originalData, 'calendar') : renderEventCard(originalData, null, 'calendar');
                 }
                 return { domNodes: [wrapper] };
             },

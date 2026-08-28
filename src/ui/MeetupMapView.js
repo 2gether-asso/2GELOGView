@@ -1,6 +1,7 @@
 import { escapeHtml } from '../utils/Html.js';
 import { DateUtils } from '../utils/DateUtils.js';
 import { CITY_COORDINATES } from '../data/CityCoordinates.js';
+import { umamiCardAttrs } from './EventCardTemplate.js';
 
 // Une seule instance Leaflet réutilisée (initMeetupMap n'agit qu'au premier appel) : la
 // détruire/recréer à chaque bascule de vue casserait le zoom/pan choisi par l'utilisateur.
@@ -170,7 +171,7 @@ export function updateMeetupMap(events, onEventClick, onViewLocationProfile, fit
 
         const listHtml = upcoming.slice(0, 4).map((e, i) => {
             const date = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-            return `<button data-event-index="${i}" class="meetup-popup-row block w-full text-left text-xs text-slate-200 hover:text-white truncate py-1 transition-colors">${escapeHtml(e.title)} <span class="text-slate-500">· ${date}</span></button>`;
+            return `<button data-event-index="${i}" class="meetup-popup-row block w-full text-left text-xs text-slate-200 hover:text-white truncate py-1 transition-colors" ${umamiCardAttrs(e, 'meetup-map')}>${escapeHtml(e.title)} <span class="text-slate-500">· ${date}</span></button>`;
         }).join('');
         const moreCount = upcoming.length - Math.min(upcoming.length, 4);
 

@@ -2,7 +2,7 @@ import { StatsService } from '../services/StatsService.js';
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { formatMinutes, formatDurationLong, formatCategoryLabel, topN } from '../utils/Format.js';
 import { CONFIG } from '../config.js';
-import { renderEventCard } from './EventCardTemplate.js';
+import { renderEventCard, umamiCardAttrs } from './EventCardTemplate.js';
 import { computeBadges } from '../services/BadgeService.js';
 import { Icons } from './Icons.js';
 import { animateCountUp } from '../utils/CountUp.js';
@@ -127,7 +127,7 @@ export function renderEventCarousel(events) {
 
     const cards = top.map(e => {
         const readableDate = new Date(e.start).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-        return `<div class="w-64 sm:w-72 shrink-0 snap-start">${renderEventCard(e, readableDate)}</div>`;
+        return `<div class="w-64 sm:w-72 shrink-0 snap-start">${renderEventCard(e, readableDate, 'retrospective-carousel')}</div>`;
     }).join('');
 
     return `
@@ -267,7 +267,7 @@ export function renderPosterWall(events) {
     // Cliquable (V2.2, "augmenter les interactions") : rouvre l'événement source de l'affiche
     // dans la modale, via son id stable (voir openEventById dans main.js).
     const tiles = posters.map(([url, e]) => `
-        <div class="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/10 cursor-pointer hover:opacity-80 hover:border-indigo-400/40 transition-all" role="button" tabindex="0" aria-label="Voir ${escapeHtml(e.title)}" data-event-id="${escapeHtml(e.id)}">
+        <div class="aspect-video rounded-lg overflow-hidden bg-white/5 border border-white/10 cursor-pointer hover:opacity-80 hover:border-indigo-400/40 transition-all" role="button" tabindex="0" aria-label="Voir ${escapeHtml(e.title)}" data-event-id="${escapeHtml(e.id)}" ${umamiCardAttrs(e, 'retrospective-poster')}>
             <img src="${url}" alt="${escapeHtml(e.title)}" title="${escapeHtml(e.title)}" loading="lazy" class="w-full h-full object-cover" onerror="this.closest('div').style.display='none'">
         </div>
     `).join('');
@@ -313,7 +313,7 @@ export function renderBookendCards(realSessions, labels = {}) {
         return `
             <div class="glass-panel rounded-2xl p-4 space-y-2">
                 ${sectionHeading(Icons.film('w-4 h-4 shrink-0'), onlyLabel)}
-                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(first.title)}" data-event-id="${escapeHtml(first.id)}">${renderEventCard(first, dateOf(first))}</div>
+                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(first.title)}" data-event-id="${escapeHtml(first.id)}">${renderEventCard(first, dateOf(first), 'retrospective-bookend')}</div>
             </div>
         `;
     }
@@ -322,11 +322,11 @@ export function renderBookendCards(realSessions, labels = {}) {
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="glass-panel rounded-2xl p-4 space-y-2">
                 ${sectionHeading(Icons.film('w-4 h-4 shrink-0'), firstLabel)}
-                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(first.title)}" data-event-id="${escapeHtml(first.id)}">${renderEventCard(first, dateOf(first))}</div>
+                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(first.title)}" data-event-id="${escapeHtml(first.id)}">${renderEventCard(first, dateOf(first), 'retrospective-bookend')}</div>
             </div>
             <div class="glass-panel rounded-2xl p-4 space-y-2">
                 ${sectionHeading(Icons.flag('w-4 h-4 shrink-0'), lastLabel)}
-                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(last.title)}" data-event-id="${escapeHtml(last.id)}">${renderEventCard(last, dateOf(last))}</div>
+                <div class="cursor-pointer" role="button" tabindex="0" aria-label="Voir ${escapeHtml(last.title)}" data-event-id="${escapeHtml(last.id)}">${renderEventCard(last, dateOf(last), 'retrospective-bookend')}</div>
             </div>
         </div>
     `;
