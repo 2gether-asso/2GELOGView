@@ -8,7 +8,7 @@ function stripAccents(str) {
 // plusieurs valeurs (ex: plusieurs clips YouTube ou captures d'écran pour un même événement,
 // voir @clip/@screen dans GUIDE_METADONNEES.md) - au lieu du comportement par défaut où la
 // dernière occurrence écrase silencieusement les précédentes.
-const REPEATABLE_META_KEYS = new Set(["clip", "screen"]);
+const REPEATABLE_META_KEYS = new Set(["clip", "short", "screen"]);
 
 export class MetadataParser {
     /**

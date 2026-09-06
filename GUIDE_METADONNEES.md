@@ -240,31 +240,34 @@ avant/après (aucun comportement ne change), seule la répartition entre les deu
 change. Pour l'appliquer : ouvrez ce fichier (Excel ou `Fichier > Importer` dans Google
 Sheets) et remplacez le contenu de votre feuille actuelle par son contenu.
 
-## 11. Highlights (clips YouTube / captures d'écran)
+## 11. Highlights (clips/shorts YouTube / captures d'écran)
 
 Pour mettre en avant les meilleurs moments d'une session (un fou rire, une scène marquante...),
 deux ingrédients dans `Tags` :
 
 1. Le tag `#highlight` sur la ligne, comme n'importe quel autre tag.
-2. Une ou plusieurs métadonnées `@clip:` (lien YouTube) et/ou `@screen:` (lien image) —
-   ce sont les **deux seules clés `@` répétables** : contrairement aux autres (§ 8, une
-   métadonnée par ligne), on peut empiler plusieurs lignes `@clip:`/`@screen:` sur la
-   même ligne du tableur pour ajouter plusieurs vidéos/captures.
+2. Une ou plusieurs métadonnées `@clip:` (vidéo YouTube), `@short:` (Short YouTube) et/ou
+   `@screen:` (lien image) — ce sont les **trois seules clés `@` répétables** : contrairement
+   aux autres (§ 8, une métadonnée par ligne), on peut empiler plusieurs lignes
+   `@clip:`/`@short:`/`@screen:` sur la même ligne du tableur pour ajouter plusieurs
+   vidéos/captures.
 
 ```
 #highlight
 @clip:https://www.youtube.com/watch?v=xxxxxxxxxxx
-@clip:https://youtu.be/yyyyyyyyyyy
+@short:https://www.youtube.com/shorts/yyyyyyyyyyy
 @screen:zevent-2026.png
 ```
 
-- Sans le tag `#highlight`, des `@clip`/`@screen` renseignés sont ignorés (aucun bloc
-  affiché) : le tag est ce qui déclenche l'affichage du bloc "✨ Highlights" dans la modale,
-  pas la simple présence de métadonnées.
-- `@clip` accepte les formats `youtube.com/watch?v=...`, `youtu.be/...`, `.../shorts/...` et
-  `.../embed/...` ; un lien qui n'en fait pas partie est silencieusement ignoré (pas d'iframe
-  cassée).
-- Les clips sont intégrés via `youtube-nocookie.com` (mode vie privée renforcée de YouTube).
+- Sans le tag `#highlight`, des `@clip`/`@short`/`@screen` renseignés sont ignorés (aucun
+  bloc affiché) : le tag est ce qui déclenche l'affichage du bloc "✨ Highlights" dans la
+  modale, pas la simple présence de métadonnées.
+- `@clip` (lecteur horizontal 16:9) et `@short` (lecteur vertical 9:16, adapté au format
+  Shorts) acceptent tous les deux les formats `youtube.com/watch?v=...`, `youtu.be/...`,
+  `.../shorts/...` et `.../embed/...` — c'est la clé utilisée (`@clip` ou `@short`) qui
+  détermine le format d'affichage, pas l'URL elle-même. Un lien qui n'en fait partie est
+  silencieusement ignoré (pas d'iframe cassée).
+- Les clips/shorts sont intégrés via l'embed natif YouTube (`youtube.com/embed/...`).
 
 ### Où héberger les captures d'écran (`@screen:`)
 

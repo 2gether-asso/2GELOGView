@@ -519,12 +519,33 @@
         /* Mode Kiosque : masque l'en-tête et la sidebar Filtres pour un affichage plein écran
            sans interaction, pensé pour un écran dédié (partagé dans un salon vocal par exemple). */
         body.kiosk-mode header,
+        body.kiosk-mode #next-event-banner,
         body.kiosk-mode #filters-sidebar,
+        body.kiosk-mode #sidebar-panel,
         body.kiosk-mode #btn-toggle-sidebar,
         body.kiosk-mode #btn-reopen-sidebar,
         body.kiosk-mode #btn-toggle-filters-sidebar,
-        body.kiosk-mode #btn-reopen-filters-sidebar {
+        body.kiosk-mode #btn-reopen-filters-sidebar,
+        body.kiosk-mode #btn-close-secondary-view {
             display: none !important;
+        }
+
+        /* Défilement continu façon "carrousel Netflix" du panneau Kiosque (V2.6, voir
+           KioskView.js) : la piste contient la liste des vignettes DUPLIQUÉE une fois côté JS,
+           animée en boucle par translateX(-50%) - la seconde moitié prend le relais pile où la
+           première s'arrête, pour un bouclage invisible (un simple scrollLeft cyclique
+           scinterait visiblement au retour au début). Durée proportionnelle au nombre de
+           vignettes (--kiosk-tile-count, posé en style inline) pour garder un temps d'affichage
+           par vignette constant quel que soit le nombre d'événements restants ce mois-ci.
+           Respecte prefers-reduced-motion : pas d'animation, juste une rangée figée (toujours
+           lisible, seulement pas de défilement automatique). */
+        .kiosk-ticker-track { width: max-content; }
+        @media (prefers-reduced-motion: no-preference) {
+            .kiosk-ticker-track { animation: kioskScroll calc(var(--kiosk-tile-count, 6) * 3.5s) linear infinite; }
+        }
+        @keyframes kioskScroll {
+            from { transform: translateX(0); }
+            to { transform: translateX(-50%); }
         }
 
         /* Mode "grand texte" (V2.4, "17", voir #btn-toggle-large-text dans l'aide) : `zoom`
@@ -663,7 +684,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><polygon points="13 2 4 14 11 14 10 22 20 10 13 10"></polygon></svg>
                         Lancer le digest Discord
                     </a>
-                    <button id="btn-kiosk-mode" title="Mode Kiosque : plein écran, rotation automatique Aujourd'hui / Cette semaine" aria-label="Mode Kiosque" class="flex items-center gap-2 text-xxs font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
+                    <button id="btn-kiosk-mode" title="Mode Kiosque : showcase plein écran façon Netflix, Aujourd'hui + défilement du reste du mois" aria-label="Mode Kiosque" class="flex items-center gap-2 text-xxs font-bold text-slate-300 hover:text-white hover:bg-white/10 px-2.5 py-2 rounded-lg transition-all w-full text-left">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"></rect><line x1="8" y1="20" x2="16" y2="20"></line><line x1="12" y1="16" x2="12" y2="20"></line></svg>
                         Mode Kiosque
                     </button>
@@ -811,6 +832,10 @@
             <div id="timeline-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
             <div id="today-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
             <div id="year-view" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
+            <!-- Mode Kiosque (V2.6, voir KioskView.js) : n'est jamais un "vrai" currentViewMode
+                 (voir enterKioskMode/exitKioskMode dans main.js) - juste une bascule directe
+                 hidden/visible par-dessus la vue déjà active, restaurée telle quelle à la sortie. -->
+            <div id="kiosk-view" class="hidden absolute inset-0 z-[16] w-full h-full overflow-y-auto custom-scroll bg-[var(--surface-0)]"></div>
             <!-- isolate : Leaflet pose ses propres z-index internes (jusqu'à 700 pour ses panes/
                  popups) sur des éléments sans quoi contenir ce sous-arbre dans son propre contexte
                  d'empilement - ces 700 finiraient comparés directement à la modale d'événement

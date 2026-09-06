@@ -37,6 +37,7 @@ import { showToast } from './ui/Toast.js';
 import { startOnboardingTour } from './ui/OnboardingTour.js';
 import { renderAvatarInitials } from './utils/Avatar.js';
 import { animateCountUp } from './utils/CountUp.js';
+import { renderKioskShowcase } from './ui/KioskView.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -1977,74 +1978,41 @@ function checkUpcomingNotifications() {
     localStorage.setItem(NOTIF_NOTIFIED_KEY, JSON.stringify(pruned));
 }
 
-let kioskRotationTimer = null;
-let kioskSavedState = null;
+let kioskRefreshTimer = null;
 
-// Mode Kiosque : plein écran sans interaction, pensé pour un écran dédié affiché en
-// continu (ex: partagé dans un salon vocal Discord). Alterne automatiquement entre
-// "Aujourd'hui" et "Cette semaine" en réutilisant le filtre de plage de dates (§ Feature 7).
-function applyKioskRange(days) {
-    const from = new Date(); from.setHours(0, 0, 0, 0);
-    const fromStr = DateUtils.toLocalDateStr(from);
-    const to = new Date(from); to.setDate(to.getDate() + days);
-    currentDateFrom = fromStr;
-    currentDateTo = DateUtils.toLocalDateStr(to);
-    updateUIState();
+// Mode Kiosque : showcase animé façon Netflix (voir KioskView.js), pensé pour un écran dédié
+// affiché en continu (ex: partagé dans un salon vocal Discord) - pas un "vrai" currentViewMode,
+// juste une bascule hidden/visible de #kiosk-view par-dessus la vue déjà active (peu importe
+// laquelle), restaurée telle quelle à la sortie sans avoir à en sauvegarder l'état.
+function renderKiosk() {
+    renderKioskShowcase(document.getElementById('kiosk-view'), repo.getAll());
 }
 
 function enterKioskMode() {
-    kioskSavedState = {
-        dateFrom: currentDateFrom,
-        dateTo: currentDateTo,
-        view: calendarInstance ? calendarInstance.view.type : null,
-        // Le Kiosque est pensé pour afficher LE CALENDRIER (listMonth) plein écran : sans ce
-        // reset, l'activer alors qu'on était sur Aujourd'hui/Frise/Carte laissait cette vue-là
-        // affichée (currentViewMode n'était jamais repris en compte), pas le calendrier attendu.
-        viewMode: currentViewMode
-    };
-    if (currentViewMode !== 'calendar') {
-        currentViewMode = 'calendar';
-        applyViewButtonStyles();
-    }
-
     document.body.classList.add('kiosk-mode');
     document.getElementById('btn-exit-kiosk').classList.remove('hidden');
     document.documentElement.requestFullscreen?.().catch(() => {});
 
-    if (calendarInstance) calendarInstance.changeView('listMonth');
+    document.getElementById('kiosk-view').classList.remove('hidden');
+    renderKiosk();
 
-    // Démarre sur "Cette semaine" plutôt que "Aujourd'hui" : un jour sans aucune session
-    // (fréquent) afficherait sinon un écran vide en tout premier, qui a tout l'air d'un
-    // mode Kiosque cassé plutôt que "simplement rien de prévu maintenant".
-    let showingWeek = true;
-    applyKioskRange(7);
-    kioskRotationTimer = setInterval(() => {
-        showingWeek = !showingWeek;
-        applyKioskRange(showingWeek ? 7 : 0);
-    }, 20000);
+    // Affichage passif potentiellement laissé ouvert des heures (voire des jours) sur un écran
+    // dédié : sans ce rafraîchissement périodique, "Aujourd'hui" resterait figé sur le jour où
+    // le Kiosque a été démarré, et un événement fraîchement Terminé continuerait à apparaitre
+    // dans le défilement du mois. Pas de re-fetch réseau ici (juste un nouveau rendu depuis le
+    // repo déjà chargé) : suffisant pour ces deux cas, sans risquer de perturber l'affichage
+    // avec l'overlay de chargement en plein Kiosque.
+    kioskRefreshTimer = setInterval(renderKiosk, 5 * 60 * 1000);
 }
 
 function exitKioskMode() {
     document.body.classList.remove('kiosk-mode');
     document.getElementById('btn-exit-kiosk').classList.add('hidden');
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    clearInterval(kioskRotationTimer);
-    kioskRotationTimer = null;
+    clearInterval(kioskRefreshTimer);
+    kioskRefreshTimer = null;
 
-    if (kioskSavedState) {
-        currentDateFrom = kioskSavedState.dateFrom;
-        currentDateTo = kioskSavedState.dateTo;
-        document.getElementById('filter-date-from').value = currentDateFrom || "";
-        document.getElementById('filter-date-to').value = currentDateTo || "";
-        document.getElementById('btn-clear-date-range').classList.toggle('hidden', !currentDateFrom && !currentDateTo);
-        if (calendarInstance && kioskSavedState.view) calendarInstance.changeView(kioskSavedState.view);
-        if (kioskSavedState.viewMode && kioskSavedState.viewMode !== currentViewMode) {
-            currentViewMode = kioskSavedState.viewMode;
-            applyViewButtonStyles();
-        }
-        kioskSavedState = null;
-    }
-    updateUIState();
+    document.getElementById('kiosk-view').classList.add('hidden');
 }
 
 function setupKioskMode() {

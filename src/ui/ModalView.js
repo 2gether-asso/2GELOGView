@@ -55,7 +55,7 @@ export class ModalView {
 
         document.getElementById('modal-highlight-clips').addEventListener('click', (e) => {
             const btn = e.target.closest('[data-clip-id]');
-            if (btn) this._openLightboxClip(btn.dataset.clipId);
+            if (btn) this._openLightboxClip(btn.dataset.clipId, btn.dataset.clipFormat);
         });
         document.getElementById('modal-highlight-screens').addEventListener('click', (e) => {
             const btn = e.target.closest('[data-screen-url]');
@@ -346,10 +346,13 @@ export class ModalView {
     }
 
     /**
-     * Bloc "Highlights" (V2.6) : clips YouTube (@clip:) et captures d'écran (@screen:),
-     * réservé aux événements portant le tag #highlight - avoir des métadonnées @clip/@screen
+     * Bloc "Highlights" (V2.6) : clips/shorts YouTube (@clip:/@short:) et captures d'écran
+     * (@screen:), réservé aux événements portant le tag #highlight - avoir ces métadonnées
      * sans ce tag ne suffit pas, pour garder le bloc réservé aux moments choisis plutôt que de
      * l'afficher dès qu'un lien traine dans les métadonnées (voir EventGenerator).
+     * @clip (horizontal 16:9) et @short (vertical 9:16, Shorts YouTube) partagent la même
+     * extraction d'id (voir extractYouTubeId, un Short reste une vidéo YouTube comme une autre)
+     * mais s'affichent dans un format de lecteur différent, distingué via data-clip-format.
      * Uniquement des vignettes ici (miniature + titre) qui ouvrent la visionneuse plein écran
      * au clic (voir _openLightboxClip/_openLightboxImage) - un clip embarqué directement dans
      * la modale gonflait sa hauteur de plusieurs centaines de pixels par clip (empilés) et
@@ -361,10 +364,15 @@ export class ModalView {
         const screensBox = document.getElementById('modal-highlight-screens');
         const isHighlighted = (event.tags || []).includes('highlight');
 
-        const clipIds = isHighlighted ? (event.clips || []).map(extractYouTubeId).filter(Boolean) : [];
+        const toItems = (values, format) => (values || [])
+            .map(v => ({ id: extractYouTubeId(v), format }))
+            .filter(item => item.id);
+        const clipItems = isHighlighted
+            ? [...toItems(event.clips, 'video'), ...toItems(event.shorts, 'short')]
+            : [];
         const screenUrls = isHighlighted ? (event.screens || []).map(v => this._resolveScreenUrl(v)).filter(Boolean) : [];
 
-        if (clipIds.length === 0 && screenUrls.length === 0) {
+        if (clipItems.length === 0 && screenUrls.length === 0) {
             container.classList.add('hidden');
             container.classList.remove('flex');
             return;
@@ -373,21 +381,24 @@ export class ModalView {
         container.classList.add('flex');
 
         const playIcon = '<svg viewBox="0 0 24 24" class="w-4 h-4 text-white translate-x-[1px]" aria-hidden="true"><polygon points="8 5 19 12 8 19" fill="currentColor" stroke="none"></polygon></svg>';
-        clipsBox.innerHTML = clipIds.map(id => `
-            <button data-clip-id="${id}" class="w-40 shrink-0 snap-start text-left group" aria-label="Voir le clip en plein écran">
-                <div class="relative aspect-video rounded-lg overflow-hidden border border-white/10 bg-black">
+        clipsBox.innerHTML = clipItems.map(({ id, format }) => {
+            const isShort = format === 'short';
+            return `
+            <button data-clip-id="${id}" data-clip-format="${format}" class="${isShort ? 'w-24' : 'w-40'} shrink-0 snap-start text-left group" aria-label="Voir ${isShort ? 'le short' : 'le clip'} en plein écran">
+                <div class="relative ${isShort ? 'aspect-[9/16]' : 'aspect-video'} rounded-lg overflow-hidden border border-white/10 bg-black">
                     <img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="" class="w-full h-full object-cover">
                     <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition-all">
                         <div class="w-8 h-8 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${playIcon}</div>
                     </div>
                 </div>
-                <div data-clip-title="${id}" class="text-2xs text-slate-400 font-semibold mt-1 line-clamp-2">Clip vidéo</div>
-            </button>`).join('');
-        clipsBox.classList.toggle('hidden', clipIds.length === 0);
+                <div data-clip-title="${id}" class="text-2xs text-slate-400 font-semibold mt-1 line-clamp-2">${isShort ? 'Short' : 'Clip vidéo'}</div>
+            </button>`;
+        }).join('');
+        clipsBox.classList.toggle('hidden', clipItems.length === 0);
 
         // Titre réel affiché en second temps (voir fetchYouTubeTitle) : le placeholder
         // générique ci-dessus s'affiche immédiatement, jamais bloqué par ce fetch optionnel.
-        clipIds.forEach(id => {
+        clipItems.forEach(({ id }) => {
             fetchYouTubeTitle(id).then(title => {
                 if (!title) return;
                 const el = clipsBox.querySelector(`[data-clip-title="${id}"]`);
@@ -425,10 +436,17 @@ export class ModalView {
         });
     }
 
-    static _openLightboxClip(id) {
+    /**
+     * @param {string} format - 'video' (16:9, @clip:) ou 'short' (9:16, @short:) - voir
+     * _renderHighlights. Embed natif YouTube (youtube.com, pas youtube-nocookie.com) sur les
+     * deux formats.
+     */
+    static _openLightboxClip(id, format = 'video') {
+        const isShort = format === 'short';
+        const wrapperClass = isShort ? 'w-full max-w-xs mx-auto aspect-[9/16]' : 'w-full aspect-video';
         document.getElementById('highlight-lightbox-content').innerHTML = `
-            <div class="w-full aspect-video">
-                <iframe class="w-full h-full rounded-xl" src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1" title="Clip YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            <div class="${wrapperClass}">
+                <iframe class="w-full h-full rounded-xl" src="https://www.youtube.com/embed/${id}?autoplay=1" title="${isShort ? 'Short' : 'Clip'} YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
             </div>`;
         this._showLightbox();
     }
