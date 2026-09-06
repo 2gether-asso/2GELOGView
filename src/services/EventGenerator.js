@@ -447,6 +447,13 @@ export class EventGenerator {
             // défaut du type (voir config.js) ; null si ni l'un ni l'autre n'est défini.
             image: parsedNotes.meta.image || theme.image || null,
             url: parsedNotes.meta.url || parsedNotes.meta.lien || parsedNotes.meta.link || theme.url || null,
+            // Highlights (V2.6) : clips YouTube / captures d'écran, une valeur par ligne
+            // @clip:/@screen: (voir REPEATABLE_META_KEYS dans MetadataParser) - seulement
+            // affichés dans la modale si l'événement porte aussi le tag #highlight (voir
+            // ModalView._renderHighlights), pour garder ce bloc réservé aux moments choisis
+            // plutôt que de l'afficher dès qu'un lien traine dans les métadonnées.
+            clips: parsedNotes.meta.clip || [],
+            screens: parsedNotes.meta.screen || [],
             ...restOverrides
         };
 

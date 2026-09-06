@@ -4,6 +4,12 @@ function stripAccents(str) {
     return str.normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
+// Clés `@` qui peuvent apparaître plusieurs fois sur des lignes distinctes pour accumuler
+// plusieurs valeurs (ex: plusieurs clips YouTube ou captures d'écran pour un même événement,
+// voir @clip/@screen dans GUIDE_METADONNEES.md) - au lieu du comportement par défaut où la
+// dernière occurrence écrase silencieusement les précédentes.
+const REPEATABLE_META_KEYS = new Set(["clip", "screen"]);
+
 export class MetadataParser {
     /**
      * Analyse une chaîne de caractères pour en extraire les tags, les métadonnées et le texte libre.
@@ -38,7 +44,12 @@ export class MetadataParser {
                     // @episode et @épisode pointent tous les deux vers la même métadonnée.
                     const key = stripAccents(parts[0].trim().toLowerCase());
                     const value = parts.slice(1).join(":").trim();
-                    meta[key] = value;
+                    if (REPEATABLE_META_KEYS.has(key)) {
+                        if (!Array.isArray(meta[key])) meta[key] = [];
+                        meta[key].push(value);
+                    } else {
+                        meta[key] = value;
+                    }
                     return;
                 }
             }

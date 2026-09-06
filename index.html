@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2GELOG V2.5 - UwU</title>
+    <title>2GELOG V2.6 - UwU</title>
     <link rel="icon" type="image/png" href="./assets/img/icon.png">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="apple-touch-icon" href="./assets/img/pwa/icon-192.png">
@@ -85,10 +85,11 @@
              15 barre d'outils calendrier (sticky)   50 modale d'événement       66 aide
              30 suggestions/menus déroulants          60 admin                   67 rappels
              40 en-tête                               61 fiche de lieu           68 sondage
-                                                       62 rétrospective           70 chargement/erreur
-                                                       63 détail (bucket)         75 toasts
-                                                       64 profil organisateur     80 quitter le kiosque
-                                                       65 notes de version        90 visite guidée */
+                                                       62 rétrospective           69 visionneuse highlights
+                                                       63 détail (bucket)         70 chargement/erreur
+                                                       64 profil organisateur     75 toasts
+                                                       65 notes de version        80 quitter le kiosque
+                                                                                  90 visite guidée */
         body {
             font-family: 'Plus Jakarta Sans', sans-serif;
             background: radial-gradient(circle at 50% 0%, #111827 0%, var(--bg-deep) 70%);
@@ -544,7 +545,7 @@
         <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer shrink-0">
             <div id="header-status-dot" class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
             <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
-                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-2xs bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.5</span>
+                2GELOG <span class="hidden sm:inline text-indigo-400 font-bold text-2xs bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.6</span>
                 <span id="seasonal-badge" class="hidden font-bold text-2xs px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
             </h1>
         </div>
@@ -1034,6 +1035,24 @@
                 <p id="modal-event-notes" class="text-slate-300 italic text-xs leading-relaxed whitespace-pre-line">Aucune description disponible.</p>
             </div>
 
+            <!-- Highlights (V2.6) : clips YouTube / captures d'écran, uniquement pour un
+                 événement taggé #highlight avec au moins un @clip:/@screen: renseigné - voir
+                 ModalView._renderHighlights (même toggle hidden/flex que modal-similar-container).
+                 Les clips défilent en carrousel HORIZONTAL (pas empilés verticalement) : un
+                 seul @clip: ne changeait rien, mais 2-3 clips en pleine largeur empilés
+                 gonflaient le bloc de plusieurs centaines de pixels et donnaient l'impression
+                 que la modale était "coupée" (tout le reste repoussé loin sous le fold, sans
+                 indice visuel de scroll) - la largeur fixe par clip garde une hauteur de bloc
+                 constante quel que soit le nombre de clips. -->
+            <div id="modal-highlights-container" class="hidden flex-col space-y-2">
+                <div class="flex items-center gap-1.5 text-slate-400 font-bold text-3xs uppercase tracking-wider">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"></path><path d="M19 3v4"></path><path d="M17 5h4"></path></svg>
+                    Highlights
+                </div>
+                <div id="modal-highlight-clips" class="hidden flex gap-2 overflow-x-auto custom-scroll snap-x snap-mandatory pb-1"></div>
+                <div id="modal-highlight-screens" class="hidden grid grid-cols-3 gap-1.5"></div>
+            </div>
+
             <div id="modal-reminder-container" class="flex flex-col space-y-1.5">
                 <button id="modal-reminder-btn" class="w-full flex items-center justify-center gap-2 text-xxs font-bold px-3 py-2 rounded-lg border transition-all">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>
@@ -1252,6 +1271,18 @@
             </div>
             <div id="poll-content"></div>
         </div>
+    </div>
+
+    <!-- Visionneuse plein écran (V2.6) : ouverte depuis le bloc Highlights de la modale
+         d'événement (vignette + titre uniquement dans la modale - voir ModalView.js) pour un
+         clip YouTube ou une capture d'écran. Un seul lecteur partagé plutôt qu'un par vignette :
+         évite d'avoir plusieurs iframes YouTube chargées (et potentiellement lues) en même
+         temps derrière la modale. -->
+    <div id="highlight-lightbox" class="hidden fixed inset-0 z-[69] items-center justify-center p-4 bg-black/90 backdrop-blur-md cursor-pointer" title="Cliquer en dehors pour fermer">
+        <button id="btn-close-highlight-lightbox" title="Fermer" aria-label="Fermer" class="absolute top-4 right-4 p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-all">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+        </button>
+        <div id="highlight-lightbox-content" class="w-full max-w-4xl max-h-[85vh] flex items-center justify-center cursor-auto"></div>
     </div>
 
     <!-- Overlays "pleine page" (admin/rétrospective/détail/profil organisateur) : jusque-là un

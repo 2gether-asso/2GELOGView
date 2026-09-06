@@ -3,6 +3,7 @@ import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { renderStatusBadge, getOvernightSuffix, getIconSrc } from './EventCardTemplate.js';
 import { ReminderService } from '../services/ReminderService.js';
 import { embedFileName } from '../utils/EmbedId.js';
+import { extractYouTubeId, fetchYouTubeTitle } from '../utils/YouTube.js';
 import { IcsExporter } from '../services/IcsExporter.js';
 import { Icons } from './Icons.js';
 import { showToast } from './Toast.js';
@@ -41,10 +42,24 @@ export class ModalView {
             if (e.target === container) this.hide();
         });
         // Accessibilité clavier : Échap ferme la modale, quel que soit l'élément focus.
+        // Sauf si la visionneuse Highlights (voir _initLightbox) est ouverte par-dessus : elle
+        // doit se fermer en premier (topmost d'abord), pas les deux d'un coup sur un seul Échap.
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !container.classList.contains('pointer-events-none')) {
-                this.hide();
-            }
+            if (e.key !== 'Escape' || container.classList.contains('pointer-events-none')) return;
+            const lightbox = document.getElementById('highlight-lightbox');
+            if (!lightbox.classList.contains('hidden')) return;
+            this.hide();
+        });
+
+        this._initLightbox();
+
+        document.getElementById('modal-highlight-clips').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-clip-id]');
+            if (btn) this._openLightboxClip(btn.dataset.clipId);
+        });
+        document.getElementById('modal-highlight-screens').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-screen-url]');
+            if (btn) this._openLightboxImage(btn.dataset.screenUrl);
         });
 
         // Rappel suivi par titre, pas par instance (voir ReminderService) : fonctionne sur
@@ -239,6 +254,8 @@ export class ModalView {
 
         document.getElementById('modal-event-notes').innerText = event.notes || "Aucune note ou description pour cet événement.";
 
+        this._renderHighlights(event);
+
         // Le rappel est suivi par titre, pas par occurrence : reste pertinent même si CETTE
         // occurrence précise est déjà terminée (une prochaine diffusion peut exister,
         // notamment pour une série).
@@ -328,6 +345,115 @@ export class ModalView {
         }
     }
 
+    /**
+     * Bloc "Highlights" (V2.6) : clips YouTube (@clip:) et captures d'écran (@screen:),
+     * réservé aux événements portant le tag #highlight - avoir des métadonnées @clip/@screen
+     * sans ce tag ne suffit pas, pour garder le bloc réservé aux moments choisis plutôt que de
+     * l'afficher dès qu'un lien traine dans les métadonnées (voir EventGenerator).
+     * Uniquement des vignettes ici (miniature + titre) qui ouvrent la visionneuse plein écran
+     * au clic (voir _openLightboxClip/_openLightboxImage) - un clip embarqué directement dans
+     * la modale gonflait sa hauteur de plusieurs centaines de pixels par clip (empilés) et
+     * "coupait" visuellement le reste du contenu, repoussé loin sous le fold.
+     */
+    static _renderHighlights(event) {
+        const container = document.getElementById('modal-highlights-container');
+        const clipsBox = document.getElementById('modal-highlight-clips');
+        const screensBox = document.getElementById('modal-highlight-screens');
+        const isHighlighted = (event.tags || []).includes('highlight');
+
+        const clipIds = isHighlighted ? (event.clips || []).map(extractYouTubeId).filter(Boolean) : [];
+        const screenUrls = isHighlighted ? (event.screens || []).map(v => this._resolveScreenUrl(v)).filter(Boolean) : [];
+
+        if (clipIds.length === 0 && screenUrls.length === 0) {
+            container.classList.add('hidden');
+            container.classList.remove('flex');
+            return;
+        }
+        container.classList.remove('hidden');
+        container.classList.add('flex');
+
+        const playIcon = '<svg viewBox="0 0 24 24" class="w-4 h-4 text-white translate-x-[1px]" aria-hidden="true"><polygon points="8 5 19 12 8 19" fill="currentColor" stroke="none"></polygon></svg>';
+        clipsBox.innerHTML = clipIds.map(id => `
+            <button data-clip-id="${id}" class="w-40 shrink-0 snap-start text-left group" aria-label="Voir le clip en plein écran">
+                <div class="relative aspect-video rounded-lg overflow-hidden border border-white/10 bg-black">
+                    <img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="" class="w-full h-full object-cover">
+                    <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition-all">
+                        <div class="w-8 h-8 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${playIcon}</div>
+                    </div>
+                </div>
+                <div data-clip-title="${id}" class="text-2xs text-slate-400 font-semibold mt-1 line-clamp-2">Clip vidéo</div>
+            </button>`).join('');
+        clipsBox.classList.toggle('hidden', clipIds.length === 0);
+
+        // Titre réel affiché en second temps (voir fetchYouTubeTitle) : le placeholder
+        // générique ci-dessus s'affiche immédiatement, jamais bloqué par ce fetch optionnel.
+        clipIds.forEach(id => {
+            fetchYouTubeTitle(id).then(title => {
+                if (!title) return;
+                const el = clipsBox.querySelector(`[data-clip-title="${id}"]`);
+                if (el) el.textContent = title;
+            });
+        });
+
+        screensBox.innerHTML = screenUrls.map(url => `
+            <button data-screen-url="${escapeHtml(url)}" class="block aspect-video rounded-lg overflow-hidden border border-white/10 bg-black/20" aria-label="Voir la capture en plein écran">
+                <img src="${escapeHtml(url)}" alt="Capture d'écran" class="w-full h-full object-cover hover:scale-105 transition-transform" loading="lazy">
+            </button>`).join('');
+        screensBox.classList.toggle('hidden', screenUrls.length === 0);
+    }
+
+    /**
+     * Une valeur `@screen:` sans schéma (juste un nom de fichier, ex: "zevent-2026.png") est
+     * résolue dans assets/img/highlights/ (voir son README.md et GUIDE_METADONNEES.md §11) -
+     * pour ne pas obliger à coller une URL complète à chaque capture uploadée dans le repo.
+     * Une URL http(s) complète (ex: imgbb, pour qui n'a pas accès en écriture au repo) reste
+     * utilisable telle quelle.
+     */
+    static _resolveScreenUrl(value) {
+        if (!value) return '';
+        const trimmed = String(value).trim();
+        return /^https?:\/\//i.test(trimmed) ? sanitizeUrl(trimmed) : sanitizeUrl(`./assets/img/highlights/${trimmed}`);
+    }
+
+    /** Visionneuse plein écran partagée (clip ou capture) - voir #highlight-lightbox. */
+    static _initLightbox() {
+        const overlay = document.getElementById('highlight-lightbox');
+        document.getElementById('btn-close-highlight-lightbox').addEventListener('click', () => this._closeLightbox());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) this._closeLightbox(); });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !overlay.classList.contains('hidden')) this._closeLightbox();
+        });
+    }
+
+    static _openLightboxClip(id) {
+        document.getElementById('highlight-lightbox-content').innerHTML = `
+            <div class="w-full aspect-video">
+                <iframe class="w-full h-full rounded-xl" src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1" title="Clip YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>`;
+        this._showLightbox();
+    }
+
+    static _openLightboxImage(url) {
+        document.getElementById('highlight-lightbox-content').innerHTML =
+            `<img src="${escapeHtml(url)}" alt="Capture d'écran" class="max-w-full max-h-[85vh] object-contain rounded-xl">`;
+        this._showLightbox();
+    }
+
+    static _showLightbox() {
+        const overlay = document.getElementById('highlight-lightbox');
+        overlay.classList.remove('hidden');
+        overlay.classList.add('flex');
+    }
+
+    static _closeLightbox() {
+        const overlay = document.getElementById('highlight-lightbox');
+        overlay.classList.add('hidden');
+        overlay.classList.remove('flex');
+        // Décharge le contenu (iframe/img) pour couper net une éventuelle lecture vidéo,
+        // plutôt que de la laisser tourner en arrière-plan derrière la modale rouverte.
+        document.getElementById('highlight-lightbox-content').innerHTML = '';
+    }
+
     /** Applique le style actif/inactif au bouton de rappel selon l'abonnement de CE titre. */
     static _applyReminderButtonStyle() {
         const btn = document.getElementById('modal-reminder-btn');
@@ -363,6 +489,12 @@ export class ModalView {
         const modalBox = document.getElementById('custom-modal-box');
         modalContainer.classList.add('opacity-0', 'pointer-events-none');
         modalBox.classList.add('scale-95');
+
+        // Ferme aussi la visionneuse Highlights si elle était restée ouverte par-dessus (ex:
+        // clic sur le ✕ de la modale plutôt qu'Échap, qui lui referme la visionneuse en
+        // premier) - sans ça un clip lancé continuerait à jouer (son compris) en arrière-plan,
+        // la modale n'étant que masquée en CSS (opacity/pointer-events), pas retirée du DOM.
+        this._closeLightbox();
 
         if (this._currentEventId) {
             const url = new URL(window.location.href);

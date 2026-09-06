@@ -88,6 +88,8 @@ Clés reconnues actuellement :
 | `@url` (ou `@lien`/`@link`) | URL externe (IMDB, Steam, page officielle...) : affichée comme bouton cliquable dans la modale, ouvert dans un nouvel onglet. Les trois orthographes sont équivalentes. |
 | `@salon` (ou `@discord`) | Lien direct vers le salon Discord (vocal ou textuel) de l'événement : affiché comme bouton "💬 Rejoindre le salon" dans la modale. |
 | `@sondage` (ou `@vote`) | Lien vers un sondage externe (Google Form, sondage Discord...) : affiché comme bouton "🗳️ Voter / Sondage" dans la modale — pratique pour un événement "à définir" (vote du prochain film/jeu). |
+| `@clip` | URL YouTube d'un clip marquant de la session — voir § 11 "Highlights". **Répétable** : une ligne `@clip:` par vidéo. |
+| `@screen` | URL d'une capture d'écran marquante de la session — voir § 11. **Répétable** : une ligne `@screen:` par image. |
 
 > Le champ "lieu" (📍) n'est donc jamais vide : toutes les sessions sont considérées comme
 > se déroulant sur le Discord "2GETHER" sauf précision contraire via `@location` ou l'ancien
@@ -237,3 +239,44 @@ dans `Notes`. Vérifié ligne par ligne : le nombre d'occurrences générées es
 avant/après (aucun comportement ne change), seule la répartition entre les deux colonnes
 change. Pour l'appliquer : ouvrez ce fichier (Excel ou `Fichier > Importer` dans Google
 Sheets) et remplacez le contenu de votre feuille actuelle par son contenu.
+
+## 11. Highlights (clips YouTube / captures d'écran)
+
+Pour mettre en avant les meilleurs moments d'une session (un fou rire, une scène marquante...),
+deux ingrédients dans `Tags` :
+
+1. Le tag `#highlight` sur la ligne, comme n'importe quel autre tag.
+2. Une ou plusieurs métadonnées `@clip:` (lien YouTube) et/ou `@screen:` (lien image) —
+   ce sont les **deux seules clés `@` répétables** : contrairement aux autres (§ 8, une
+   métadonnée par ligne), on peut empiler plusieurs lignes `@clip:`/`@screen:` sur la
+   même ligne du tableur pour ajouter plusieurs vidéos/captures.
+
+```
+#highlight
+@clip:https://www.youtube.com/watch?v=xxxxxxxxxxx
+@clip:https://youtu.be/yyyyyyyyyyy
+@screen:zevent-2026.png
+```
+
+- Sans le tag `#highlight`, des `@clip`/`@screen` renseignés sont ignorés (aucun bloc
+  affiché) : le tag est ce qui déclenche l'affichage du bloc "✨ Highlights" dans la modale,
+  pas la simple présence de métadonnées.
+- `@clip` accepte les formats `youtube.com/watch?v=...`, `youtu.be/...`, `.../shorts/...` et
+  `.../embed/...` ; un lien qui n'en fait pas partie est silencieusement ignoré (pas d'iframe
+  cassée).
+- Les clips sont intégrés via `youtube-nocookie.com` (mode vie privée renforcée de YouTube).
+
+### Où héberger les captures d'écran (`@screen:`)
+
+Évitez les liens Discord CDN (`cdn.discordapp.com/attachments/...`) : ils contiennent une
+signature qui **expire**, l'image peut casser quelques semaines après coup.
+
+**Solution recommandée : le dossier `assets/img/highlights/` du repo lui-même** (voir son
+`README.md`) — glissez l'image via l'interface web GitHub ("Add file" → "Upload files", pas
+besoin de Git en ligne de commande), puis mettez **juste son nom de fichier** dans `@screen:`
+(ex: `@screen:zevent-2026.png`) : l'app construit elle-même l'URL complète vers ce dossier.
+Aucun risque d'expiration ni de protection anti-hotlink, c'est le même domaine que le site.
+
+Si vous n'avez pas d'accès en écriture au repo, [imgbb.com](https://imgbb.com) est une
+alternative fiable : upload anonyme, lien direct **permanent** (contrairement à Discord) — dans
+ce cas, collez l'**URL complète** (`https://...`) plutôt qu'un simple nom de fichier.

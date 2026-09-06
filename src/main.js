@@ -1269,6 +1269,18 @@ function setupOnboardingTour() {
 // documentée nulle part avant aujourd'hui) ont dû être reconstruites depuis les diffs réels.
 const PATCH_NOTES_HISTORY = [
     {
+        version: "2026-09-06",
+        label: "V2.6",
+        sections: [
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "✨ Highlights : Les meilleurs moments d'une session avec le tag #highlight - clips YouTube et captures d'écran affichés en vignettes cliquables dans la modale d'événement, ouvrent une visionneuse plein écran au clic."
+                ]
+            }
+        ]
+    },
+    {
         version: "2026-08-18",
         label: "V2.5",
         sections: [

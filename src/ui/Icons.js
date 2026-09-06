@@ -65,5 +65,6 @@ export const Icons = {
     alertTriangle: (cls = 'w-4 h-4') => svg(`<path d="M12 3l10 18H2z"></path><line x1="12" y1="9" x2="12" y2="14"></line><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"></circle>`, cls),
     chevronLeft: (cls = 'w-4 h-4') => svg(`<polyline points="15 6 9 12 15 18"></polyline>`, cls),
     chevronRight: (cls = 'w-4 h-4') => svg(`<polyline points="9 6 15 12 9 18"></polyline>`, cls),
-    refresh: (cls = 'w-4 h-4') => svg(`<path d="M4 12a8 8 0 0 1 14-5.3"></path><polyline points="18 3 18 7 14 7"></polyline><path d="M20 12a8 8 0 0 1-14 5.3"></path><polyline points="6 21 6 17 10 17"></polyline>`, cls)
+    refresh: (cls = 'w-4 h-4') => svg(`<path d="M4 12a8 8 0 0 1 14-5.3"></path><polyline points="18 3 18 7 14 7"></polyline><path d="M20 12a8 8 0 0 1-14 5.3"></path><polyline points="6 21 6 17 10 17"></polyline>`, cls),
+    play: (cls = 'w-4 h-4') => svg(`<polygon points="8 5 19 12 8 19" fill="currentColor" stroke="none"></polygon>`, cls)
 };
