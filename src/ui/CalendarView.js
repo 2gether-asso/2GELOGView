@@ -248,6 +248,15 @@ export class CalendarView {
             }
         });
 
+        // Filet de sécurité : avec height:'auto', FullCalendar calcule la hauteur des lignes à
+        // partir du texte réellement rendu au moment du calcul. Si la police web (Google Fonts)
+        // finit de charger APRÈS ce premier calcul (typiquement au tout premier chargement d'un
+        // visiteur, police pas encore en cache navigateur), les métriques de la police de repli
+        // restent utilisées et les cases apparaissent anormalement grandes jusqu'à ce qu'un
+        // reflow quelconque (ex: cliquer dessus) force FullCalendar à recalculer. `document.fonts`
+        // est absent de certains navigateurs anciens : no-op silencieux dans ce cas.
+        document.fonts?.ready.then(() => calendar.updateSize());
+
         return calendar;
     }
 

@@ -11,7 +11,7 @@
 //
 // Bump VERSION à chaque déploiement pour purger l'ancien cache (moins critique maintenant que
 // le réseau prime toujours quand il est disponible, mais garde les caches d'éviter de gonfler).
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL_CACHE = `2gelog-shell-${VERSION}`;
 const CSV_CACHE = `2gelog-csv-${VERSION}`;
 
