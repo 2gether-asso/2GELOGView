@@ -1,6 +1,6 @@
-import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
+import { escapeHtml } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
-import { renderStatusBadge, getEpisodeLabel, getIconSrc, getOvernightSuffix, umamiCardAttrs } from './EventCardTemplate.js';
+import { renderStatusBadge, getEpisodeLabel, getIconSrc, getOvernightSuffix, umamiCardAttrs, resolveEventImage } from './EventCardTemplate.js';
 import { formatMinutes } from '../utils/Format.js';
 import { Icons } from './Icons.js';
 import { renderAvatarInitials } from '../utils/Avatar.js';
@@ -57,7 +57,7 @@ export function renderRow(e, idx, view = 'search') {
     const title = escapeHtml(e.title);
     const type = escapeHtml(e.type || 'Événement');
     const notes = escapeHtml(e.notes);
-    const posterUrl = sanitizeUrl(e.image);
+    const posterUrl = resolveEventImage(e);
     const tagsHtml = (e.tags || [])
         .map(t => `<span class="text-xxs bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
         .join('');
@@ -208,7 +208,7 @@ export function renderGroupRow(group, indexOf, view = 'search') {
         .map(t => `<span class="text-xxs bg-black/40 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">#${escapeHtml(t)}</span>`)
         .join('');
 
-    const posterUrl = sanitizeUrl(first.image);
+    const posterUrl = resolveEventImage(first);
     const posterLayer = posterUrl
         ? `<div class="absolute inset-0 bg-cover bg-center opacity-20" style="background-image:url('${posterUrl}')"></div>
            <div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/40 to-black/10"></div>`

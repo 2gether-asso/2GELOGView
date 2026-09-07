@@ -1,9 +1,10 @@
 import { CONFIG } from '../config.js';
 import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
-import { renderStatusBadge, getOvernightSuffix, getIconSrc } from './EventCardTemplate.js';
+import { renderStatusBadge, getOvernightSuffix, getIconSrc, resolveEventImage } from './EventCardTemplate.js';
+import { getCachedTmdbInfo, fetchTmdbInfo, isTmdbEligible, parseSeasonNumber, parseEpisodeNumbers, parseSeasonEpisode, getCachedSeasonEpisodes, fetchTmdbSeason } from '../services/TMDBService.js';
 import { ReminderService } from '../services/ReminderService.js';
 import { embedFileName } from '../utils/EmbedId.js';
-import { extractYouTubeId, fetchYouTubeTitle } from '../utils/YouTube.js';
+import { renderHighlightsRow, enhanceHighlightTitles, hasHighlights, isLightboxOpen, closeLightbox } from './HighlightsView.js';
 import { IcsExporter } from '../services/IcsExporter.js';
 import { Icons } from './Icons.js';
 import { showToast } from './Toast.js';
@@ -42,24 +43,13 @@ export class ModalView {
             if (e.target === container) this.hide();
         });
         // Accessibilité clavier : Échap ferme la modale, quel que soit l'élément focus.
-        // Sauf si la visionneuse Highlights (voir _initLightbox) est ouverte par-dessus : elle
-        // doit se fermer en premier (topmost d'abord), pas les deux d'un coup sur un seul Échap.
+        // Sauf si la visionneuse Highlights (voir HighlightsView.js) est ouverte par-dessus :
+        // elle doit se fermer en premier (topmost d'abord), pas les deux d'un coup sur un seul
+        // Échap.
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape' || container.classList.contains('pointer-events-none')) return;
-            const lightbox = document.getElementById('highlight-lightbox');
-            if (!lightbox.classList.contains('hidden')) return;
+            if (isLightboxOpen()) return;
             this.hide();
-        });
-
-        this._initLightbox();
-
-        document.getElementById('modal-highlight-clips').addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-clip-id]');
-            if (btn) this._openLightboxClip(btn.dataset.clipId, btn.dataset.clipFormat);
-        });
-        document.getElementById('modal-highlight-screens').addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-screen-url]');
-            if (btn) this._openLightboxImage(btn.dataset.screenUrl);
         });
 
         // Rappel suivi par titre, pas par instance (voir ReminderService) : fonctionne sur
@@ -180,7 +170,7 @@ export class ModalView {
         document.getElementById('modal-event-status').innerHTML = renderStatusBadge(event.progressStatus);
         document.getElementById('modal-event-title').innerText = event.title;
         document.getElementById('modal-event-time').innerText =
-            `Le ${new Date(event.start).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} ${event.heure ? 'à ' + event.heure + getOvernightSuffix(event) : ''}`;
+            `Le ${new Date(event.start).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} ${event.heure ? 'à ' + event.heure + getOvernightSuffix(event) : ''}`;
 
         // event.location est toujours renseigné par EventGenerator (avec "Discord 2GETHER" par défaut) ;
         // on masque la carte quand elle ne dit rien de plus que cette valeur par défaut.
@@ -204,10 +194,13 @@ export class ModalView {
             iconEl.style.display = 'none';
         }
 
-        // Affiche/jaquette du film, de la série ou du jeu (event.image résolu par
-        // EventGenerator : @image de l'événement, sinon celle par défaut du type).
+        // Affiche/jaquette du film, de la série ou du jeu (@image de l'événement > affiche TMDB
+        // déjà en cache > bannière par défaut du type, voir resolveEventImage). Peut être
+        // remplacée un peu plus tard par une vraie affiche TMDB si pas encore en cache à cet
+        // instant précis - voir _renderTmdbInfo, même logique "placeholder puis enrichi" que le
+        // titre des clips YouTube (HighlightsView.js).
         const posterContainer = document.getElementById('modal-poster-container');
-        const posterUrl = sanitizeUrl(event.image);
+        const posterUrl = resolveEventImage(event);
         if (posterUrl) {
             const posterEl = document.getElementById('modal-event-poster');
             posterEl.src = posterUrl;
@@ -237,6 +230,8 @@ export class ModalView {
         } else {
             subBlock.classList.add('hidden');
         }
+
+        this._renderTmdbInfo(event, episode);
 
         // Métadonnées avancées (@host ou @orga, Helldwin par défaut si non précisé, @plateforme)
         const hostContainer = document.getElementById('modal-host-container');
@@ -349,127 +344,23 @@ export class ModalView {
      * Bloc "Highlights" (V2.6) : clips/shorts YouTube (@clip:/@short:) et captures d'écran
      * (@screen:), réservé aux événements portant le tag #highlight - avoir ces métadonnées
      * sans ce tag ne suffit pas, pour garder le bloc réservé aux moments choisis plutôt que de
-     * l'afficher dès qu'un lien traine dans les métadonnées (voir EventGenerator).
-     * @clip (horizontal 16:9) et @short (vertical 9:16, Shorts YouTube) partagent la même
-     * extraction d'id (voir extractYouTubeId, un Short reste une vidéo YouTube comme une autre)
-     * mais s'affichent dans un format de lecteur différent, distingué via data-clip-format.
-     * Uniquement des vignettes ici (miniature + titre) qui ouvrent la visionneuse plein écran
-     * au clic (voir _openLightboxClip/_openLightboxImage) - un clip embarqué directement dans
-     * la modale gonflait sa hauteur de plusieurs centaines de pixels par clip (empilés) et
-     * "coupait" visuellement le reste du contenu, repoussé loin sous le fold.
+     * l'afficher dès qu'un lien traine dans les métadonnées (voir EventGenerator). Rendu et
+     * lecteur plein écran partagés avec les autres vues qui affichent des highlights (ex:
+     * "Aujourd'hui sur 2GETHER") - voir HighlightsView.js, pas de logique dupliquée ici.
      */
     static _renderHighlights(event) {
-        const container = document.getElementById('modal-highlights-container');
-        const clipsBox = document.getElementById('modal-highlight-clips');
-        const screensBox = document.getElementById('modal-highlight-screens');
-        const isHighlighted = (event.tags || []).includes('highlight');
-
-        const toItems = (values, format) => (values || [])
-            .map(v => ({ id: extractYouTubeId(v), format }))
-            .filter(item => item.id);
-        const clipItems = isHighlighted
-            ? [...toItems(event.clips, 'video'), ...toItems(event.shorts, 'short')]
-            : [];
-        const screenUrls = isHighlighted ? (event.screens || []).map(v => this._resolveScreenUrl(v)).filter(Boolean) : [];
-
-        if (clipItems.length === 0 && screenUrls.length === 0) {
-            container.classList.add('hidden');
-            container.classList.remove('flex');
+        const block = document.getElementById('modal-highlights-block');
+        const row = document.getElementById('modal-highlights-row');
+        if (!hasHighlights(event)) {
+            block.classList.add('hidden');
+            block.classList.remove('flex');
+            row.innerHTML = '';
             return;
         }
-        container.classList.remove('hidden');
-        container.classList.add('flex');
-
-        const playIcon = '<svg viewBox="0 0 24 24" class="w-4 h-4 text-white translate-x-[1px]" aria-hidden="true"><polygon points="8 5 19 12 8 19" fill="currentColor" stroke="none"></polygon></svg>';
-        clipsBox.innerHTML = clipItems.map(({ id, format }) => {
-            const isShort = format === 'short';
-            return `
-            <button data-clip-id="${id}" data-clip-format="${format}" class="${isShort ? 'w-24' : 'w-40'} shrink-0 snap-start text-left group" aria-label="Voir ${isShort ? 'le short' : 'le clip'} en plein écran">
-                <div class="relative ${isShort ? 'aspect-[9/16]' : 'aspect-video'} rounded-lg overflow-hidden border border-white/10 bg-black">
-                    <img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="" class="w-full h-full object-cover">
-                    <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition-all">
-                        <div class="w-8 h-8 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${playIcon}</div>
-                    </div>
-                </div>
-                <div data-clip-title="${id}" class="text-2xs text-slate-400 font-semibold mt-1 line-clamp-2">${isShort ? 'Short' : 'Clip vidéo'}</div>
-            </button>`;
-        }).join('');
-        clipsBox.classList.toggle('hidden', clipItems.length === 0);
-
-        // Titre réel affiché en second temps (voir fetchYouTubeTitle) : le placeholder
-        // générique ci-dessus s'affiche immédiatement, jamais bloqué par ce fetch optionnel.
-        clipItems.forEach(({ id }) => {
-            fetchYouTubeTitle(id).then(title => {
-                if (!title) return;
-                const el = clipsBox.querySelector(`[data-clip-title="${id}"]`);
-                if (el) el.textContent = title;
-            });
-        });
-
-        screensBox.innerHTML = screenUrls.map(url => `
-            <button data-screen-url="${escapeHtml(url)}" class="block aspect-video rounded-lg overflow-hidden border border-white/10 bg-black/20" aria-label="Voir la capture en plein écran">
-                <img src="${escapeHtml(url)}" alt="Capture d'écran" class="w-full h-full object-cover hover:scale-105 transition-transform" loading="lazy">
-            </button>`).join('');
-        screensBox.classList.toggle('hidden', screenUrls.length === 0);
-    }
-
-    /**
-     * Une valeur `@screen:` sans schéma (juste un nom de fichier, ex: "zevent-2026.png") est
-     * résolue dans assets/img/highlights/ (voir son README.md et GUIDE_METADONNEES.md §11) -
-     * pour ne pas obliger à coller une URL complète à chaque capture uploadée dans le repo.
-     * Une URL http(s) complète (ex: imgbb, pour qui n'a pas accès en écriture au repo) reste
-     * utilisable telle quelle.
-     */
-    static _resolveScreenUrl(value) {
-        if (!value) return '';
-        const trimmed = String(value).trim();
-        return /^https?:\/\//i.test(trimmed) ? sanitizeUrl(trimmed) : sanitizeUrl(`./assets/img/highlights/${trimmed}`);
-    }
-
-    /** Visionneuse plein écran partagée (clip ou capture) - voir #highlight-lightbox. */
-    static _initLightbox() {
-        const overlay = document.getElementById('highlight-lightbox');
-        document.getElementById('btn-close-highlight-lightbox').addEventListener('click', () => this._closeLightbox());
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) this._closeLightbox(); });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !overlay.classList.contains('hidden')) this._closeLightbox();
-        });
-    }
-
-    /**
-     * @param {string} format - 'video' (16:9, @clip:) ou 'short' (9:16, @short:) - voir
-     * _renderHighlights. Embed natif YouTube (youtube.com, pas youtube-nocookie.com) sur les
-     * deux formats.
-     */
-    static _openLightboxClip(id, format = 'video') {
-        const isShort = format === 'short';
-        const wrapperClass = isShort ? 'w-full max-w-xs mx-auto aspect-[9/16]' : 'w-full aspect-video';
-        document.getElementById('highlight-lightbox-content').innerHTML = `
-            <div class="${wrapperClass}">
-                <iframe class="w-full h-full rounded-xl" src="https://www.youtube.com/embed/${id}?autoplay=1" title="${isShort ? 'Short' : 'Clip'} YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-            </div>`;
-        this._showLightbox();
-    }
-
-    static _openLightboxImage(url) {
-        document.getElementById('highlight-lightbox-content').innerHTML =
-            `<img src="${escapeHtml(url)}" alt="Capture d'écran" class="max-w-full max-h-[85vh] object-contain rounded-xl">`;
-        this._showLightbox();
-    }
-
-    static _showLightbox() {
-        const overlay = document.getElementById('highlight-lightbox');
-        overlay.classList.remove('hidden');
-        overlay.classList.add('flex');
-    }
-
-    static _closeLightbox() {
-        const overlay = document.getElementById('highlight-lightbox');
-        overlay.classList.add('hidden');
-        overlay.classList.remove('flex');
-        // Décharge le contenu (iframe/img) pour couper net une éventuelle lecture vidéo,
-        // plutôt que de la laisser tourner en arrière-plan derrière la modale rouverte.
-        document.getElementById('highlight-lightbox-content').innerHTML = '';
+        block.classList.remove('hidden');
+        block.classList.add('flex');
+        row.innerHTML = renderHighlightsRow(event);
+        enhanceHighlightTitles(row);
     }
 
     /** Applique le style actif/inactif au bouton de rappel selon l'abonnement de CE titre. */
@@ -487,6 +378,94 @@ export class ModalView {
         const countdown = this._currentEvent ? formatCountdown(this._currentEvent.start) : null;
         countdownEl.textContent = countdown ? `⏱️ ${countdown}` : '';
         countdownEl.classList.toggle('hidden', !countdown);
+    }
+
+    /**
+     * Fiche TMDB (V2.7) : uniquement pour les événements Film/Série (catégorie "visionnage" -
+     * voir config.js, ça couvre aussi "Hors Prog" qui héberge pas mal de séries en pratique).
+     * Applique immédiatement ce qui est déjà en cache (voir getCachedTmdbInfo, synchrone), puis
+     * enrichit en second temps si pas encore en cache (fetchTmdbInfo, async) - même logique
+     * "placeholder puis enrichi" que le titre des clips YouTube. `eventId` capturé au moment de
+     * l'appel : si l'utilisateur a déjà refermé/changé de modale quand la réponse arrive, elle
+     * est silencieusement ignorée plutôt que d'écraser le contenu d'un événement différent.
+     * `@tmdb:` (event.meta.tmdb) prime sur la recherche par titre - voir parseTmdbRef dans
+     * TMDBService.js, pour les cas où la recherche automatique se trompe ou ne trouve rien.
+     * @param {Object} event
+     * @param {string} [episodeText] - Texte "Episode(s)" déjà calculé par open() (§ ci-dessus),
+     *   réutilisé pour retrouver les numéros d'épisode à afficher (voir _renderEpisodeThumbnails).
+     */
+    static _renderTmdbInfo(event, episodeText) {
+        const episodesRow = document.getElementById('modal-episodes-row');
+        episodesRow.classList.add('hidden');
+        episodesRow.innerHTML = '';
+        if (!isTmdbEligible(event)) {
+            this._toggleModalLink('modal-event-tmdb', null);
+            return;
+        }
+        const eventId = event.id;
+        const apply = (info) => {
+            if (this._currentEventId !== eventId || !info) return;
+            this._toggleModalLink('modal-event-tmdb', sanitizeUrl(info.tmdbUrl));
+            if (!event.hasCustomImage && info.imageUrl) {
+                const imageUrl = sanitizeUrl(info.imageUrl);
+                if (imageUrl) {
+                    const posterEl = document.getElementById('modal-event-poster');
+                    posterEl.src = imageUrl;
+                    document.getElementById('modal-poster-container').classList.remove('hidden');
+                }
+            }
+            if (info.mediaType === 'tv' && info.id) {
+                this._renderEpisodeThumbnails(event, episodeText, info.id);
+            }
+        };
+
+        const cached = getCachedTmdbInfo(event.title);
+        if (cached) { apply(cached); return; }
+        this._toggleModalLink('modal-event-tmdb', null);
+        fetchTmdbInfo(event).then(apply);
+    }
+
+    /**
+     * Vignettes + noms des épisodes couverts par CETTE occurrence (V2.7.1) : illustrent le
+     * texte "Episode(s)" déjà affiché juste au-dessus (même bloc, voir index.html), pas une
+     * info séparée. Saison+épisode(s) déterminés dans cet ordre : la forme combinée "S<N> E<M>"
+     * dans le texte "Episode(s)" lui-même (voir parseSeasonEpisode) si présente - la SEULE
+     * option pour un événement dont le TITRE ne porte pas la saison (ex: "Road to AHS 13", un
+     * titre "teasing" qui ne suit pas la convention "... S<N>") ; sinon, saison tirée du titre
+     * (parseSeasonNumber) + numéro(s) d'épisode tirés du texte (parseEpisodeNumbers). Sans l'un
+     * ou l'autre, impossible de savoir QUELS épisodes TMDB afficher, la ligne reste alors
+     * simplement masquée (le texte "Episode(s)", lui, reste affiché). Un seul appel réseau par
+     * SAISON (pas par épisode, voir fetchTmdbSeason), réutilisable par toutes les occurrences de
+     * cette même saison une fois en cache.
+     */
+    static _renderEpisodeThumbnails(event, episodeText, tmdbId) {
+        const combined = parseSeasonEpisode(episodeText);
+        const season = combined ? combined.season : (parseSeasonNumber(event.title) || 1);
+        const episodeNumbers = combined ? combined.episodes : parseEpisodeNumbers(episodeText || '');
+        if (episodeNumbers.length === 0) return;
+
+        const row = document.getElementById('modal-episodes-row');
+        const eventId = event.id;
+        const apply = (episodes) => {
+            if (this._currentEventId !== eventId || !episodes) return;
+            const matched = episodeNumbers
+                .map(n => episodes.find(ep => ep.episodeNumber === n))
+                .filter(Boolean);
+            if (matched.length === 0) return;
+            row.innerHTML = matched.map(ep => `
+                <div class="w-32 shrink-0">
+                    <div class="aspect-video rounded-lg overflow-hidden border border-white/10 bg-black/40">
+                        ${ep.stillUrl ? `<img src="${escapeHtml(ep.stillUrl)}" alt="" class="w-full h-full object-cover" loading="lazy">` : ''}
+                    </div>
+                    <div class="text-2xs text-slate-300 font-semibold mt-1 line-clamp-2">${escapeHtml(ep.name || `Épisode ${ep.episodeNumber}`)}</div>
+                </div>`).join('');
+            row.classList.remove('hidden');
+            row.classList.add('flex');
+        };
+
+        const cached = getCachedSeasonEpisodes(tmdbId, season);
+        if (cached) { apply(cached); return; }
+        fetchTmdbSeason(tmdbId, season).then(apply);
     }
 
     /** Affiche/masque un des boutons-lien optionnels de la modale (fiche/salon/sondage). */
@@ -512,7 +491,7 @@ export class ModalView {
         // clic sur le ✕ de la modale plutôt qu'Échap, qui lui referme la visionneuse en
         // premier) - sans ça un clip lancé continuerait à jouer (son compris) en arrière-plan,
         // la modale n'étant que masquée en CSS (opacity/pointer-events), pas retirée du DOM.
-        this._closeLightbox();
+        closeLightbox();
 
         if (this._currentEventId) {
             const url = new URL(window.location.href);

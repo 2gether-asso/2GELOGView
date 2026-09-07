@@ -1,6 +1,6 @@
 import { DateUtils } from '../utils/DateUtils.js';
-import { sanitizeUrl } from '../utils/Html.js';
 import { Icons } from './Icons.js';
+import { resolveEventImage } from './EventCardTemplate.js';
 
 const MONTH_LABELS_FULL = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 const WEEKDAY_INITIALS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
@@ -21,7 +21,7 @@ function computeYearDayInfo(year, month, events) {
             const day = parseInt(e.start.split('T')[0].split('-')[2], 10);
             hasEvent.add(day);
             if (!images.has(day)) {
-                const url = sanitizeUrl(e.image);
+                const url = resolveEventImage(e);
                 if (url) images.set(day, url);
             }
         });

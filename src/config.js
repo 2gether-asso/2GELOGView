@@ -13,6 +13,14 @@ export const CONFIG = {
     POLL_CURRENT_URL: "https://n8n.matiboux.com/webhook/poll/current",
     POLL_VOTE_URL: "https://n8n.matiboux.com/webhook/vote",
 
+    // Fiches TMDB (V2.7) pour les événements Film/Série : même logique que le sondage
+    // ci-dessus - un webhook n8n fait proxy vers l'API TMDB plutôt que d'appeler TMDB
+    // directement depuis le navigateur, pour ne JAMAIS exposer la clé API TMDB dans le
+    // code source public de ce repo (voir GUIDE_METADONNEES.md § 12 et TMDBService.js).
+    // Absence/panne de ce service : dégradation silencieuse, jamais bloquant (pas de lien
+    // "Voir sur TMDB", pas d'affiche de repli - juste la bannière générique du type).
+    TMDB_LOOKUP_URL: "https://n8n.matiboux.com/webhook/tmdb-lookup",
+
     // URL publique du site déployé (domaine personnalisé, voir CNAME à la racine du dépôt) :
     // servi à la racine (pas de sous-chemin /2GELOGView/) contrairement à l'URL github.io brute.
     // Utilisée par les scripts CI (generate-embeds.js, generate-ics.js, post-discord-digest.js,

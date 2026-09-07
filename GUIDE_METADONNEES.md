@@ -283,3 +283,45 @@ Aucun risque d'expiration ni de protection anti-hotlink, c'est le même domaine 
 Si vous n'avez pas d'accès en écriture au repo, [imgbb.com](https://imgbb.com) est une
 alternative fiable : upload anonyme, lien direct **permanent** (contrairement à Discord) — dans
 ce cas, collez l'**URL complète** (`https://...`) plutôt qu'un simple nom de fichier.
+
+## 12. Fiches TMDB (Film/Série)
+
+Pour tout événement de catégorie Film/Série (`Soirée Film`, `Soirée Série`, et `Hors Prog` qui
+en héberge aussi beaucoup en pratique), l'app cherche **automatiquement** une fiche TMDB
+correspondante - rien à faire pour en bénéficier. Passe par un proxy (n8n) qui garde la clé API
+côté serveur, jamais dans le code de l'app (voir `src/services/TMDBService.js`).
+
+Ce que ça apporte, une fois trouvée :
+- Un bouton "Voir sur TMDB" dans la modale (résumé, note).
+- Une image de fond horizontale pour la tuile/carte, **si aucun `@image` n'est déjà renseigné**
+  (priorité : `@image` > affiche TMDB > bannière générique du type).
+- Pour une série : les vignettes + noms des épisodes couverts par CETTE occurrence précise,
+  sous le bloc "Episode(s)" de la modale - seulement si le titre porte un numéro de saison
+  (`... S13`) et qu'un `@episode:`/une ligne datée donne un numéro d'épisode exploitable
+  (`Episode 4`, `Episodes 1 à 3`...).
+
+### a. `@tmdb:` - corriger une correspondance automatique ratée
+
+La recherche automatique se trompe parfois (titre ambigu, film/série obscur...). Collez
+directement l'URL TMDB de la bonne fiche pour la forcer :
+
+```
+@tmdb:https://www.themoviedb.org/tv/2734-loki
+```
+
+(Copiez-collez simplement l'URL depuis votre navigateur en consultant la fiche sur
+themoviedb.org - le lien "movie" ou "tv" et le numéro dedans sont ce qui compte.)
+
+### b. Pourquoi certaines séries n'ont pas leurs vignettes d'épisode
+
+Deux façons d'indiquer QUELS épisodes afficher :
+
+- **Titre + épisode séparément** : le **titre** porte le numéro de saison (`Silo S4`, pas
+  juste `Silo`), et la ligne précise le(s) numéro(s) d'**épisode** de cette occurrence
+  (`@episode:Episode 4` ou une ligne datée `JJ/MM/AAAA : Episodes 1 à 3`, voir § 5).
+- **Saison + épisode combinés** (`@episode:S3 E13`) : pratique quand le **titre lui-même** ne
+  porte pas la saison (ex: un événement "Road to AHS 13" qui teaser la saison à venir plutôt
+  que de la nommer directement) - cette forme prime sur la précédente si les deux sont présentes.
+
+Sans l'une ou l'autre, impossible de savoir quel épisode TMDB afficher - le bloc reste alors
+simplement masqué (jamais d'erreur visible).

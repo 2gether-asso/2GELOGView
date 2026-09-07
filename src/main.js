@@ -4,7 +4,7 @@ import { EventGenerator } from './services/EventGenerator.js';
 import { EventRepository } from './repositories/EventRepository.js';
 import { CalendarView } from './ui/CalendarView.js';
 import { ModalView } from './ui/ModalView.js';
-import { renderEventCard, isGenuinelyLive } from './ui/EventCardTemplate.js';
+import { renderEventCard, isGenuinelyLive, resolveEventImage } from './ui/EventCardTemplate.js';
 import { renderSearchResults } from './ui/SearchResultsView.js';
 import { renderTimeline } from './ui/TimelineView.js';
 import { renderTodayView } from './ui/TodayView.js';
@@ -20,7 +20,7 @@ import { IcsExporter } from './services/IcsExporter.js';
 import { DiscordExporter } from './services/DiscordExporter.js';
 import { renderActivityHeatmap } from './ui/ActivityHeatmap.js';
 import { DateUtils } from './utils/DateUtils.js';
-import { escapeHtml, sanitizeUrl } from './utils/Html.js';
+import { escapeHtml } from './utils/Html.js';
 import { formatMinutes, topN, formatCategoryLabel, formatCountdown, formatDurationLong } from './utils/Format.js';
 import { validateRows } from './services/DataValidator.js';
 import { ReminderService } from './services/ReminderService.js';
@@ -38,6 +38,8 @@ import { startOnboardingTour } from './ui/OnboardingTour.js';
 import { renderAvatarInitials } from './utils/Avatar.js';
 import { animateCountUp } from './utils/CountUp.js';
 import { renderKioskShowcase } from './ui/KioskView.js';
+import { initHighlightLightbox } from './ui/HighlightsView.js';
+import { fetchTmdbInfo, hasFreshCacheEntry, isTmdbEligible } from './services/TMDBService.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -583,7 +585,7 @@ function computeMiniCalendarDayInfo(year, month, events) {
             const day = parseInt(e.start.split('T')[0].split('-')[2], 10);
             hasEvent.add(day);
             if (!images.has(day)) {
-                const url = sanitizeUrl(e.image);
+                const url = resolveEventImage(e);
                 if (url) images.set(day, url);
             }
         });
@@ -870,6 +872,26 @@ function setupLargeTextToggle() {
         const nowEnabled = !document.documentElement.classList.contains('a11y-large-text');
         applyLargeText(nowEnabled);
         localStorage.setItem(LARGE_TEXT_KEY, nowEnabled ? '1' : '0');
+    });
+}
+
+// Mode Performance (V2.6.2, "sacrément lag sans accélération matérielle") : coupe tout
+// backdrop-filter (voir la règle CSS .perf-mode * dans index.html) plus les animations
+// d'ambiance continues - même mécanique/persistance que le mode "grand texte" ci-dessus.
+const PERF_MODE_KEY = 'ui:perfMode';
+function applyPerfMode(enabled) {
+    document.documentElement.classList.toggle('perf-mode', enabled);
+    const btn = document.getElementById('btn-toggle-perf-mode');
+    btn.setAttribute('aria-pressed', String(enabled));
+    btn.querySelector('span').textContent = `🚀 Mode Performance : ${enabled ? 'Activé' : 'Désactivé'}`;
+}
+function setupPerfModeToggle() {
+    const enabled = localStorage.getItem(PERF_MODE_KEY) === '1';
+    applyPerfMode(enabled);
+    document.getElementById('btn-toggle-perf-mode').addEventListener('click', () => {
+        const nowEnabled = !document.documentElement.classList.contains('perf-mode');
+        applyPerfMode(nowEnabled);
+        localStorage.setItem(PERF_MODE_KEY, nowEnabled ? '1' : '0');
     });
 }
 
@@ -1276,7 +1298,17 @@ const PATCH_NOTES_HISTORY = [
             {
                 title: "🚀 Nouveautés",
                 items: [
-                    "✨ Highlights : Les meilleurs moments d'une session avec le tag #highlight - clips YouTube et captures d'écran affichés en vignettes cliquables dans la modale d'événement, ouvrent une visionneuse plein écran au clic."
+                    "✨ Highlights : Les meilleurs moments d'une session avec le tag #highlight - clips/shorts YouTube et captures d'écran affichés en vignettes cliquables (dans la modale ET sous les cartes du jour/de l'an dernier de la vue \"Aujourd'hui\"), ouvrent une visionneuse plein écran au clic.",
+                    "🖥️ Mode Kiosque repensé en showcase animé façon Netflix : \"Aujourd'hui\" fixe en haut, défilement continu du reste du mois en dessous.",
+                    "🚀 Mode Performance (dans l'Aide) : coupe les effets de flou et les animations d'ambiance pour qui rencontre des ralentissements sans accélération matérielle.",
+                    "🔄 Cliquer sur le logo \"2GELOG\" force maintenant une resynchronisation complète du tableur, en plus de réinitialiser filtres/recherche/vue."
+                ]
+            },
+            {
+                title: "🛠️ Corrections",
+                items: [
+                    "Fond de carte (vue Carte) qui affichait \"API KEY REQUIRED\" en filigrane depuis que CARTO a fermé l'accès public à ses tuiles - remplacé par un fond Esri toujours public.",
+                    "Sur la vue Carte, le bouton \"Voir la fiche du lieu\" pouvait déborder du popup au tout premier clic sur un marqueur."
                 ]
             }
         ]
@@ -3291,11 +3323,50 @@ async function loadData() {
         localStorage.setItem(LAST_SYNCED_KEY, Date.now().toString());
         updateLastSyncedTooltip();
         loadingEl.classList.add('hidden');
+
+        // Pré-chargement en arrière-plan (jamais bloquant, voir prefetchTmdbImages) : sans lui,
+        // une tuile Film/Série sans @image propre n'affiche l'affiche TMDB qu'après avoir ouvert
+        // sa modale au moins une fois (seul autre déclencheur du cache).
+        prefetchTmdbImages(repo.getAll());
     } catch (error) {
         console.error("❌ Erreur de chargement du planning :", error);
         loadingEl.classList.add('hidden');
         errorEl.classList.remove('hidden');
     }
+}
+
+// Pré-chargement en arrière-plan des affiches TMDB (V2.7) pour les événements Film/Série sans
+// @image propre - volontairement borné (TMDB_PREFETCH_LIMIT titres distincts) et espacé
+// (TMDB_PREFETCH_DELAY_MS) : des centaines de titres distincts d'un coup saturerait inutilement
+// le proxy n8n/TMDB, surtout sur un cache tout juste vidé. Priorité aux événements les PLUS
+// PROCHES dans le temps (passés ou à venir) : les plus susceptibles d'être consultés bientôt.
+// Ne re-rend la vue courante qu'une fois à la fin (pas tuile par tuile) pour éviter des dizaines
+// de re-rendus successifs.
+const TMDB_PREFETCH_LIMIT = 30;
+const TMDB_PREFETCH_DELAY_MS = 350;
+async function prefetchTmdbImages(events) {
+    const now = Date.now();
+    const seen = new Set();
+    const candidates = events
+        .filter(e => !e.isCanceled && !e.isPlanned && isTmdbEligible(e) && !e.hasCustomImage)
+        .sort((a, b) => Math.abs(new Date(a.start) - now) - Math.abs(new Date(b.start) - now))
+        .filter(e => {
+            if (seen.has(e.title) || hasFreshCacheEntry(e.title)) return false;
+            seen.add(e.title);
+            return true;
+        })
+        .slice(0, TMDB_PREFETCH_LIMIT);
+
+    let foundAny = false;
+    for (const event of candidates) {
+        const result = await fetchTmdbInfo(event);
+        if (result) foundAny = true;
+        await new Promise(r => setTimeout(r, TMDB_PREFETCH_DELAY_MS));
+    }
+    // Un seul re-rendu global une fois le lot terminé : chaque tuile/carte affichée relit le
+    // cache via resolveEventImage (EventCardTemplate.js) au moment du rendu, aucun câblage
+    // supplémentaire par vue n'est nécessaire ici.
+    if (foundAny) updateUIState();
 }
 
 // Bouton d'aide/légende (statuts, catégories, tags...) pour les nouveaux arrivants.
@@ -3571,6 +3642,11 @@ async function initApp() {
             updateUIState();
         }, () => updateUIState(), (host) => openOrganizerProfile(host), () => repo.getAll());
 
+        // Visionneuse plein écran des Highlights (V2.6.1, voir HighlightsView.js) : un seul
+        // écouteur délégué sur `document`, posé une fois ici plutôt que par chaque vue qui
+        // affiche des vignettes (modale d'événement, "Aujourd'hui sur 2GETHER"...).
+        initHighlightLightbox();
+
         // Délégation de clic sur la sidebar "Prochainement" : ouvre la modale
         // avec l'objet événement complet (pas de lookup global requis).
         document.getElementById('upcoming-list').addEventListener('click', (e) => {
@@ -3710,6 +3786,7 @@ async function initApp() {
 
         setupDensityToggle();
         setupLargeTextToggle();
+        setupPerfModeToggle();
         setupMapRadiusFilter();
 
         setupSidebarToggle();
@@ -3859,6 +3936,11 @@ async function initApp() {
         // toute overlay ouverte). Ignore les clics venant du badge saisonnier imbriqué dedans
         // (purement indicatif désormais, mais autant éviter un double effet de bord si son
         // wrapper capte quand même le clic).
+        // Force aussi une resynchro complète du tableur (voir loadData) : l'app ne se resynchronise
+        // sinon jamais toute seule après le chargement initial (pas de polling périodique), donc un
+        // onglet resté ouvert un moment peut se retrouver avec des données périmées - "retour à
+        // l'accueil" est le geste le plus naturel pour un utilisateur qui veut "recharger" l'app,
+        // autant qu'il resynchronise vraiment plutôt que de juste réafficher les mêmes données.
         const goHome = () => {
             resetFiltersAndSearch();
             if (currentViewMode !== 'calendar') {
@@ -3869,7 +3951,7 @@ async function initApp() {
                 'bucket-detail-overlay', 'organizer-profile-overlay', 'patchnotes-overlay'
             ].forEach(id => document.getElementById(id)?.classList.add('hidden'));
             ModalView.hide();
-            updateUIState();
+            loadData();
         };
         const homeBtn = document.getElementById('btn-go-home');
         homeBtn.addEventListener('click', (e) => {

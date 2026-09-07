@@ -5,6 +5,20 @@ import { Icons } from './Icons.js';
 import { EmptyIllustrations, renderEmptyState } from './EmptyState.js';
 import { resolveActiveSeason, SEASONS } from '../services/SeasonalTheme.js';
 import { birthdaysOn } from '../services/BirthdayService.js';
+import { hasHighlights, renderHighlightsRow, enhanceHighlightTitles } from './HighlightsView.js';
+
+/**
+ * Bloc Highlights (compact) affiché SOUS la carte d'un événement, en dehors de son wrapper
+ * `[data-idx]`/`[data-event-id]` (bien un SIBLING, pas un descendant) : le clic délégué global
+ * de HighlightsView.js sur les vignettes doit ouvrir la visionneuse plein écran, pas AUSSI
+ * déclencher l'ouverture de la modale de l'événement via le wrapper englobant (voir les deux
+ * écouteurs `#today-view` dans main.js) - les garder frères évite tout conflit sans avoir besoin
+ * d'un stopPropagation() explicite.
+ */
+function renderEventWithHighlights(cardHtml, event) {
+    if (!hasHighlights(event)) return cardHtml;
+    return `${cardHtml}<div class="mb-1.5 -mt-1">${renderHighlightsRow(event, { size: 'compact' })}</div>`;
+}
 
 /** Numéro de semaine ISO 8601 (lundi = 1er jour, semaine 1 = celle contenant le 1er jeudi de l'année). */
 function isoWeekNumber(date) {
@@ -43,6 +57,12 @@ function daysInYear(year) {
  *   jour+mois l'an dernier - vide si non fourni (widget simplement absent).
  * @returns {Array<Object>} Les événements du jour affichés, triés par heure - pour que
  *   l'appelant puisse retrouver l'objet complet au clic (délégation par data-idx).
+ *
+ * Highlights (V2.6.1) : une rangée compacte de vignettes s'affiche sous la carte de tout
+ * événement (aujourd'hui OU il y a un an ce jour-là) qui en a, voir renderEventWithHighlights -
+ * en SIBLING de la carte cliquable, pas en descendant, pour que le clic sur une vignette ouvre
+ * la visionneuse plein écran (délégation globale, voir HighlightsView.js) sans aussi
+ * déclencher l'ouverture de la modale de l'événement via le wrapper englobant.
  */
 export function renderTodayView(container, events, birthdays = [], allEvents = []) {
     const now = new Date();
@@ -102,7 +122,10 @@ export function renderTodayView(container, events, birthdays = [], allEvents = [
                 Il y a un an, ce jour-là
             </div>
             <div class="space-y-1.5">
-                ${lastYearEvents.map(e => `<div class="cursor-pointer opacity-90 hover:opacity-100 transition-opacity" data-event-id="${escapeHtml(e.id)}">${renderEventCard(e, null, 'today-lastyear')}</div>`).join('')}
+                ${lastYearEvents.map(e => renderEventWithHighlights(
+                    `<div class="cursor-pointer opacity-90 hover:opacity-100 transition-opacity" data-event-id="${escapeHtml(e.id)}">${renderEventCard(e, null, 'today-lastyear')}</div>`,
+                    e
+                )).join('')}
             </div>
         </div>
     ` : '';
@@ -130,6 +153,7 @@ export function renderTodayView(container, events, birthdays = [], allEvents = [
             </div>
             ${yearAgoHtml}
         `;
+        enhanceHighlightTitles(container);
         return [];
     }
 
@@ -160,7 +184,8 @@ export function renderTodayView(container, events, birthdays = [], allEvents = [
             nowMarkerInserted = true;
         }
         const live = isGenuinelyLive(e);
-        return `${marker}<div class="cursor-pointer ${live ? 'ring-2 ring-emerald-500/40 rounded-xl' : ''}" data-idx="${idx}">${renderEventCard(e, null, 'today')}</div>`;
+        const cardHtml = `<div class="cursor-pointer ${live ? 'ring-2 ring-emerald-500/40 rounded-xl' : ''}" data-idx="${idx}">${renderEventCard(e, null, 'today')}</div>`;
+        return `${marker}${renderEventWithHighlights(cardHtml, e)}`;
     }).join('');
 
     container.innerHTML = `
@@ -173,5 +198,6 @@ export function renderTodayView(container, events, birthdays = [], allEvents = [
         ${yearAgoHtml}
     `;
 
+    enhanceHighlightTitles(container);
     return todayEvents;
 }

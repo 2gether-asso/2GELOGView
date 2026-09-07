@@ -1,3 +1,5 @@
+import { DateUtils } from '../utils/DateUtils.js';
+
 // Retire les diacritiques (accents) d'une chaine : "episode" et "épisode" deviennent identiques.
 // Regex sur la plage Unicode des marques diacritiques combinantes (U+0300-U+036F).
 function stripAccents(str) {
@@ -63,7 +65,14 @@ export class MetadataParser {
             if (/partenaire/i.test(trimmedLine)) meta["partenaire"] = "true";
             if (/sanctuaire/i.test(trimmedLine)) meta["sanctuaire"] = "true";
 
-            // Si ce n'est ni un tag, ni une méta, c'est du texte libre
+            // 4. Épisode daté ("JJ/MM/AAAA : texte", voir DateUtils.extractEpisodes/
+            // isEpisodeLine, § 5 du guide) : exclu du texte libre. Ce contenu est déjà
+            // exploité/affiché ailleurs (bloc "Episode(s)" de la modale, un par occurrence
+            // générée) - le laisser ici dupliquait la liste ENTIÈRE des dates de la ligne
+            // (pas juste celle de l'occurrence affichée) dans "Notes complémentaires".
+            if (DateUtils.isEpisodeLine(trimmedLine)) return;
+
+            // Si ce n'est ni un tag, ni une méta, ni un épisode daté, c'est du texte libre
             linesContent.push(line);
         });
 

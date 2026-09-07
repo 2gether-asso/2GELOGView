@@ -1,8 +1,8 @@
 import { StatsService } from '../services/StatsService.js';
-import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
+import { escapeHtml } from '../utils/Html.js';
 import { formatMinutes, formatDurationLong, formatCategoryLabel, topN } from '../utils/Format.js';
 import { CONFIG } from '../config.js';
-import { renderEventCard, umamiCardAttrs } from './EventCardTemplate.js';
+import { renderEventCard, umamiCardAttrs, resolveEventImage } from './EventCardTemplate.js';
 import { computeBadges } from '../services/BadgeService.js';
 import { Icons } from './Icons.js';
 import { animateCountUp } from '../utils/CountUp.js';
@@ -258,7 +258,7 @@ export function renderHoverBarChart(labels, buckets, iconHtml, headingFor, kind)
 export function renderPosterWall(events) {
     const seen = new Map(); // url -> événement (garde le premier événement rencontré, pour l'alt ET le clic)
     events.forEach(e => {
-        const url = sanitizeUrl(e.image);
+        const url = resolveEventImage(e);
         if (url && !seen.has(url)) seen.set(url, e);
     });
     const posters = [...seen.entries()].slice(0, 24);
@@ -352,7 +352,7 @@ export function renderMostRecurringEvent(realSessions) {
     if (recurring.length === 0) return '';
 
     const [title, stat] = recurring[0];
-    const posterUrl = sanitizeUrl(stat.sample.image);
+    const posterUrl = resolveEventImage(stat.sample);
     const backdrop = posterUrl
         ? `<div class="absolute inset-0 bg-cover bg-center opacity-20" style="background-image:url('${posterUrl}')"></div>
            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent"></div>`

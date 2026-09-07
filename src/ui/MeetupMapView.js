@@ -66,35 +66,52 @@ export function initMeetupMap(containerId) {
     if (leafletMap) return leafletMap;
     // Centré sur la France, zoom raisonnable pour voir plusieurs villes de meetup à la fois.
     leafletMap = L.map(containerId, { scrollWheelZoom: true }).setView([46.6, 2.5], 5.2);
-    // Fond de carte sombre (CARTO dark_all, public, sans clé API) pour rester cohérent avec le
-    // thème sombre de l'app - le fond clair par défaut de Leaflet jurerait autrement.
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: 19
+    // Fond de carte sombre : CARTO dark_all (public, sans clé API à l'origine) a fini par
+    // exiger une clé - chaque tuile renvoyait un filigrane "API KEY REQUIRED" par-dessus la
+    // carte (constaté début septembre 2026, confirmé en interrogeant directement l'URL). Basculé
+    // sur le fond "Dark Gray Canvas" d'Esri (services.arcgisonline.com), lui aussi public/sans
+    // clé, zoom natif jusqu'à 16 (large couverture Europe/France, largement suffisant pour ce
+    // niveau ville/région) - vérifié tuile par tuile avant de l'adopter, pas de filigrane.
+    L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © Esri, HERE, Garmin',
+        maxZoom: 16
     }).addTo(leafletMap);
     markersLayer = L.layerGroup().addTo(leafletMap);
 
-    // Un seul écouteur delegué (pas un par marqueur) : le contenu du popup ouvert change à
-    // chaque fois, on relit donc `_source`/`_eventsList` au moment de l'ouverture plutôt que
-    // d'attacher un écouteur par ligne à la création (qui serait de toute façon détruit par
-    // Leaflet qui régénère le DOM du popup à chaque ouverture).
+    // Délégation sur le CONTENEUR du popup (un seul écouteur, pas un par bouton/ligne) plutôt
+    // que des écouteurs posés directement sur chaque élément : `_contentNode` lui-même n'est
+    // jamais recréé par Leaflet (seul son innerHTML l'est, voir requestAnimationFrame plus bas)
+    // - des écouteurs posés à même les boutons seraient donc perdus dès le recalcul de taille.
     leafletMap.on('popupopen', (e) => {
         const marker = e.popup._source;
-        const rows = e.popup._contentNode.querySelectorAll('.meetup-popup-row');
-        rows.forEach(row => {
-            row.addEventListener('click', () => {
+        const contentNode = e.popup._contentNode;
+        contentNode.addEventListener('click', (evt) => {
+            const row = evt.target.closest('.meetup-popup-row');
+            if (row) {
                 const ev = marker._upcomingList?.[Number(row.dataset.eventIndex)];
                 if (ev && leafletMap._onMeetupEventClick) leafletMap._onMeetupEventClick(ev);
-            });
+                return;
+            }
+            // "Voir la fiche du lieu" ET "+N autres" (V2.2, QOL) mènent au même endroit.
+            if (evt.target.closest('.meetup-popup-profile-btn, .meetup-popup-more-btn') && leafletMap._onViewLocationProfile) {
+                leafletMap._onViewLocationProfile(marker._cityKey);
+            }
         });
-        // "Voir la fiche du lieu" ET "+N autres" (V2.2, QOL) mènent au même endroit - deux
-        // classes distinctes (pas une querySelector unique partagée) pour que les deux gardent
-        // chacun leur propre écouteur plutôt que de se marcher dessus.
-        e.popup._contentNode.querySelectorAll('.meetup-popup-profile-btn, .meetup-popup-more-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                if (leafletMap._onViewLocationProfile) leafletMap._onViewLocationProfile(marker._cityKey);
-            });
-        });
+
+        // Filet de sécurité : Leaflet calcule la largeur du popup en mesurant son contenu
+        // SYNCHRONEMENT juste après l'avoir injecté (voir Popup._updateLayout). Sur la toute
+        // première ouverture d'un popup, la règle CSS de la classe Tailwind "w-52" (utilisée
+        // nulle part ailleurs dans l'app, donc jamais encore générée) n'existe pas encore à cet
+        // instant précis : le CDN Tailwind (moteur JIT, génération asynchrone via
+        // MutationObserver) ne l'injecte que quelques millisecondes plus tard. Leaflet mesure
+        // donc un contenu plus étroit que sa taille réelle, et le bouton "Voir la fiche du lieu"
+        // déborde du popup - jusqu'à la prochaine ouverture, où la règle est déjà en cache.
+        // Reproduit et confirmé : sans ce recalcul différé au frame suivant (le temps que
+        // Tailwind ait eu l'occasion d'injecter sa règle), le popup reste trop étroit ; avec,
+        // toujours correctement dimensionné dès le premier clic. `popup.update()` réécrit
+        // l'innerHTML de `_contentNode` (voir Popup._updateContent) - d'où la délégation
+        // ci-dessus plutôt que des écouteurs directs, qui seraient sinon détruits ici même.
+        requestAnimationFrame(() => e.popup.update());
     });
 
     return leafletMap;

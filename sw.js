@@ -11,7 +11,7 @@
 //
 // Bump VERSION à chaque déploiement pour purger l'ancien cache (moins critique maintenant que
 // le réseau prime toujours quand il est disponible, mais garde les caches d'éviter de gonfler).
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL_CACHE = `2gelog-shell-${VERSION}`;
 const CSV_CACHE = `2gelog-csv-${VERSION}`;
 
@@ -56,11 +56,22 @@ function networkFirst(request, cacheName) {
             // réussie pour les scripts CDN) : jamais une erreur, pour ne pas figer un 404/500.
             if (response && (response.ok || response.type === 'opaque')) {
                 const clone = response.clone();
-                caches.open(cacheName).then(cache => cache.put(request, clone));
+                // Le CSV du planning est désormais anti-cache côté appelant (voir CSVParser.fetch
+                // - un paramètre unique à chaque appel pour forcer un vrai aller-retour réseau,
+                // sans quoi le cache HTTP natif du navigateur pouvait servir une copie périmée
+                // sans jamais repasser par ici). Chaque appel produit donc une URL différente :
+                // sans purge de l'ancienne entrée d'abord, le cache accumulerait indéfiniment
+                // une copie par rechargement au lieu de ne garder que la plus récente.
+                caches.open(cacheName).then(async cache => {
+                    await cache.delete(request, { ignoreSearch: true });
+                    cache.put(request, clone);
+                });
             }
             return response;
         })
-        .catch(() => caches.match(request));
+        // { ignoreSearch: true } : retrouve la dernière copie connue même si son URL exacte
+        // (avec le paramètre anti-cache du moment) diffère de celle demandée maintenant.
+        .catch(() => caches.match(request, { ignoreSearch: true }));
 }
 
 self.addEventListener('fetch', (event) => {

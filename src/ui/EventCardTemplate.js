@@ -2,6 +2,25 @@ import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
 import { ReminderService } from '../services/ReminderService.js';
 import { Icons } from './Icons.js';
+import { hasHighlights } from './HighlightsView.js';
+import { getCachedImageUrl } from '../services/TMDBService.js';
+
+/**
+ * Image affichée pour un événement, dans l'ordre de priorité voulu (V2.7) : @image propre à
+ * l'événement > backdrop TMDB déjà en cache (Film/Série sans @image, voir TMDBService.js et
+ * prefetchTmdbImages dans main.js) > bannière générique du type (déjà repliée dans e.image par
+ * EventGenerator si aucune des deux précédentes n'est disponible). Utilisé partout où une
+ * affiche/jaquette est affichée (cartes, modale, mini-calendrier, Kiosque, Rétrospective...)
+ * plutôt que `sanitizeUrl(e.image)` directement, pour que ce même ordre de priorité s'applique
+ * uniformément - et pour que les vues se mettent à jour automatiquement dès qu'une image TMDB
+ * arrive en cache (un simple nouveau rendu suffit, aucun câblage supplémentaire par vue).
+ * @param {Object} e
+ * @returns {string}
+ */
+export function resolveEventImage(e) {
+    if (e.hasCustomImage) return sanitizeUrl(e.image);
+    return sanitizeUrl(getCachedImageUrl(e.title)) || sanitizeUrl(e.image);
+}
 
 // Les visuels sources sont en format portrait (~8:9). On force ce ratio sur les
 // vignettes plutôt qu'un cadre carré pour éviter le crop "object-cover" sur un carré.
@@ -122,6 +141,18 @@ function renderReminderBadge(e) {
 }
 
 /**
+ * Petit indicateur "cet événement a des Highlights" (V2.6.1, voir HighlightsView.js) sur les
+ * tuiles/cartes elles-mêmes, pas seulement dans la modale une fois ouverte - pour que la
+ * présence de clips/shorts/captures se découvre en survolant le calendrier/la recherche/la
+ * frise, sans avoir à ouvrir chaque événement "au cas où". Volontairement juste un badge (pas
+ * les vignettes elles-mêmes, trop lourd pour une tuile) : le détail reste dans la modale.
+ */
+function renderHighlightBadge(e) {
+    if (!hasHighlights(e)) return '';
+    return `<span class="inline-flex items-center gap-1 text-xxs font-bold text-rose-300 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20" title="Highlights disponibles">${Icons.sparkles('w-3 h-3 shrink-0')}Highlights</span>`;
+}
+
+/**
  * Attributs `data-umami-event*` (tracking analytics Umami, voir docs.umami.is/docs/track-events)
  * posés sur la tuile d'un événement, quelle que soit la vue qui l'affiche - Umami écoute les
  * clics globalement via cet attribut, aucun écouteur JS dédié n'est nécessaire ici. `view`
@@ -161,6 +192,7 @@ function renderCompactRow(e, readableDate, view) {
                 <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
                     <span class="text-2xs font-bold shrink-0 px-1.5 py-0.5 rounded border" style="color:${e.col}; background:linear-gradient(135deg, ${e.col}26, ${e.col}0d); border-color:${e.col}40;" title="${type}">${type}</span>
                     ${renderStatusBadge(e.progressStatus)}
+                    ${renderHighlightBadge(e)}
                     ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-xxs font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
                     ${readableDate ? `<span class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</span>` : ''}
                 </div>
@@ -185,7 +217,7 @@ export function renderEventCard(e, readableDate = null, view = '') {
     // e.image (résolu par EventGenerator : @image de l'événement, sinon celle par défaut
     // du type) : affiche/jaquette du film, de la série ou du jeu, en fond translucide de
     // la tuile (voir GUIDE_METADONNEES.md).
-    const posterUrl = sanitizeUrl(e.image);
+    const posterUrl = resolveEventImage(e);
 
     const tagsRender = (e.tags && e.tags.length > 0)
         ? `<div class="flex flex-wrap gap-1 mt-1.5">
@@ -228,6 +260,7 @@ export function renderEventCard(e, readableDate = null, view = '') {
                     ${renderStatusBadge(e.progressStatus)}
                     ${renderNewBadge(e)}
                     ${renderReminderBadge(e)}
+                    ${renderHighlightBadge(e)}
                     ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-xxs font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
                     ${location ? `<span class="inline-flex items-center gap-1 text-xxs font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
                 </div>

@@ -1,6 +1,6 @@
-import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
+import { escapeHtml } from '../utils/Html.js';
 import { DateUtils } from '../utils/DateUtils.js';
-import { getIconSrc, getOvernightSuffix } from './EventCardTemplate.js';
+import { getIconSrc, getOvernightSuffix, resolveEventImage } from './EventCardTemplate.js';
 import { EmptyIllustrations, renderEmptyState } from './EmptyState.js';
 import { Icons } from './Icons.js';
 
@@ -11,7 +11,7 @@ import { Icons } from './Icons.js';
  * le défilement du reste du mois.
  */
 function renderTile(e, big = false) {
-    const posterUrl = sanitizeUrl(e.image);
+    const posterUrl = resolveEventImage(e);
     const bgStyle = posterUrl ? `background-image:url('${posterUrl}')` : `background: linear-gradient(160deg, ${e.col}40, ${e.col}0d)`;
     const sizeClass = big ? 'w-64 aspect-[3/4]' : 'w-40 aspect-[3/4]';
     return `

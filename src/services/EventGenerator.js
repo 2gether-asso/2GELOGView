@@ -446,6 +446,12 @@ export class EventGenerator {
             // @image/@url (ou @lien/@link) de l'événement priment sur l'affiche/lien par
             // défaut du type (voir config.js) ; null si ni l'un ni l'autre n'est défini.
             image: parsedNotes.meta.image || theme.image || null,
+            // Distingue une vraie affiche @image d'un simple repli sur la bannière générique du
+            // type (voir hasCustomImage ci-dessus) : sert à décider si TMDB peut proposer mieux
+            // (voir resolveEventImage dans EventCardTemplate.js) - un @image explicite prime
+            // toujours, mais la bannière générique "Movie Banner.png" partagée par tous les
+            // films sans affiche peut être avantageusement remplacée par la vraie jaquette.
+            hasCustomImage: Boolean(parsedNotes.meta.image),
             url: parsedNotes.meta.url || parsedNotes.meta.lien || parsedNotes.meta.link || theme.url || null,
             // Highlights (V2.6) : clips YouTube / shorts / captures d'écran, une valeur par
             // ligne @clip:/@short:/@screen: (voir REPEATABLE_META_KEYS dans MetadataParser) -

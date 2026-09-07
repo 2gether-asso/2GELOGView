@@ -1,3 +1,12 @@
+// Épisode daté ("JJ/MM/AAAA[ à HH:MM] : texte", voir extractEpisodes/isEpisodeLine ci-dessous) -
+// espace optionnel entre l'heure et le ":" final (ex: "11/07/2026 20:30 : texte") : sans lui,
+// une ligne écrite avec cet espace ne matchait pas DU TOUT (le ":" collé à l'heure était
+// obligatoire), et perdait silencieusement son heure ET son texte au profit de l'heure/
+// numérotation par défaut de la ligne entière. PAS de flag "g" (partagée entre plusieurs
+// appelants via .test()/.match() - avec "g", .test() deviendrait à état, alternant vrai/faux
+// d'un appel à l'autre au lieu de tester chaque ligne indépendamment).
+const EPISODE_LINE_REGEX = /(\d{2}\/\d{2}\/\d{4})(?:\s+à)?\s*(\d{1,2}:\d{2}(?::\d{2})?)?\s*:\s*(.*)/i;
+
 export class DateUtils {
     static parseDate(s) { 
         if (!s || !s.includes('/')) return null; 
@@ -51,11 +60,7 @@ export class DateUtils {
     static extractEpisodes(notes) {
         if (!notes) return [];
         return notes.split('\n').map(l => {
-            // Espace optionnel entre l'heure et le ":" final (ex: "11/07/2026 20:30 : texte") :
-            // sans lui, une ligne écrite avec cet espace ne matchait pas DU TOUT (le ":" collé
-            // à l'heure était obligatoire), et perdait silencieusement son heure ET son texte
-            // au profit de l'heure/numérotation par défaut de la ligne entière.
-            const m = l.match(/(\d{2}\/\d{2}\/\d{4})(?:\s+à)?\s*(\d{1,2}:\d{2}(?::\d{2})?)?\s*:\s*(.*)/i);
+            const m = l.match(EPISODE_LINE_REGEX);
             if (!m) return null;
             const { text, durations } = this._extractInlineDurations(m[3].trim());
             return {
@@ -65,6 +70,19 @@ export class DateUtils {
                 durations
             };
         }).filter(x => x);
+    }
+
+    /**
+     * Une ligne est-elle un épisode daté (JJ/MM/AAAA[ à HH:MM] : texte, voir extractEpisodes) ?
+     * Exposé pour MetadataParser.parse(), qui doit exclure ces lignes du texte libre ("Notes
+     * complémentaires") - sans ça, la liste ENTIÈRE des épisodes datés d'une ligne (toutes les
+     * dates, pas juste celle de l'occurrence affichée) s'y dupliquait, alors que ce contenu est
+     * déjà affiché ailleurs (bloc "Episode(s)" de la modale, un par occurrence générée).
+     * @param {string} line
+     * @returns {boolean}
+     */
+    static isEpisodeLine(line) {
+        return EPISODE_LINE_REGEX.test(line);
     }
 
     /**

@@ -556,6 +556,29 @@
            sans ce piège - support Firefox seulement depuis la version 126 (2024), dégradation
            silencieuse (texte normal) sur les navigateurs plus anciens qui l'ignorent. */
         html.a11y-large-text { zoom: 1.15; }
+
+        /* Mode Performance (V2.6.2, voir #btn-toggle-perf-mode dans l'aide / setupPerfModeToggle
+           dans main.js) : désactive tout `backdrop-filter` de l'app. Signalé comme "sacrément
+           lag" sans accélération matérielle - le flou y est recalculé en logiciel à CHAQUE frame
+           pour CHAQUE élément flouté (en-tête, les deux sidebars, une quinzaine d'overlays, et
+           surtout `.glass-card` sur potentiellement des centaines de cartes d'événement en vue
+           Recherche/Frise), ce qui se cumule vite. Une seule règle générique (`*`) plutôt que
+           défaire chaque backdrop-blur-* Tailwind un par un : couvre aussi bien les classes
+           utilitaires que .glass-panel/.glass-card, présentes ou futures. Les fonds
+           semi-transparents pensés pour être vus À TRAVERS un flou deviennent trop délavés sans
+           lui : réassombris ci-dessous (tokens --surface-2-9N déjà adaptés au thème clair/sombre)
+           pour rester lisibles même sans flou. Coupe aussi les animations d'ambiance continues
+           (coût bien moindre que le flou, mais gratuit à couper pour qui a déjà activé ce mode). */
+        .perf-mode * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+        .perf-mode .glass-panel { background: var(--surface-2-95); }
+        .perf-mode .glass-card { background: var(--surface-2-90); }
+        .perf-mode #seasonal-particles { display: none; }
+        .perf-mode .live-glow-border::before,
+        .perf-mode .brand-pulse,
+        .perf-mode .skeleton-block,
+        .perf-mode .kiosk-ticker-track,
+        .perf-mode .animate-pulse,
+        .perf-mode .animate-ping { animation: none !important; }
     </style>
 </head>
 <body class="h-dvh w-screen flex flex-col antialiased">
@@ -1030,12 +1053,20 @@
                 </div>
             </div>
 
-            <div id="modal-sub-block" class="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl hidden">
-                <div class="flex items-center gap-1.5 text-indigo-400 font-bold text-xxs uppercase tracking-wider">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"></rect><line x1="8" y1="3" x2="12" y2="6"></line><line x1="16" y1="3" x2="12" y2="6"></line></svg>
-                    Episode(s)
+            <!-- Episode(s) : texte (@episode/ligne datée/numéro auto, toujours dispo tout de
+                 suite) + vignettes TMDB en dessous si trouvées (série uniquement, arrive un peu
+                 plus tard - voir ModalView._renderEpisodeThumbnails/TMDBService.js). Un seul
+                 bloc plutôt que deux sections "épisode" distinctes empilées : les vignettes
+                 illustrent le même texte, pas une info séparée. -->
+            <div id="modal-sub-block" class="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl hidden space-y-2">
+                <div>
+                    <div class="flex items-center gap-1.5 text-indigo-400 font-bold text-xxs uppercase tracking-wider">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"></rect><line x1="8" y1="3" x2="12" y2="6"></line><line x1="16" y1="3" x2="12" y2="6"></line></svg>
+                        Episode(s)
+                    </div>
+                    <div id="modal-event-sub" class="text-indigo-300 font-semibold mt-0.5 text-sm"></div>
                 </div>
-                <div id="modal-event-sub" class="text-indigo-300 font-semibold mt-0.5 text-sm"></div>
+                <div id="modal-episodes-row" class="hidden gap-2 overflow-x-auto custom-scroll snap-x snap-mandatory pb-1"></div>
             </div>
 
             <div id="modal-meta-block" class="grid grid-cols-2 gap-3 text-xs">
@@ -1060,22 +1091,21 @@
                 <p id="modal-event-notes" class="text-slate-300 italic text-xs leading-relaxed whitespace-pre-line">Aucune description disponible.</p>
             </div>
 
-            <!-- Highlights (V2.6) : clips YouTube / captures d'écran, uniquement pour un
-                 événement taggé #highlight avec au moins un @clip:/@screen: renseigné - voir
-                 ModalView._renderHighlights (même toggle hidden/flex que modal-similar-container).
-                 Les clips défilent en carrousel HORIZONTAL (pas empilés verticalement) : un
-                 seul @clip: ne changeait rien, mais 2-3 clips en pleine largeur empilés
-                 gonflaient le bloc de plusieurs centaines de pixels et donnaient l'impression
-                 que la modale était "coupée" (tout le reste repoussé loin sous le fold, sans
-                 indice visuel de scroll) - la largeur fixe par clip garde une hauteur de bloc
-                 constante quel que soit le nombre de clips. -->
-            <div id="modal-highlights-container" class="hidden flex-col space-y-2">
+            <!-- Highlights (V2.6) : clips/shorts YouTube et captures d'écran, uniquement pour
+                 un événement taggé #highlight avec au moins un @clip:/@short:/@screen: renseigné
+                 - voir ModalView._renderHighlights / HighlightsView.js (rendu et lecteur plein
+                 écran partagés avec les autres vues, ex: "Aujourd'hui sur 2GETHER"). Une seule
+                 rangée défilante (clips/shorts/captures mélangés) plutôt que des sections
+                 empilées : plusieurs clips en pleine largeur empilés gonflaient le bloc de
+                 plusieurs centaines de pixels et donnaient l'impression que la modale était
+                 "coupée" (tout le reste repoussé loin sous le fold) - la largeur fixe par
+                 vignette garde une hauteur de bloc constante quel que soit leur nombre. -->
+            <div id="modal-highlights-block" class="hidden flex-col space-y-2">
                 <div class="flex items-center gap-1.5 text-slate-400 font-bold text-3xs uppercase tracking-wider">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"></path><path d="M19 3v4"></path><path d="M17 5h4"></path></svg>
                     Highlights
                 </div>
-                <div id="modal-highlight-clips" class="hidden flex gap-2 overflow-x-auto custom-scroll snap-x snap-mandatory pb-1"></div>
-                <div id="modal-highlight-screens" class="hidden grid grid-cols-3 gap-1.5"></div>
+                <div id="modal-highlights-row"></div>
             </div>
 
             <div id="modal-reminder-container" class="flex flex-col space-y-1.5">
@@ -1111,6 +1141,13 @@
                 <a id="modal-event-link" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 rounded-xl transition-all">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M9 15L20 4"></path><path d="M14 4h6v6"></path><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path></svg>
                     Voir la fiche
+                </a>
+                <!-- Fiche TMDB (V2.7) : posé/masqué par ModalView._renderTmdbInfo, uniquement
+                     pour les événements Film/Série (catégorie "visionnage") ayant une fiche
+                     TMDB trouvée - voir TMDBService.js. -->
+                <a id="modal-event-tmdb" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-[#01b4e4] hover:bg-[#0299c2] px-4 py-2.5 rounded-xl transition-all">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><line x1="8" y1="4" x2="8" y2="20"></line><line x1="16" y1="4" x2="16" y2="20"></line><line x1="3" y1="9" x2="8" y2="9"></line><line x1="3" y1="15" x2="8" y2="15"></line><line x1="16" y1="9" x2="21" y2="9"></line><line x1="16" y1="15" x2="21" y2="15"></line></svg>
+                    Voir sur TMDB
                 </a>
                 <a id="modal-event-salon" href="#" target="_blank" rel="noopener noreferrer" class="hidden items-center justify-center gap-2 text-sm font-bold text-white bg-[#5865F2] hover:bg-[#4752C4] px-4 py-2.5 rounded-xl transition-all">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M4 12a8 8 0 1 1 8 8H8l-4 3z"></path></svg>
@@ -1155,8 +1192,14 @@
                 Revoir la visite guidée
             </button>
             <!-- Mode "grand texte" (V2.4, "17") : voir setupLargeTextToggle dans main.js. -->
-            <button id="btn-toggle-large-text" aria-pressed="false" class="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-2 rounded-xl transition-all mb-4">
+            <button id="btn-toggle-large-text" aria-pressed="false" class="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-2 rounded-xl transition-all mb-2">
                 <span>🔠 Grand texte : Désactivé</span>
+            </button>
+            <!-- Mode Performance (V2.6.2) : coupe le flou (backdrop-filter) et les animations
+                 d'ambiance, voir setupPerfModeToggle dans main.js - pour qui lag sans
+                 accélération matérielle. -->
+            <button id="btn-toggle-perf-mode" aria-pressed="false" class="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-2 rounded-xl transition-all mb-4">
+                <span>🚀 Mode Performance : Désactivé</span>
             </button>
             <div class="space-y-4 text-sm text-slate-300">
                 <div>
