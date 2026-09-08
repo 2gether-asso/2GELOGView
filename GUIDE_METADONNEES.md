@@ -132,6 +132,12 @@ lisibles. C'est ce type de contenu qui doit rester dans `Notes` (contexte, casti
 explication d'une annulation...), même si techniquement une ligne de texte libre dans `Tags`
 fonctionnerait tout autant.
 
+**Lien YouTube collé directement dans `Notes`** (souvent une rediffusion) : détecté
+automatiquement, une vignette avec bouton lecture apparaît sous le texte, cliquer la
+transforme en lecteur vidéo intégré — pas besoin de `@clip:` pour ce cas simple (`@clip:`
+reste nécessaire pour qu'un clip apparaisse aussi dans le bloc Highlights, § 11, réservé aux
+événements tagués `#highlight`).
+
 ## 4. Mots-clés spéciaux (détectés n'importe où dans `Tags`/`Notes`)
 
 Ces mots sont cherchés dans le texte complet de `Tags` + `Notes` fusionnés, peu importe
@@ -292,13 +298,21 @@ correspondante - rien à faire pour en bénéficier. Passe par un proxy (n8n) qu
 côté serveur, jamais dans le code de l'app (voir `src/services/TMDBService.js`).
 
 Ce que ça apporte, une fois trouvée :
-- Un bouton "Voir sur TMDB" dans la modale (résumé, note).
+- Un bouton "Voir sur TMDB" dans la modale, avec résumé + note affichés directement dedans.
 - Une image de fond horizontale pour la tuile/carte, **si aucun `@image` n'est déjà renseigné**
   (priorité : `@image` > affiche TMDB > bannière générique du type).
 - Pour une série : les vignettes + noms des épisodes couverts par CETTE occurrence précise,
   sous le bloc "Episode(s)" de la modale - seulement si le titre porte un numéro de saison
   (`... S13`) et qu'un `@episode:`/une ligne datée donne un numéro d'épisode exploitable
-  (`Episode 4`, `Episodes 1 à 3`...).
+  (`Episode 4`, `Episodes 1 à 3`...) - accompagnées d'une barre de progression ("Épisode
+  4/10 de la saison") et de la liste des épisodes déjà couverts par les occurrences passées
+  du même titre.
+- Pour un film sans `Durée Réelle` encore renseignée dans le tableur : la durée officielle
+  TMDB s'affiche en repli dans la carte "Durée".
+- Si le proxy n8n est configuré pour les renvoyer (extension optionnelle, voir le commentaire
+  dans `src/services/TMDBService.js`) : genres, classification d'âge, bande-annonce intégrée,
+  casting principal et fournisseurs de streaming ("Disponible sur...") apparaissent aussi dans
+  la modale - absents sans casser quoi que ce soit tant que le proxy ne les fournit pas.
 
 ### a. `@tmdb:` - corriger une correspondance automatique ratée
 

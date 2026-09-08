@@ -1,4 +1,5 @@
 import { CONFIG } from '../config.js';
+import { AdminIssuesService } from './AdminIssuesService.js';
 
 /**
  * Fiches TMDB (V2.7) pour les événements Film/Série (catégorie "visionnage" - Soirée Film,
@@ -24,10 +25,24 @@ const CACHE_KEY = 'tmdb:cache:v1';
 const SEASON_CACHE_KEY = 'tmdb:season-cache:v1';
 const CACHE_TTL_MS = 30 * 24 * 3600 * 1000; // 30 jours - une affiche/fiche TMDB change rarement.
 
+// Miroir en mémoire du contenu déjà lu de chaque clé localStorage (CACHE_KEY / SEASON_CACHE_KEY) :
+// readCache() est appelée de façon SYNCHRONE à chaque rendu de tuile/carte (voir resolveEventImage
+// dans EventCardTemplate.js) et, en amont, une fois par événement candidat dans
+// prefetchTmdbImages (main.js) - sur un planning de plusieurs centaines d'occurrences, ça
+// représentait un JSON.parse() de tout le cache À CHAQUE appel plutôt qu'une fois. Le module
+// est le seul à écrire dans ces clés (writeCache), donc ce miroir ne peut pas devenir périmé par
+// rapport à localStorage tant que l'onglet reste ouvert.
+const memCaches = new Map();
+
 function readCache(key) {
-    try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; }
+    if (memCaches.has(key)) return memCaches.get(key);
+    let parsed;
+    try { parsed = JSON.parse(localStorage.getItem(key)) || {}; } catch { parsed = {}; }
+    memCaches.set(key, parsed);
+    return parsed;
 }
 function writeCache(key, cache) {
+    memCaches.set(key, cache);
     try { localStorage.setItem(key, JSON.stringify(cache)); } catch { /* quota plein, stockage désactivé... tant pis, juste pas de cache persistant */ }
 }
 
@@ -182,26 +197,13 @@ export function hasFreshCacheEntry(title) {
 }
 
 /**
- * Interroge le proxy n8n pour la fiche Film/Série d'un événement (timeout 6s, comme
- * PollService). `@tmdb:` (event.meta.tmdb, voir parseTmdbRef) prime toujours sur la recherche
- * par titre quand il est présent et valide - une fiche collée à la main, prioritaire sur une
- * recherche automatique qui peut se tromper. Résultat mis en cache - un succès COMME un "pas
- * trouvé" (`found:false`), pour ne pas re-interroger en boucle à chaque rendu un titre qui n'a
- * simplement aucune fiche sur TMDB.
- * @param {Object} event
- * @returns {Promise<{id: string, mediaType: string, imageUrl: string|null, tmdbUrl: string, overview: string, rating: number}|null>}
- *   `null` si pas de fiche trouvée ou si le service est indisponible - jamais de rejet.
+ * Un seul appel POST au proxy n8n (timeout 6s, comme PollService), factorisé pour être appelé
+ * plusieurs fois par fetchTmdbInfo (voir le repli @tmdb: cassé ci-dessous, qui retente un second
+ * appel différent sans dupliquer tout ce boilerplate fetch/AbortController/timeout).
+ * @param {Object} body
+ * @returns {Promise<Object|null>} Le JSON de la réponse, ou `null` sur toute panne/timeout.
  */
-export async function fetchTmdbInfo(event) {
-    const key = normalizeKey(event.title);
-    const cached = readCache(CACHE_KEY)[key];
-    if (freshEntry(cached)) return cached.found ? cached : null;
-
-    const override = parseTmdbRef(event.meta?.tmdb);
-    const body = override
-        ? { action: 'details', mediaType: override.mediaType, id: override.id }
-        : { action: 'search', title: stripSeasonSuffix(event.title) };
-
+async function requestTmdb(body) {
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -213,14 +215,83 @@ export async function fetchTmdbInfo(event) {
         });
         clearTimeout(timeoutId);
         if (!res.ok) return null;
-        const data = await res.json();
-
-        const cache = readCache(CACHE_KEY);
-        cache[key] = { ...data, fetchedAt: Date.now() };
-        writeCache(CACHE_KEY, cache);
-        return data.found ? cache[key] : null;
+        return await res.json();
     } catch {
         return null;
+    }
+}
+
+/**
+ * Interroge le proxy n8n pour la fiche Film/Série d'un événement. `@tmdb:` (event.meta.tmdb,
+ * voir parseTmdbRef) prime toujours sur la recherche par titre quand il est présent et valide -
+ * une fiche collée à la main, prioritaire sur une recherche automatique qui peut se tromper.
+ * Repli automatique (V2.9) si cette fiche forcée ne répond plus (id supprimé/faute de frappe
+ * dans l'URL @tmdb:) : retente une recherche par titre plutôt que d'abandonner - toujours mieux
+ * qu'aucune fiche du tout, même si ce n'est alors qu'une approximation (voir
+ * reportTmdbLookupIssue, qui distingue encore les deux cas dans le Mode Admin). Résultat mis en
+ * cache - un succès COMME un "pas trouvé" (`found:false`), pour ne pas re-interroger en boucle à
+ * chaque rendu un titre qui n'a simplement aucune fiche sur TMDB.
+ * @param {Object} event
+ * @returns {Promise<{id: string, mediaType: string, imageUrl: string|null, tmdbUrl: string, overview: string, rating: number, genres?: string[], runtime?: number, cast?: Array, trailerKey?: string, providers?: Array, certification?: string, alternates?: Array}|null>}
+ *   `null` si pas de fiche trouvée ou si le service est indisponible - jamais de rejet. Les
+ *   champs au-delà de `rating` sont optionnels : absents tant que le proxy n8n n'est pas étendu
+ *   pour les renvoyer (voir GUIDE_METADONNEES.md §12), l'app s'en passe silencieusement.
+ */
+export async function fetchTmdbInfo(event) {
+    const key = normalizeKey(event.title);
+    const cached = readCache(CACHE_KEY)[key];
+    if (freshEntry(cached)) return cached.found ? cached : null;
+
+    const override = parseTmdbRef(event.meta?.tmdb);
+    const body = override
+        ? { action: 'details', mediaType: override.mediaType, id: override.id }
+        : { action: 'search', title: stripSeasonSuffix(event.title) };
+
+    let data = await requestTmdb(body);
+    if (!data) return null;
+
+    let overrideBroken = false;
+    if (override && !data.found) {
+        const fallback = await requestTmdb({ action: 'search', title: stripSeasonSuffix(event.title) });
+        if (fallback) data = fallback;
+        overrideBroken = true;
+    }
+
+    const cache = readCache(CACHE_KEY);
+    cache[key] = { ...data, fetchedAt: Date.now() };
+    writeCache(CACHE_KEY, cache);
+    reportTmdbLookupIssue(event, key, override, data, overrideBroken);
+    return data.found ? cache[key] : null;
+}
+
+/**
+ * Journal Admin (V2.8, voir AdminIssuesService.js) : signale les recherches TMDB qui posent
+ * problème, pour qu'un organisateur les remarque dans le Mode Admin sans avoir à deviner
+ * lesquels de ses événements Film/Série n'ont (probablement) pas la bonne fiche. `alternates`
+ * n'existe pas encore dans la réponse actuelle du proxy n8n (qui ne renvoie aujourd'hui que LA
+ * meilleure correspondance côté serveur) - ce champ est lu ici en prévision, prêt à être exploité
+ * dès que le workflow n8n sera étendu pour l'exposer, sans changement client supplémentaire.
+ * `overrideBroken` (V2.9) : la fiche forcée (@tmdb:) ne répondait plus et un repli par titre a
+ * été tenté (voir fetchTmdbInfo) - signalé MÊME si ce repli a fini par trouver quelque chose, car
+ * ce n'est alors qu'une approximation automatique à vérifier, pas la fiche choisie à la main.
+ */
+function reportTmdbLookupIssue(event, key, override, data, overrideBroken = false) {
+    if (overrideBroken) {
+        const message = data.found
+            ? `Fiche TMDB forcée (@tmdb:) introuvable pour "${event.title}" - une recherche automatique de secours a trouvé une fiche approximative, vérifiez qu'il s'agit bien de la bonne ou corrigez @tmdb:.`
+            : `Fiche TMDB forcée (@tmdb:) introuvable pour "${event.title}" - vérifier le lien/l'identifiant.`;
+        AdminIssuesService.report('tmdb-not-found', key, message);
+        return;
+    }
+    if (!data.found) {
+        AdminIssuesService.report('tmdb-not-found', key, `Aucune fiche TMDB trouvée pour "${event.title}" - possible de forcer avec @tmdb: si elle existe sous un autre titre.`);
+        return;
+    }
+    AdminIssuesService.resolve('tmdb-not-found', key);
+    if (Array.isArray(data.alternates) && data.alternates.length > 0) {
+        AdminIssuesService.report('tmdb-ambiguous', key, `Plusieurs fiches TMDB possibles pour "${event.title}" - vérifier qu'il s'agit bien de la bonne, forcer avec @tmdb: sinon.`);
+    } else {
+        AdminIssuesService.resolve('tmdb-ambiguous', key);
     }
 }
 
@@ -271,4 +342,33 @@ export async function fetchTmdbSeason(tmdbId, season) {
     } catch {
         return null;
     }
+}
+
+const PRUNE_LAST_RUN_KEY = 'tmdb:cache:lastPrunedAt';
+const PRUNE_INTERVAL_MS = 24 * 3600 * 1000; // Le TTL est de 30 jours - une fois par jour suffit largement.
+
+/**
+ * Purge les entrées expirées des deux caches (fiches + épisodes de saison, V2.8) - sans ça, une
+ * entrée ("trouvée" ou "pas trouvée") pour un titre qui ne revient jamais dans le planning
+ * s'accumule indéfiniment dans localStorage, jamais retirée (seulement RE-remplacée si ce même
+ * titre est un jour recherché à nouveau). À appeler une fois au démarrage (voir main.js) - pas
+ * besoin à chaque chargement de page vu le TTL de 30 jours, un repère dans localStorage borne
+ * l'exécution réelle à une fois par jour maximum.
+ */
+export function pruneTmdbCache() {
+    try {
+        const last = parseInt(localStorage.getItem(PRUNE_LAST_RUN_KEY) || '0', 10);
+        if (Date.now() - last < PRUNE_INTERVAL_MS) return;
+    } catch { /* repère illisible - on tente quand même la purge ci-dessous */ }
+
+    [CACHE_KEY, SEASON_CACHE_KEY].forEach(key => {
+        const cache = readCache(key);
+        let changed = false;
+        Object.keys(cache).forEach(k => {
+            if (!freshEntry(cache[k])) { delete cache[k]; changed = true; }
+        });
+        if (changed) writeCache(key, cache);
+    });
+
+    try { localStorage.setItem(PRUNE_LAST_RUN_KEY, Date.now().toString()); } catch { /* stockage indisponible - tant pis */ }
 }

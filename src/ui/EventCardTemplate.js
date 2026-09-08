@@ -2,7 +2,7 @@ import { escapeHtml, sanitizeUrl } from '../utils/Html.js';
 import { CONFIG } from '../config.js';
 import { ReminderService } from '../services/ReminderService.js';
 import { Icons } from './Icons.js';
-import { hasHighlights } from './HighlightsView.js';
+import { hasHighlights, getHighlightItems } from './HighlightsView.js';
 import { getCachedImageUrl } from '../services/TMDBService.js';
 
 /**
@@ -146,10 +146,17 @@ function renderReminderBadge(e) {
  * présence de clips/shorts/captures se découvre en survolant le calendrier/la recherche/la
  * frise, sans avoir à ouvrir chaque événement "au cas où". Volontairement juste un badge (pas
  * les vignettes elles-mêmes, trop lourd pour une tuile) : le détail reste dans la modale.
+ * S'il y en a PLUSIEURS (V2.8), un effet de pile (ombres portées décalées, façon cartes
+ * empilées) + le nombre distinguent d'un coup d'œil "un seul clip" de "toute une compilation",
+ * avant même d'ouvrir la modale pour le découvrir.
  */
 function renderHighlightBadge(e) {
-    if (!hasHighlights(e)) return '';
-    return `<span class="inline-flex items-center gap-1 text-xxs font-bold text-rose-300 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20" title="Highlights disponibles">${Icons.sparkles('w-3 h-3 shrink-0')}Highlights</span>`;
+    const { clipItems, screenUrls } = getHighlightItems(e);
+    const count = clipItems.length + screenUrls.length;
+    if (count === 0) return '';
+    const stackClass = count > 1 ? 'shadow-[2px_2px_0_0_rgba(244,63,94,0.35),4px_4px_0_0_rgba(244,63,94,0.18)]' : '';
+    const label = count > 1 ? `${count} Highlights disponibles` : 'Highlight disponible';
+    return `<span class="inline-flex items-center gap-1 text-xxs font-bold text-rose-300 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 ${stackClass}" title="${label}">${Icons.sparkles('w-3 h-3 shrink-0')}Highlights${count > 1 ? ` ×${count}` : ''}</span>`;
 }
 
 /**

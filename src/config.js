@@ -1,4 +1,12 @@
 export const CONFIG = {
+    // Numéro de version affiché (titre de l'onglet, badge d'en-tête) et utilisé comme `label` de
+    // la dernière entrée de PATCH_NOTES_HISTORY (main.js) - point de vérité UNIQUE (V2.8) : avant,
+    // ces 3 endroits étaient chacun mis à jour à la main lors d'un bump de version, avec le risque
+    // (déjà constaté) d'en oublier un et de se retrouver avec un titre/badge en retard sur ce que
+    // le code fait réellement depuis un moment. Les entrées PLUS ANCIENNES de l'historique restent
+    // des chaînes figées (ce sont des versions passées, elles ne doivent plus bouger).
+    APP_VERSION: "V2.7",
+
     CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVu8Z5ZxyDpRVG3eFFLuWH_iWKZyKuLWKvW617wBfAMT6no6UVah6HSqlhM8LDKjheEc4EBfSXgooM/pub?gid=0&single=true&output=csv",
 
     // Tableur séparé (V2.3) listant les anniversaires des membres communiqués volontairement

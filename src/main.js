@@ -38,8 +38,8 @@ import { startOnboardingTour } from './ui/OnboardingTour.js';
 import { renderAvatarInitials } from './utils/Avatar.js';
 import { animateCountUp } from './utils/CountUp.js';
 import { renderKioskShowcase } from './ui/KioskView.js';
-import { initHighlightLightbox } from './ui/HighlightsView.js';
-import { fetchTmdbInfo, hasFreshCacheEntry, isTmdbEligible } from './services/TMDBService.js';
+import { initHighlightLightbox, initInlineYouTubePlayers } from './ui/HighlightsView.js';
+import { fetchTmdbInfo, hasFreshCacheEntry, isTmdbEligible, pruneTmdbCache } from './services/TMDBService.js';
 
 const repo = new EventRepository();
 let calendarInstance = null;
@@ -1291,6 +1291,29 @@ function setupOnboardingTour() {
 // reformulation. "V1" (avant l'existence même d'un PATCH_NOTES dans le code) et "V2.2" (jamais
 // documentée nulle part avant aujourd'hui) ont dû être reconstruites depuis les diffs réels.
 const PATCH_NOTES_HISTORY = [
+    {
+        version: "2026-09-08",
+        label: CONFIG.APP_VERSION,
+        sections: [
+            {
+                title: "🚀 Nouveautés",
+                items: [
+                    "🎬 Intégration TMDB : jaquette automatique dans la modale et les tuiles pour vos Soirées Film/Série quand aucune image n'est renseignée (priorité Image personnalisée > affiche TMDB > bannière par défaut), lien direct vers la fiche TMDB, vignettes et noms des épisodes affichés dans la modale d'une série. Tag @tmdb pour forcer manuellement une fiche si la recherche automatique se trompe ou ne trouve rien.",
+                    "🖼️ Modale d'événement repensée : l'affiche (personnalisée ou TMDB) devient le fond du bandeau titre/tags/icône plutôt qu'un bloc à part souvent mal recadré ; rappel réduit en icône cloche à côté du bouton copier le lien ; plateforme (ou durée à défaut) affichée dans l'espace resté vide jusque-là.",
+                    "🎠 Le lecteur plein écran des Highlights devient un vrai carrousel façon Instagram quand une session en a plusieurs : cartes voisines visibles en réduit de part et d'autre de celle affichée, fond flouté reprenant ses couleurs, navigation à la flèche/au clavier/par points avec des transitions fluides d'un clip à l'autre."
+                ]
+            },
+            {
+                title: "🛠️ Corrections",
+                items: [
+                    "Une ligne de notes portant deux tags collés (ex: \"#GarticPhone #AmongUs\") n'en comptait qu'un seul.",
+                    "Les épisodes datés d'une série (\"JJ/MM/AAAA : ...\") apparaissaient en double dans \"Notes complémentaires\", alors qu'ils sont déjà affichés dans le bloc \"Épisode(s)\" de chaque occurrence.",
+                    "Le bloc \"Tags indexés\" restait visible (vide) dans la modale pour un événement n'en portant réellement aucun.",
+                    "Optimisation : le cache TMDB (localStorage) était entièrement relu à chaque tuile/carte affichée - désormais gardé en mémoire, sensible sur un planning de plusieurs centaines de sessions."
+                ]
+            }
+        ]
+    },
     {
         version: "2026-09-06",
         label: "V2.6",
@@ -3267,6 +3290,13 @@ function generateListCalendarImage(calendar) {
 // distinguer une réponse réseau fraîche d'une réponse mise en cache, donc on se contente
 // d'enregistrer "la dernière fois que ça a marché", vrai dans les deux cas.
 const LAST_SYNCED_KEY = 'csv:lastSyncedAt';
+// Dernier CSV principal chargé AVEC SUCCÈS (V2.8, secours hors-ligne) : distinct du cache HTTP
+// du Service Worker (sw.js, volontairement `cache:'no-store'` sur cette requête - voir
+// CSVParser.fetch) qui garantit la fraîcheur mais ne garde donc rien en réserve. Un vrai échec
+// réseau (Google Sheets indisponible, coupure...) affichait jusque-là un simple message
+// d'erreur bloquant, même si l'app avait déjà des données parfaitement affichables en mémoire
+// depuis la dernière visite - on les garde ici pour retomber dessus plutôt que sur un écran vide.
+const CSV_FALLBACK_KEY = 'csv:lastRows:v1';
 
 function updateLastSyncedTooltip() {
     const dot = document.getElementById('header-status-dot');
@@ -3274,6 +3304,47 @@ function updateLastSyncedTooltip() {
     if (!dot || !raw) return;
     const time = new Date(parseInt(raw, 10)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     dot.title = `Dernière synchronisation : ${time}`;
+}
+
+/** Reconstruit tout l'état dérivé (dépôt, filtres, vues, badges...) à partir des lignes CSV déjà
+ * obtenues (fraîches ou de secours, voir loadData) - factorisé pour être appelé depuis les deux
+ * chemins sans dupliquer cette longue séquence. */
+function applyLoadedRows(rawRows) {
+    dataAnomalies = validateRows(rawRows);
+    // Badge (V2.2, QOL) : signale des anomalies dans le tableur sans attendre qu'un
+    // organisateur pense à ouvrir le Mode Admin par curiosité (voir renderAnomaliesSection).
+    const anomalyBadge = document.getElementById('admin-anomaly-badge');
+    anomalyBadge.textContent = dataAnomalies.length;
+    anomalyBadge.classList.toggle('hidden', dataAnomalies.length === 0);
+
+    repo.clear();
+    rawRows.forEach(row => {
+        const instances = EventGenerator.generate(row);
+        instances.forEach(inst => repo.add(inst));
+    });
+    computeAndMarkNewEvents(repo.getAll());
+
+    updateTagsFilterBar(repo.getAll());
+    renderTypeFilterBar(repo.getAll());
+    renderCategoryFilterBar(repo.getAll());
+    renderHostFilterBar(repo.getAll());
+    // currentViewMode peut déjà valoir 'timeline' au tout premier rendu (défaut mobile, voir
+    // sa déclaration plus haut) : sans cet appel ici, le bouton Frise de l'en-tête ne
+    // recevrait sa mise en surbrillance "actif" qu'au premier clic, pas dès le chargement.
+    applyViewButtonStyles();
+    updateUIState();
+    updateNextEventBanner();
+    checkSubscriptionChanges();
+    checkUpcomingNotifications();
+    renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
+    openEventFromUrl();
+    openOrganizerProfileFromUrl();
+    openLocationProfileFromUrl();
+
+    // Pré-chargement en arrière-plan (jamais bloquant, voir prefetchTmdbImages) : sans lui,
+    // une tuile Film/Série sans @image propre n'affiche l'affiche TMDB qu'après avoir ouvert
+    // sa modale au moins une fois (seul autre déclencheur du cache).
+    prefetchTmdbImages(repo.getAll());
 }
 
 // Récupère le CSV, régénère le dépôt et rafraîchit l'UI. Isolée d'initApp() pour
@@ -3290,48 +3361,30 @@ async function loadData() {
             fetchBirthdays()
         ]);
         birthdaysList = fetchedBirthdays;
-        dataAnomalies = validateRows(rawRows);
-        // Badge (V2.2, QOL) : signale des anomalies dans le tableur sans attendre qu'un
-        // organisateur pense à ouvrir le Mode Admin par curiosité (voir renderAnomaliesSection).
-        const anomalyBadge = document.getElementById('admin-anomaly-badge');
-        anomalyBadge.textContent = dataAnomalies.length;
-        anomalyBadge.classList.toggle('hidden', dataAnomalies.length === 0);
-
-        repo.clear();
-        rawRows.forEach(row => {
-            const instances = EventGenerator.generate(row);
-            instances.forEach(inst => repo.add(inst));
-        });
-        computeAndMarkNewEvents(repo.getAll());
-
-        updateTagsFilterBar(repo.getAll());
-        renderTypeFilterBar(repo.getAll());
-        renderCategoryFilterBar(repo.getAll());
-        renderHostFilterBar(repo.getAll());
-        // currentViewMode peut déjà valoir 'timeline' au tout premier rendu (défaut mobile, voir
-        // sa déclaration plus haut) : sans cet appel ici, le bouton Frise de l'en-tête ne
-        // recevrait sa mise en surbrillance "actif" qu'au premier clic, pas dès le chargement.
-        applyViewButtonStyles();
-        updateUIState();
-        updateNextEventBanner();
-        checkSubscriptionChanges();
-        checkUpcomingNotifications();
-        renderActivityHeatmap(document.getElementById('activity-heatmap'), repo.getAll());
-        openEventFromUrl();
-        openOrganizerProfileFromUrl();
-        openLocationProfileFromUrl();
+        applyLoadedRows(rawRows);
+        try { localStorage.setItem(CSV_FALLBACK_KEY, JSON.stringify(rawRows)); } catch { /* quota plein - tant pis, juste pas de secours pour la prochaine panne */ }
         localStorage.setItem(LAST_SYNCED_KEY, Date.now().toString());
         updateLastSyncedTooltip();
         loadingEl.classList.add('hidden');
-
-        // Pré-chargement en arrière-plan (jamais bloquant, voir prefetchTmdbImages) : sans lui,
-        // une tuile Film/Série sans @image propre n'affiche l'affiche TMDB qu'après avoir ouvert
-        // sa modale au moins une fois (seul autre déclencheur du cache).
-        prefetchTmdbImages(repo.getAll());
     } catch (error) {
         console.error("❌ Erreur de chargement du planning :", error);
-        loadingEl.classList.add('hidden');
-        errorEl.classList.remove('hidden');
+
+        // Secours (V2.8) : le dernier CSV chargé avec succès, s'il y en a un, plutôt qu'un écran
+        // d'erreur bloquant - un visiteur qui revoit le planning (même un peu daté) reste bien
+        // mieux servi que face à une page vide. Le bandeau d'erreur habituel reste affiché SI ce
+        // secours lui-même échoue (première visite sans jamais de succès antérieur, ou
+        // localStorage indisponible).
+        let fallbackRows = null;
+        try { fallbackRows = JSON.parse(localStorage.getItem(CSV_FALLBACK_KEY)); } catch { /* rien d'exploitable */ }
+
+        if (Array.isArray(fallbackRows) && fallbackRows.length > 0) {
+            applyLoadedRows(fallbackRows);
+            loadingEl.classList.add('hidden');
+            showToast("Impossible de recharger le planning - affichage de la dernière version connue", { icon: Icons.alertTriangle('w-3.5 h-3.5 shrink-0 text-amber-300') });
+        } else {
+            loadingEl.classList.add('hidden');
+            errorEl.classList.remove('hidden');
+        }
     }
 }
 
@@ -3608,6 +3661,17 @@ async function initApp() {
         setupSeasonalTheme();
         setupThemeToggle();
 
+        // Numéro de version (CONFIG.APP_VERSION, voir config.js) : synchronise le titre d'onglet
+        // et le badge d'en-tête, tous deux figés en dur dans index.html à défaut d'un template -
+        // un seul bump à faire au bon endroit plutôt que trois copies à tenir manuellement à jour.
+        document.title = `2GELOG ${CONFIG.APP_VERSION} - UwU`;
+        const versionBadge = document.getElementById('app-version-badge');
+        if (versionBadge) versionBadge.textContent = `Planning ${CONFIG.APP_VERSION}`;
+
+        // Purge du cache TMDB expiré (V2.8, voir TMDBService.js) - auto-limitée à une fois par
+        // jour, jamais bloquant.
+        pruneTmdbCache();
+
         // PWA : coquille + dernier CSV connu mis en cache pour un fonctionnement hors-ligne
         // (voir sw.js). Ignoré silencieusement sur un navigateur qui ne supporte pas les
         // service workers - dégradation gracieuse, jamais bloquant.
@@ -3646,6 +3710,10 @@ async function initApp() {
         // écouteur délégué sur `document`, posé une fois ici plutôt que par chaque vue qui
         // affiche des vignettes (modale d'événement, "Aujourd'hui sur 2GETHER"...).
         initHighlightLightbox();
+        // Lecteur YouTube intégré (V2.9) pour un lien YouTube détecté tel quel dans les Notes
+        // complémentaires libres d'un événement (voir ModalView._renderNotesVideo) - même
+        // logique d'écouteur délégué unique que ci-dessus.
+        initInlineYouTubePlayers();
 
         // Délégation de clic sur la sidebar "Prochainement" : ouvre la modale
         // avec l'objet événement complet (pas de lookup global requis).

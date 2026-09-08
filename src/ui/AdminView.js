@@ -1,4 +1,5 @@
 import { StatsService } from '../services/StatsService.js';
+import { AdminIssuesService } from '../services/AdminIssuesService.js';
 import { escapeHtml } from '../utils/Html.js';
 import { formatMinutes, topN } from '../utils/Format.js';
 import { Icons } from './Icons.js';
@@ -122,6 +123,53 @@ function renderAnomaliesSection(anomalies, events = []) {
     `;
 }
 
+function renderIssueRow(issue) {
+    const detected = new Date(issue.detectedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return `
+        <div class="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <span class="shrink-0 text-amber-400">${Icons.alertTriangle('w-4 h-4')}</span>
+            <div class="min-w-0 flex-1">
+                <div class="text-xs font-bold text-slate-200">${escapeHtml(issue.message)}</div>
+                <div class="text-xxs text-slate-500">Détecté le ${detected}</div>
+            </div>
+            <button data-issue-dismiss data-issue-type="${escapeHtml(issue.type)}" data-issue-key="${escapeHtml(issue.key)}" title="Ignorer" aria-label="Ignorer ce problème" class="shrink-0 text-slate-500 hover:text-white text-xs px-1.5 py-0.5 rounded hover:bg-white/10 transition-all">✕</button>
+        </div>
+    `;
+}
+
+/**
+ * Panneau "Problèmes détectés en arrière-plan" (V2.8, voir AdminIssuesService.js) - distinct des
+ * anomalies de LIGNE CSV ci-dessus (celles-là bloquent la génération d'un événement ; celles-ci
+ * sont détectées à l'usage par un service tiers, ex: recherche TMDB infructueuse ou ambiguë pour
+ * un titre - voir TMDBService.fetchTmdbInfo). Section indépendante avec son propre cycle de
+ * rendu : ignorer une entrée ou tout effacer ne redessine QUE ce panneau (issues relues à chaque
+ * fois depuis AdminIssuesService, jamais figées) plutôt que toute la vue Admin - `events`/
+ * `anomalies` de renderAdminView n'ont pas besoin d'être reçus ici pour rester à jour.
+ * @param {HTMLElement} root - Wrapper vide dédié, injecté par renderAdminView.
+ */
+function mountIssuesPanel(root) {
+    function draw() {
+        const issues = AdminIssuesService.getAll();
+        if (issues.length === 0) { root.innerHTML = ''; return; }
+        root.innerHTML = `
+            <div class="glass-panel rounded-2xl p-5 space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                    <h3 class="flex items-center gap-2 text-sm font-black text-white">${Icons.alertTriangle('w-4 h-4 shrink-0 text-amber-400')}${issues.length} problème${issues.length > 1 ? 's' : ''} détecté${issues.length > 1 ? 's' : ''} en arrière-plan</h3>
+                    <button data-issues-clear class="text-2xs font-bold text-slate-400 hover:text-rose-300 transition-all">Tout effacer</button>
+                </div>
+                <div class="space-y-1.5">${issues.map(renderIssueRow).join('')}</div>
+            </div>
+        `;
+    }
+
+    root.addEventListener('click', (e) => {
+        if (e.target.closest('[data-issues-clear]')) { AdminIssuesService.clear(); draw(); return; }
+        const dismissBtn = e.target.closest('[data-issue-dismiss]');
+        if (dismissBtn) { AdminIssuesService.resolve(dismissBtn.dataset.issueType, dismissBtn.dataset.issueKey); draw(); }
+    });
+    draw();
+}
+
 /**
  * Rendu de la vue Admin (mode ?admin) : rapport d'anomalies + rétrospective complète
  * année par année, pour permettre l'analyse a posteriori (bilans annuels).
@@ -135,9 +183,10 @@ export function renderAdminView(container, events, anomalies = []) {
     const anomaliesHtml = renderAnomaliesSection(anomalies, events);
 
     if (years.length === 0) {
-        container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div class="text-center text-slate-500 py-24">Aucune donnée disponible.</div></div>`;
-        return;
+        container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div id="admin-issues-panel"></div><div class="text-center text-slate-500 py-24">Aucune donnée disponible.</div></div>`;
+    } else {
+        container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div id="admin-issues-panel"></div>${years.map(year => renderYearCard(year, byYear[year])).join('')}</div>`;
     }
 
-    container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}${years.map(year => renderYearCard(year, byYear[year])).join('')}</div>`;
+    mountIssuesPanel(container.querySelector('#admin-issues-panel'));
 }

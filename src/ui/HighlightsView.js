@@ -25,6 +25,25 @@ export function hasHighlightTag(event) {
 }
 
 /**
+ * URL de la meilleure miniature YouTube disponible pour `id`, avec repli automatique via
+ * `onerror` (V2.8) - `maxresdefault` (1280x720) n'existe que pour les vidéos qui ont vraiment un
+ * thumbnail haute résolution ; sinon YouTube répond une 404 (vérifié empiriquement : contrairement
+ * à une idée reçue, ce n'est PAS un succès HTTP avec un simple filler, donc `onerror` se déclenche
+ * bien) - `hqdefault` (480x360, quasi toujours disponible) sert alors de repli. Utilisé pour les
+ * vignettes réellement affichées en grand (rangée + cartes du carrousel) ; le fond flouté du
+ * carrousel (voir updateGalleryBackdrop) garde `hqdefault` directement - inutile de payer le coût
+ * d'une image plus lourde pour un calque qui sera de toute façon flouté à gros grain.
+ * @param {string} id
+ * @returns {{ src: string, fallback: string }}
+ */
+function youtubeThumbUrls(id) {
+    return {
+        src: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+        fallback: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
+    };
+}
+
+/**
  * Une valeur `@screen:` sans schéma (juste un nom de fichier, ex: "zevent-2026.png") est
  * résolue dans assets/img/highlights/ (voir son README.md et GUIDE_METADONNEES.md §11) - pour
  * ne pas obliger à coller une URL complète à chaque capture uploadée dans le repo. Une URL
@@ -63,12 +82,51 @@ export function hasHighlights(event) {
     return clipItems.length > 0 || screenUrls.length > 0;
 }
 
-function renderClipTile(id, format, sizeClass) {
-    const isShort = format === 'short';
+/**
+ * Vignette + bouton lecture pour UN identifiant YouTube isolé (V2.9), en dehors du système
+ * Highlights (#highlight + @clip:/@short:/@screen:) - utilisée quand un lien YouTube est trouvé
+ * TEL QUEL dans les Notes complémentaires libres d'un événement, souvent une rediffusion collée
+ * là sans passer par la métadonnée @clip: dédiée (voir ModalView._renderNotesVideo). Volontairement
+ * distinct du lecteur plein écran partagé (#highlight-lightbox) : cet événement n'est pas
+ * forcément taggé #highlight, la vidéo se lit directement sur place dans la modale déjà ouverte,
+ * pas besoin d'un second niveau de superposition. Clic géré par initInlineYouTubePlayers.
+ * @param {string} id
+ * @returns {string}
+ */
+export function renderInlineYouTubePlayer(id) {
+    const thumb = youtubeThumbUrls(id);
     return `
-        <button data-clip-id="${id}" data-clip-format="${format}" class="${sizeClass} shrink-0 snap-start text-left group" aria-label="Voir ${isShort ? 'le short' : 'le clip'} en plein écran">
+        <button type="button" data-inline-yt-id="${id}" class="relative block w-full aspect-video rounded-lg overflow-hidden border border-white/10 bg-black group" aria-label="Lire la vidéo YouTube">
+            <img src="${thumb.src}" onerror="this.onerror=null;this.src='${thumb.fallback}'" alt="" class="w-full h-full object-cover">
+            <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition-all">
+                <div class="w-10 h-10 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${PLAY_ICON}</div>
+            </div>
+        </button>`;
+}
+
+let inlineYtInitialized = false;
+
+/** Écouteur délégué (idempotent, comme initHighlightLightbox) pour les vignettes posées par
+ * renderInlineYouTubePlayer - un seul appel à faire une fois au démarrage (voir main.js), quel
+ * que soit le nombre de fois où la modale (ré)affiche une telle vignette. */
+export function initInlineYouTubePlayers() {
+    if (inlineYtInitialized) return;
+    inlineYtInitialized = true;
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-inline-yt-id]');
+        if (!btn) return;
+        const id = btn.dataset.inlineYtId;
+        btn.outerHTML = `<div class="relative w-full aspect-video rounded-lg overflow-hidden border border-white/10 bg-black"><iframe class="w-full h-full" src="https://www.youtube.com/embed/${id}?autoplay=1" title="Vidéo YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`;
+    });
+}
+
+function renderClipTile(id, format, sizeClass, index) {
+    const isShort = format === 'short';
+    const thumb = youtubeThumbUrls(id);
+    return `
+        <button data-highlight-index="${index}" data-clip-id="${id}" data-clip-format="${format}" class="${sizeClass} shrink-0 snap-start text-left group" aria-label="Voir ${isShort ? 'le short' : 'le clip'} en plein écran">
             <div class="relative ${isShort ? 'aspect-[9/16]' : 'aspect-video'} rounded-lg overflow-hidden border border-white/10 bg-black">
-                <img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="" class="w-full h-full object-cover">
+                <img src="${thumb.src}" onerror="this.onerror=null;this.src='${thumb.fallback}'" alt="" class="w-full h-full object-cover">
                 <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition-all">
                     <div class="w-8 h-8 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${PLAY_ICON}</div>
                 </div>
@@ -77,9 +135,9 @@ function renderClipTile(id, format, sizeClass) {
         </button>`;
 }
 
-function renderScreenTile(url, sizeClass) {
+function renderScreenTile(url, sizeClass, index) {
     return `
-        <button data-screen-url="${escapeHtml(url)}" class="${sizeClass} shrink-0 snap-start text-left group" aria-label="Voir la capture en plein écran">
+        <button data-highlight-index="${index}" data-screen-url="${escapeHtml(url)}" class="${sizeClass} shrink-0 snap-start text-left group" aria-label="Voir la capture en plein écran">
             <div class="relative aspect-video rounded-lg overflow-hidden border border-white/10 bg-black/20">
                 <img src="${escapeHtml(url)}" alt="Capture d'écran" class="w-full h-full object-cover" loading="lazy">
                 <div class="absolute inset-0 bg-black/0 group-hover:bg-black/25 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
@@ -105,12 +163,17 @@ export function renderHighlightsRow(event, { size = 'normal' } = {}) {
     if (clipItems.length === 0 && screenUrls.length === 0) return '';
     const w = TILE_WIDTH[size] || TILE_WIDTH.normal;
 
+    // data-highlight-index numérote CHAQUE vignette de la rangée (clips puis captures, même
+    // ordre que ci-dessous) : au clic, le lecteur plein écran relit toute la rangée via
+    // data-highlights-row pour construire le carrousel (voir initHighlightLightbox) plutôt que de
+    // ne connaître que l'unique vignette cliquée.
+    let index = 0;
     const tilesHtml = [
-        ...clipItems.map(({ id, format }) => renderClipTile(id, format, w[format])),
-        ...screenUrls.map(url => renderScreenTile(url, w.screen))
+        ...clipItems.map(({ id, format }) => renderClipTile(id, format, w[format], index++)),
+        ...screenUrls.map(url => renderScreenTile(url, w.screen, index++))
     ].join('');
 
-    return `<div class="flex gap-2 overflow-x-auto custom-scroll snap-x snap-mandatory pb-1">${tilesHtml}</div>`;
+    return `<div data-highlights-row class="flex gap-2 overflow-x-auto custom-scroll snap-x snap-mandatory pb-1">${tilesHtml}</div>`;
 }
 
 /**
@@ -130,14 +193,30 @@ export function enhanceHighlightTitles(root) {
 }
 
 // --- Visionneuse plein écran partagée (#highlight-lightbox, voir index.html) ---
+//
+// V2.8 : carrousel façon Instagram plutôt qu'un visionneur mono-élément - la carte active est au
+// centre en pleine taille, les cartes voisines apparaissent réduites/estompées de part et
+// d'autre (pagination par points + flèches). `galleryItems`/`galleryIndex` tiennent l'état du
+// carrousel actuellement ouvert (un seul à la fois, cohérent avec le lecteur partagé unique).
 
 let lightboxInitialized = false;
+let galleryItems = [];
+let galleryIndex = 0;
+// Éléments DOM PERSISTANTS d'une carte à l'autre (indexés comme galleryItems), construits une
+// seule fois par openLightboxGallery puis seulement repositionnés/restylés à la navigation - pas
+// régénérés à chaque clic. Nécessaire pour que les transitions CSS (transform/opacity) animent
+// réellement : un élément recréé de zéro à chaque clic (ancienne implémentation, `track.innerHTML
+// = ...` à chaque navigation) apparaît directement dans sa position finale, aucune transition ne
+// peut s'appliquer entre deux nœuds DOM différents.
+let galleryCardEls = [];
+let galleryActiveIndex = null; // Dernier index dont la carte a reçu le contenu "actif" (lecteur/plein format) - pour ne retirer ce contenu QUE de cette carte-là lors d'un saut, pas de toutes.
+let backdropCurrentIsA = true;
 
 /**
  * Écouteurs du lecteur plein écran partagé - idempotent (peut être appelé plusieurs fois sans
  * dupliquer les listeners), à appeler une fois au démarrage de l'app (voir main.js). Un seul
  * écouteur de clic DÉLÉGUÉ sur `document` plutôt qu'un par vue qui affiche des vignettes : ouvre
- * la visionneuse pour n'importe quel `[data-clip-id]`/`[data-screen-url]` cliqué où que ce soit
+ * le carrousel pour n'importe quelle rangée `[data-highlights-row]` cliquée où que ce soit
  * dans la page, sans qu'un nouvel appelant (TodayView, futur autre) ait besoin de rebrancher son
  * propre écouteur.
  */
@@ -147,17 +226,76 @@ export function initHighlightLightbox() {
 
     const overlay = document.getElementById('highlight-lightbox');
     document.getElementById('btn-close-highlight-lightbox').addEventListener('click', () => closeLightbox());
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLightbox(); });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isLightboxOpen()) closeLightbox();
+    document.getElementById('highlight-lightbox-stage').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closeLightbox();
     });
+    document.getElementById('btn-lightbox-prev').addEventListener('click', () => goToGalleryIndex(galleryIndex - 1));
+    document.getElementById('btn-lightbox-next').addEventListener('click', () => goToGalleryIndex(galleryIndex + 1));
+    document.addEventListener('keydown', (e) => {
+        if (!isLightboxOpen()) return;
+        if (e.key === 'Escape') closeLightbox();
+        else if (e.key === 'ArrowLeft') goToGalleryIndex(galleryIndex - 1);
+        else if (e.key === 'ArrowRight') goToGalleryIndex(galleryIndex + 1);
+    });
+    attachGallerySwipeHandlers();
 
     document.addEventListener('click', (e) => {
-        const clipBtn = e.target.closest('[data-clip-id]');
-        if (clipBtn) { openLightboxClip(clipBtn.dataset.clipId, clipBtn.dataset.clipFormat); return; }
-        const screenBtn = e.target.closest('[data-screen-url]');
-        if (screenBtn) openLightboxImage(screenBtn.dataset.screenUrl);
+        // Carte voisine (réduite) ou point de pagination cliqué dans le carrousel déjà ouvert :
+        // saute directement à cet élément plutôt que de re-parcourir prev/next un pas à la fois.
+        const goBtn = e.target.closest('[data-gallery-go]');
+        if (goBtn) { goToGalleryIndex(Number(goBtn.dataset.galleryGo)); return; }
+
+        const tile = e.target.closest('[data-highlight-index]');
+        if (!tile) return;
+        const row = tile.closest('[data-highlights-row]');
+        const items = row ? itemsFromRow(row) : [tileToItem(tile)];
+        openLightboxGallery(items, Number(tile.dataset.highlightIndex));
     });
+}
+
+// Seuil de déclenchement (V2.8) : assez grand pour ne jamais confondre un simple tap (ouvrir la
+// carte active en plein écran, cf. lecteur vidéo) avec un glisser, assez petit pour rester
+// naturel au pouce. Le ratio horizontal/vertical évite de déclencher une navigation sur un
+// scroll vertical accidentel (le carrousel lui-même ne défile pas verticalement, mais le doigt
+// peut légèrement dériver pendant un swipe).
+const SWIPE_THRESHOLD_PX = 50;
+const SWIPE_DIRECTION_RATIO = 1.5;
+
+/** Glisser tactile gauche/droite sur le carrousel (V2.8) - en plus des flèches/clavier/points
+ * déjà en place, plus naturel au doigt sur mobile (contexte principal d'usage de ce carrousel).
+ * `touchstart`/`touchend` plutôt que Pointer Events : seul le doigt (pas la souris/trackpad, où
+ * cliquer les cartes/flèches reste le geste naturel) doit déclencher un swipe ici. */
+function attachGallerySwipeHandlers() {
+    const track = document.getElementById('highlight-lightbox-track');
+    let startX = null;
+    let startY = null;
+
+    track.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) { startX = null; return; }
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+    }, { passive: true });
+
+    track.addEventListener('touchend', (e) => {
+        if (startX === null) return;
+        const touch = e.changedTouches[0];
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        startX = null;
+        startY = null;
+        if (Math.abs(dx) < SWIPE_THRESHOLD_PX || Math.abs(dx) < Math.abs(dy) * SWIPE_DIRECTION_RATIO) return;
+        goToGalleryIndex(galleryIndex + (dx < 0 ? 1 : -1));
+    }, { passive: true });
+}
+
+function tileToItem(tile) {
+    return tile.dataset.clipId
+        ? { type: 'clip', id: tile.dataset.clipId, format: tile.dataset.clipFormat }
+        : { type: 'screen', url: tile.dataset.screenUrl };
+}
+
+function itemsFromRow(row) {
+    return Array.from(row.querySelectorAll('[data-highlight-index]')).map(tileToItem);
 }
 
 export function isLightboxOpen() {
@@ -165,29 +303,204 @@ export function isLightboxOpen() {
 }
 
 /**
- * @param {string} format - 'video' (16:9, @clip:) ou 'short' (9:16, @short:). Embed natif
- * YouTube (youtube.com, pas youtube-nocookie.com) sur les deux formats.
+ * Ouvre le carrousel sur `items` (voir tileToItem pour la forme de chaque élément), centré sur
+ * `startIndex`. Une rangée d'un seul élément fonctionne aussi (flèches/points simplement absents).
+ * @param {Array<{type: 'clip', id: string, format: 'video'|'short'}|{type: 'screen', url: string}>} items
+ * @param {number} startIndex
  */
-export function openLightboxClip(id, format = 'video') {
-    const isShort = format === 'short';
-    const wrapperClass = isShort ? 'w-full max-w-xs mx-auto aspect-[9/16]' : 'w-full aspect-video';
-    document.getElementById('highlight-lightbox-content').innerHTML = `
-        <div class="${wrapperClass}">
-            <iframe class="w-full h-full rounded-xl" src="https://www.youtube.com/embed/${id}?autoplay=1" title="${isShort ? 'Short' : 'Clip'} YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-        </div>`;
+export function openLightboxGallery(items, startIndex = 0) {
+    galleryItems = items;
+    galleryIndex = Math.max(0, Math.min(items.length - 1, startIndex));
+    galleryActiveIndex = null;
+    buildGalleryTrack();
+    renderGalleryDots();
+    updateGalleryBackdrop(true);
+    updateGalleryLiveRegion();
     showLightbox();
 }
 
+/** Rétro-compatibilité : ouvre le carrousel avec un seul clip (pas de voisins). */
+export function openLightboxClip(id, format = 'video') {
+    openLightboxGallery([{ type: 'clip', id, format }], 0);
+}
+
+/** Rétro-compatibilité : ouvre le carrousel avec une seule capture (pas de voisins). */
 export function openLightboxImage(url) {
-    document.getElementById('highlight-lightbox-content').innerHTML =
-        `<img src="${escapeHtml(url)}" alt="Capture d'écran" class="max-w-full max-h-[85vh] object-contain rounded-xl">`;
-    showLightbox();
+    openLightboxGallery([{ type: 'screen', url }], 0);
+}
+
+function goToGalleryIndex(index) {
+    if (galleryItems.length === 0) return;
+    galleryIndex = (index + galleryItems.length) % galleryItems.length;
+    updateGalleryPositions();
+    renderGalleryDots();
+    updateGalleryBackdrop();
+    updateGalleryLiveRegion();
+}
+
+/** Annonce "Élément X sur Y" aux lecteurs d'écran (V2.8, voir #highlight-lightbox-live dans
+ * index.html) à chaque ouverture/navigation - le déplacement des cartes (transform CSS) n'est
+ * sinon perceptible que visuellement. Rien à annoncer pour une rangée d'un seul élément (pas de
+ * navigation possible, ce serait juste du bruit). */
+function updateGalleryLiveRegion() {
+    const live = document.getElementById('highlight-lightbox-live');
+    if (!live) return;
+    live.textContent = galleryItems.length > 1 ? `Élément ${galleryIndex + 1} sur ${galleryItems.length}` : '';
+}
+
+function galleryThumbUrl(item) {
+    return item.type === 'clip' ? `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg` : item.url;
+}
+
+/** Gabarit (taille + ratio) de la carte, adapté au type/format de l'élément plutôt qu'un
+ * cadre 16:9 unique imposé à tout : un short (9:16) reste vertical et étroit, un clip/capture
+ * (16:9) reste large - chacun garde son format naturel, comme dans la rangée de vignettes
+ * (voir TILE_WIDTH) plutôt que d'être forcé dans un cadre paysage commun. */
+function galleryCardFrameClass(item) {
+    if (item.type === 'clip' && item.format === 'short') return 'w-[min(42vw,340px)] aspect-[9/16]';
+    return 'w-[min(70vw,620px)] aspect-video';
+}
+
+/** Contenu d'une carte : lecteur vidéo/image plein format pour la carte active, simple vignette
+ * statique pour les cartes voisines (pas d'iframe YouTube chargée en arrière-plan). */
+function renderGalleryCardInner(item, isActive) {
+    if (item.type === 'clip') {
+        if (isActive) {
+            return `<iframe class="w-full h-full" src="https://www.youtube.com/embed/${item.id}?autoplay=1" title="${item.format === 'short' ? 'Short' : 'Clip'} YouTube" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+        }
+        const thumb = youtubeThumbUrls(item.id);
+        return `
+            <img src="${thumb.src}" onerror="this.onerror=null;this.src='${thumb.fallback}'" alt="" class="w-full h-full object-cover">
+            <div class="absolute inset-0 bg-black/35 flex items-center justify-center">
+                <div class="w-10 h-10 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${PLAY_ICON}</div>
+            </div>`;
+    }
+    return `<img src="${escapeHtml(item.url)}" alt="Capture d'écran" class="w-full h-full ${isActive ? 'object-contain' : 'object-cover'}">`;
+}
+
+/** Position/échelle/opacité d'une carte selon sa distance à la carte active (0 = active, centrée
+ * plein format ; ±1 = les deux voisines immédiates, rapprochées/réduites/estompées de part et
+ * d'autre façon coverflow, en partie CACHÉES derrière la carte active - comme la référence
+ * Instagram, plutôt que largement séparées ; au-delà, la carte reste hors champ). */
+function galleryCardTransform(offset) {
+    if (offset === 0) return { transform: 'translate(-50%,-50%) scale(1)', opacity: 1, zIndex: 30 };
+    const dir = offset > 0 ? 1 : -1;
+    // Le -50% recentre la carte (positionnée en left:50%/top:50%) ; le décalage de "pic" est
+    // exprimé en vw (relatif à la largeur de la fenêtre), pas en % (relatif à la largeur de LA
+    // CARTE ELLE-MÊME - mélangé au recentrage -50%, ce dernier donnait un résultat imprévisible
+    // selon le signe). 16vw suffit à faire "peek" une carte partiellement cachée derrière la
+    // carte active sans la rendre inaccessible au clic (sa portion visible, hors du recouvrement,
+    // reste cliquable - vérifié à la fois en desktop et en mobile ~390px).
+    if (Math.abs(offset) > 1) {
+        return { transform: `translate(calc(-50% + ${dir * 16}vw), -50%) scale(0.72)`, opacity: 0, zIndex: 10 };
+    }
+    return { transform: `translate(calc(-50% + ${dir * 16}vw), -50%) scale(0.72)`, opacity: 0.5, zIndex: 20 };
+}
+
+function applyGalleryCardStyle(el, offset) {
+    const isActive = offset === 0;
+    const t = galleryCardTransform(offset);
+    el.style.transform = t.transform;
+    el.style.opacity = String(t.opacity);
+    el.style.zIndex = String(t.zIndex);
+    el.style.pointerEvents = Math.abs(offset) > 1 ? 'none' : 'auto';
+    el.classList.toggle('border-white/15', isActive);
+    el.classList.toggle('border-white/5', !isActive);
+    el.classList.toggle('cursor-pointer', !isActive);
+    if (isActive) el.removeAttribute('data-gallery-go');
+    else el.setAttribute('data-gallery-go', el.dataset.galleryIndex);
+}
+
+/** Construit les cartes UNE FOIS pour le carrousel qui vient de s'ouvrir (voir
+ * openLightboxGallery) - positionnées sans transition pour ce premier rendu (rien à animer
+ * depuis un état précédent), la transition de la classe ne s'appliquant qu'aux navigations
+ * suivantes (voir updateGalleryPositions/goToGalleryIndex). */
+function buildGalleryTrack() {
+    const track = document.getElementById('highlight-lightbox-track');
+    if (!track) return;
+    track.innerHTML = '';
+    galleryCardEls = galleryItems.map((item, i) => {
+        const isActive = i === galleryIndex;
+        const el = document.createElement('div');
+        el.dataset.galleryIndex = String(i);
+        el.className = `absolute left-1/2 top-1/2 ${galleryCardFrameClass(item)} rounded-2xl overflow-hidden bg-black shadow-2xl border transition-[transform,opacity] duration-300 ease-out`;
+        el.style.transition = 'none';
+        // Contenu initial posé directement ici (vignette, ou lecteur plein format pour la carte de
+        // départ) - applyGalleryCardStyle ne touche qu'au positionnement/style, pas au contenu ;
+        // sans cette pose initiale, seules les DEUX cartes concernées par le premier appel à
+        // refreshGalleryActiveContent (ci-dessous) recevraient un contenu, toutes les autres
+        // cartes voisines resteraient vides.
+        el.innerHTML = renderGalleryCardInner(item, isActive);
+        applyGalleryCardStyle(el, i - galleryIndex);
+        track.appendChild(el);
+        return el;
+    });
+    galleryActiveIndex = galleryIndex;
+    // Force le navigateur à peindre la position ci-dessus AVANT de réactiver la transition -
+    // sans ce reflow forcé, le retrait de `transition:none` juste après repasserait par le même
+    // batch de style que la pose initiale et une navigation immédiatement suivante repartirait en
+    // l'animant depuis zéro (coin de l'écran) plutôt que depuis sa position actuelle.
+    void track.offsetWidth;
+    galleryCardEls.forEach(el => { el.style.transition = ''; });
+}
+
+/** Repositionne les cartes déjà en place (navigation dans un carrousel déjà ouvert) - anime via
+ * la transition CSS posée par buildGalleryTrack, aucune carte n'est recréée. */
+function updateGalleryPositions() {
+    galleryCardEls.forEach((el, i) => applyGalleryCardStyle(el, i - galleryIndex));
+    refreshGalleryActiveContent();
+}
+
+/** Bascule le contenu "actif" (lecteur vidéo plein format / image non recadrée) UNIQUEMENT entre
+ * l'ancienne et la nouvelle carte active - les autres gardent leur simple vignette statique
+ * inchangée, y compris après un saut de plusieurs crans (clic sur un point de pagination). */
+function refreshGalleryActiveContent() {
+    if (galleryActiveIndex === galleryIndex) return;
+    if (galleryActiveIndex !== null && galleryCardEls[galleryActiveIndex]) {
+        galleryCardEls[galleryActiveIndex].innerHTML = renderGalleryCardInner(galleryItems[galleryActiveIndex], false);
+    }
+    const activeEl = galleryCardEls[galleryIndex];
+    if (activeEl) activeEl.innerHTML = renderGalleryCardInner(galleryItems[galleryIndex], true);
+    galleryActiveIndex = galleryIndex;
+}
+
+/** Fond flouté (voir #highlight-lightbox-backdrop dans index.html) : deux calques superposés
+ * dont on bascule l'opacité en alternance pour un fondu enchaîné - `background-image` ne
+ * s'anime pas nativement en CSS, changer l'image d'un seul calque produirait un cut sec. */
+function updateGalleryBackdrop(instant = false) {
+    const item = galleryItems[galleryIndex];
+    if (!item) return;
+    const showEl = document.getElementById(backdropCurrentIsA ? 'highlight-lightbox-backdrop-b' : 'highlight-lightbox-backdrop-a');
+    const hideEl = document.getElementById(backdropCurrentIsA ? 'highlight-lightbox-backdrop-a' : 'highlight-lightbox-backdrop-b');
+    if (!showEl || !hideEl) return;
+    if (instant) { showEl.style.transition = 'none'; hideEl.style.transition = 'none'; }
+    showEl.style.backgroundImage = `url('${galleryThumbUrl(item)}')`;
+    showEl.style.opacity = '1';
+    hideEl.style.opacity = '0';
+    if (instant) {
+        void showEl.offsetWidth;
+        showEl.style.transition = '';
+        hideEl.style.transition = '';
+    }
+    backdropCurrentIsA = !backdropCurrentIsA;
+}
+
+function renderGalleryDots() {
+    const dots = document.getElementById('highlight-lightbox-dots');
+    if (!dots) return;
+    if (galleryItems.length <= 1) { dots.innerHTML = ''; return; }
+    dots.innerHTML = galleryItems.map((_, i) => `
+        <button data-gallery-go="${i}" aria-label="Aller à l'élément ${i + 1}" ${i === galleryIndex ? 'aria-current="true"' : ''} class="h-1.5 rounded-full transition-all ${i === galleryIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/30 hover:bg-white/50'}"></button>`
+    ).join('');
 }
 
 function showLightbox() {
     const overlay = document.getElementById('highlight-lightbox');
     overlay.classList.remove('hidden');
     overlay.classList.add('flex');
+    const hasMultiple = galleryItems.length > 1;
+    document.getElementById('btn-lightbox-prev').classList.toggle('hidden', !hasMultiple);
+    document.getElementById('btn-lightbox-next').classList.toggle('hidden', !hasMultiple);
 }
 
 export function closeLightbox() {
@@ -196,5 +509,20 @@ export function closeLightbox() {
     overlay.classList.remove('flex');
     // Décharge le contenu (iframe/img) pour couper net une éventuelle lecture vidéo, plutôt que
     // de la laisser tourner en arrière-plan derrière la modale/vue rouverte.
-    document.getElementById('highlight-lightbox-content').innerHTML = '';
+    document.getElementById('highlight-lightbox-track').innerHTML = '';
+    document.getElementById('highlight-lightbox-dots').innerHTML = '';
+    // Fond flouté remis à zéro (sans transition, la boîte est déjà masquée) pour ne pas laisser
+    // transparaître l'ancienne image un court instant à la prochaine ouverture.
+    ['highlight-lightbox-backdrop-a', 'highlight-lightbox-backdrop-b'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.transition = 'none';
+        el.style.opacity = '0';
+        el.style.backgroundImage = '';
+    });
+    backdropCurrentIsA = true;
+    galleryItems = [];
+    galleryIndex = 0;
+    galleryCardEls = [];
+    galleryActiveIndex = null;
 }
