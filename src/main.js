@@ -1298,18 +1298,24 @@ const PATCH_NOTES_HISTORY = [
             {
                 title: "🚀 Nouveautés",
                 items: [
-                    "🎬 Intégration TMDB : jaquette automatique dans la modale et les tuiles pour vos Soirées Film/Série quand aucune image n'est renseignée (priorité Image personnalisée > affiche TMDB > bannière par défaut), lien direct vers la fiche TMDB, vignettes et noms des épisodes affichés dans la modale d'une série. Tag @tmdb pour forcer manuellement une fiche si la recherche automatique se trompe ou ne trouve rien.",
-                    "🖼️ Modale d'événement repensée : l'affiche (personnalisée ou TMDB) devient le fond du bandeau titre/tags/icône plutôt qu'un bloc à part souvent mal recadré ; rappel réduit en icône cloche à côté du bouton copier le lien ; plateforme (ou durée à défaut) affichée dans l'espace resté vide jusque-là.",
-                    "🎠 Le lecteur plein écran des Highlights devient un vrai carrousel façon Instagram quand une session en a plusieurs : cartes voisines visibles en réduit de part et d'autre de celle affichée, fond flouté reprenant ses couleurs, navigation à la flèche/au clavier/par points avec des transitions fluides d'un clip à l'autre."
+                    "🎬 Intégration TMDB : jaquette automatique dans la modale et les tuiles pour vos Soirées Film/Série quand aucune image n'est renseignée (priorité Image personnalisée > affiche TMDB > bannière par défaut), synopsis + note et lien direct vers la fiche TMDB affichés dans la modale, vignettes et noms des épisodes pour une série. Tag @tmdb pour forcer manuellement une fiche si la recherche automatique se trompe ou ne trouve rien - avec repli automatique par recherche si cette fiche forcée ne répond plus (id supprimé/faute de frappe).",
+                    "🖼️ Modale d'événement repensée : l'affiche (personnalisée ou TMDB) devient le fond du bandeau titre/tags/icône plutôt qu'un bloc à part souvent mal recadré, avec un fondu doux quand l'affiche TMDB arrive après coup ; rappel réduit en icône cloche à côté du bouton copier le lien ; plateforme (ou durée à défaut, y compris la durée officielle TMDB pour un film pas encore vu) affichée dans l'espace resté vide jusque-là.",
+                    "🎠 Le lecteur plein écran des Highlights devient un vrai carrousel façon Instagram quand une session en a plusieurs : cartes voisines visibles en réduit de part et d'autre de celle affichée, fond flouté reprenant ses couleurs, navigation à la flèche/au clavier/par points/glisser du doigt avec des transitions fluides d'un clip à l'autre.",
+                    "🔗 Un lien YouTube collé directement dans les Notes complémentaires (souvent une rediffusion) est désormais détecté et transformé en lecteur vidéo intégré en un clic, sans avoir besoin de la métadonnée @clip: dédiée.",
+                    "🎞️ Fiche TMDB enrichie dans la modale (quand disponible) : genres, classification d'âge, bande-annonce intégrée, casting principal et fournisseurs de streaming (\"Disponible sur...\").",
+                    "📊 Pour une série suivie sur plusieurs semaines : barre de progression \"Épisode X/Y de la saison\" et liste des épisodes déjà couverts par les diffusions précédentes.",
+                    "🛰️ Secours hors-ligne : si le tableur ne répond plus, le dernier planning chargé avec succès reste affiché (avec un avertissement) plutôt qu'un écran d'erreur bloquant.",
+                    "🩺 Mode Admin : nouveau journal des problèmes TMDB détectés en arrière-plan (fiche introuvable, ambiguë, ou @tmdb: cassé), consultable et à ignorer/effacer au cas par cas."
                 ]
             },
             {
-                title: "🛠️ Corrections",
+                title: "🛠️ Corrections & optimisations",
                 items: [
                     "Une ligne de notes portant deux tags collés (ex: \"#GarticPhone #AmongUs\") n'en comptait qu'un seul.",
                     "Les épisodes datés d'une série (\"JJ/MM/AAAA : ...\") apparaissaient en double dans \"Notes complémentaires\", alors qu'ils sont déjà affichés dans le bloc \"Épisode(s)\" de chaque occurrence.",
                     "Le bloc \"Tags indexés\" restait visible (vide) dans la modale pour un événement n'en portant réellement aucun.",
-                    "Optimisation : le cache TMDB (localStorage) était entièrement relu à chaque tuile/carte affichée - désormais gardé en mémoire, sensible sur un planning de plusieurs centaines de sessions."
+                    "Le cache TMDB (localStorage) était entièrement relu à chaque tuile/carte affichée - désormais gardé en mémoire (sensible sur un planning de plusieurs centaines de sessions) et purgé de ses entrées expirées automatiquement.",
+                    "Miniatures YouTube (Highlights, bande-annonce) en meilleure résolution, avec repli automatique si la haute résolution n'existe pas pour une vidéo donnée."
                 ]
             }
         ]
