@@ -9,10 +9,7 @@ import { IcsExporter } from '../services/IcsExporter.js';
 import { Icons } from './Icons.js';
 import { showToast } from './Toast.js';
 import { renderAvatarInitials } from '../utils/Avatar.js';
-import { formatCountdown } from '../utils/Format.js';
-
-const REMINDER_IDLE_CLASS = "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200";
-const REMINDER_ACTIVE_CLASS = "bg-indigo-600/80 border-indigo-400 text-white";
+import { formatCountdown, formatMinutes } from '../utils/Format.js';
 
 // Lieu par défaut (voir EventGenerator) : la carte "Lieu" est masquée quand elle ne
 // contient rien de plus informatif que cette valeur par défaut.
@@ -57,6 +54,13 @@ export class ModalView {
         // une série (même titre répété sur plusieurs dates), pas seulement celle ouverte ici.
         // Demande la permission de notification au premier clic si besoin.
         document.getElementById('modal-reminder-btn').addEventListener('click', async (e) => {
+            // Capturé AVANT tout `await` : `Event.currentTarget` est remis à `null` par le
+            // navigateur une fois la phase de dispatch de l'événement terminée (dès le premier
+            // point de suspension asynchrone, même sur une Promise déjà résolue) - le lire APRÈS
+            // un await (comme c'était le cas juste avant `.classList.remove` plus bas) plantait
+            // silencieusement dès que ce chemin passait effectivement par un `await` (constaté
+            // avec la permission de notification déjà accordée).
+            const btn = e.currentTarget;
             if (!this._currentEventTitle) return;
             if (typeof Notification === 'undefined') {
                 window.alert("Les notifications ne sont pas prises en charge par ce navigateur.");
@@ -70,7 +74,6 @@ export class ModalView {
             this._applyReminderButtonStyle();
             // Petit tassement/rebond (V2.2) en plus du changement de couleur, pour un retour bien
             // visible au clic - voir @keyframes confirmPulse dans index.html.
-            const btn = e.currentTarget;
             btn.classList.remove('confirm-pulse');
             void btn.offsetWidth;
             btn.classList.add('confirm-pulse');
@@ -195,20 +198,12 @@ export class ModalView {
         }
 
         // Affiche/jaquette du film, de la série ou du jeu (@image de l'événement > affiche TMDB
-        // déjà en cache > bannière par défaut du type, voir resolveEventImage). Peut être
-        // remplacée un peu plus tard par une vraie affiche TMDB si pas encore en cache à cet
-        // instant précis - voir _renderTmdbInfo, même logique "placeholder puis enrichi" que le
-        // titre des clips YouTube (HighlightsView.js).
-        const posterContainer = document.getElementById('modal-poster-container');
-        const posterUrl = resolveEventImage(event);
-        if (posterUrl) {
-            const posterEl = document.getElementById('modal-event-poster');
-            posterEl.src = posterUrl;
-            posterEl.alt = `Affiche : ${event.title}`;
-            posterContainer.classList.remove('hidden');
-        } else {
-            posterContainer.classList.add('hidden');
-        }
+        // déjà en cache > bannière par défaut du type, voir resolveEventImage) - fond du bandeau
+        // d'en-tête (V2.7.1, voir #modal-header/#modal-header-scrim dans index.html), pas un
+        // bloc séparé. Peut être remplacée un peu plus tard par une vraie affiche TMDB si pas
+        // encore en cache à cet instant précis - voir _renderTmdbInfo, même logique "placeholder
+        // puis enrichi" que le titre des clips YouTube (HighlightsView.js).
+        this._setHeaderImage(resolveEventImage(event));
 
         // Lien externe (event.url résolu par EventGenerator : @url/@lien/@link de
         // l'événement, sinon celui par défaut du type ; ex: IMDB, Steam, chaîne...).
@@ -239,15 +234,37 @@ export class ModalView {
         document.getElementById('modal-event-host').innerHTML = `${renderAvatarInitials(this._currentEventHost)}<span class="group-hover:underline">${escapeHtml(this._currentEventHost)}</span>`;
         hostContainer.classList.remove('hidden');
 
+        // Plateforme (@plateforme) si renseignée, sinon Durée réelle en repli (V2.7.1) : plutôt
+        // que de laisser ce second emplacement de la grille vide à côté d'"Organisé par" quand
+        // @plateforme n'est pas renseigné (cas fréquent) - la durée est une info déjà connue
+        // (Durée Réelle du tableur, event.dur) et jusque-là affichée nulle part dans la modale
+        // elle-même. Un seul conteneur pour les deux cas (icône/libellé posés dynamiquement)
+        // plutôt que dupliquer la carte.
         const platformContainer = document.getElementById('modal-platform-container');
+        const platformLabel = document.getElementById('modal-platform-label');
+        const TV_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"></rect><line x1="8" y1="3" x2="12" y2="6"></line><line x1="16" y1="3" x2="12" y2="6"></line></svg>';
         if (event.meta?.plateforme) {
+            platformLabel.innerHTML = `${TV_ICON}Plateforme`;
             document.getElementById('modal-event-platform').innerText = event.meta.plateforme;
+            platformContainer.classList.remove('hidden');
+        } else if (event.dur > 0) {
+            platformLabel.innerHTML = `${Icons.clock('w-3 h-3')}Durée`;
+            document.getElementById('modal-event-platform').innerText = formatMinutes(event.dur);
             platformContainer.classList.remove('hidden');
         } else {
             platformContainer.classList.add('hidden');
         }
 
-        document.getElementById('modal-event-notes').innerText = event.notes || "Aucune note ou description pour cet événement.";
+        // Masqué entièrement (pas un texte de repli "Aucune note...") quand il n'y a réellement
+        // rien à montrer - un bloc vide n'apporte rien, contrairement aux autres cartes qui ont
+        // toutes une valeur par défaut significative (lieu, host...).
+        const notesContainer = document.getElementById('modal-notes-container');
+        if (event.notes) {
+            document.getElementById('modal-event-notes').innerText = event.notes;
+            notesContainer.classList.remove('hidden');
+        } else {
+            notesContainer.classList.add('hidden');
+        }
 
         this._renderHighlights(event);
 
@@ -256,14 +273,17 @@ export class ModalView {
         // notamment pour une série).
         this._applyReminderButtonStyle();
 
-        // Tags cliquables
+        // Tags cliquables - masqué entièrement (pas un texte de repli "Aucun tag") quand
+        // l'événement n'en a réellement aucun.
+        const tagsContainer = document.getElementById('modal-tags-container');
         const tagsBox = document.getElementById('modal-event-tags');
         if (event.tags && event.tags.length > 0) {
             tagsBox.innerHTML = event.tags.map(t =>
                 `<button data-tag="${escapeHtml(t)}" class="text-2xs bg-white/5 border border-white/5 text-indigo-400 hover:text-white hover:bg-indigo-600 px-2 py-0.5 rounded-md transition-all">#${escapeHtml(t)}</button>`
             ).join('');
+            tagsContainer.classList.remove('hidden');
         } else {
-            tagsBox.innerHTML = `<span class="text-slate-600 text-xs italic">Aucun tag</span>`;
+            tagsContainer.classList.add('hidden');
         }
 
         this._renderSimilarEvents(event);
@@ -363,21 +383,28 @@ export class ModalView {
         enhanceHighlightTitles(row);
     }
 
-    /** Applique le style actif/inactif au bouton de rappel selon l'abonnement de CE titre. */
+    /**
+     * Applique le style actif/inactif au bouton de rappel selon l'abonnement de CE titre
+     * (V2.7.1 : simple icône cloche dans le bandeau d'en-tête, plus un bouton pleine largeur -
+     * voir index.html). Couleur (indigo si actif) plutôt qu'une icône différente (cloche
+     * barrée...) : cohérent avec les autres boutons du bandeau, qui ne changent jamais de forme
+     * selon leur état, seulement de teinte.
+     */
     static _applyReminderButtonStyle() {
         const btn = document.getElementById('modal-reminder-btn');
         const isActive = ReminderService.isSet(this._currentEventTitle);
-        btn.className = `w-full flex items-center justify-center gap-2 text-xxs font-bold px-3 py-2 rounded-lg border transition-all ${isActive ? REMINDER_ACTIVE_CLASS : REMINDER_IDLE_CLASS}`;
-        const bellIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><path d="M12 3a5 5 0 0 0-5 5v2c0 3-1.5 4.5-2 5h14c-0.5-0.5-2-2-2-5V8a5 5 0 0 0-5-5z"></path><path d="M9.5 19a2.5 2.5 0 0 0 5 0"></path></svg>';
-        btn.innerHTML = `${bellIcon}${isActive ? 'Rappel activé' : "M'envoyer un rappel"}`;
+        btn.className = `p-1.5 rounded-lg transition-all ${isActive ? 'text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20' : 'text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10'}`;
+        btn.innerHTML = Icons.bell('w-4 h-4');
 
-        // Compte à rebours (V2.3, QOL #2) : seulement si CETTE occurrence précise est encore à
-        // venir - une fois passée, "dans -3h" n'aurait aucun sens (une prochaine diffusion,
-        // si elle existe, sera visible via le panneau Rappels plutôt qu'ici).
-        const countdownEl = document.getElementById('modal-reminder-countdown');
+        // Compte à rebours (V2.3, QOL #2), seulement si CETTE occurrence précise est encore à
+        // venir ("dans -3h" n'aurait sinon aucun sens) - plus de place pour l'afficher en dur une
+        // fois le bouton réduit à une icône : replié dans le title/aria-label (info au survol).
         const countdown = this._currentEvent ? formatCountdown(this._currentEvent.start) : null;
-        countdownEl.textContent = countdown ? `⏱️ ${countdown}` : '';
-        countdownEl.classList.toggle('hidden', !countdown);
+        const label = isActive
+            ? `Rappel activé${countdown ? ' — ' + countdown : ''} (cliquer pour désactiver)`
+            : "M'envoyer un rappel avant le début de cet événement";
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
     }
 
     /**
@@ -406,14 +433,7 @@ export class ModalView {
         const apply = (info) => {
             if (this._currentEventId !== eventId || !info) return;
             this._toggleModalLink('modal-event-tmdb', sanitizeUrl(info.tmdbUrl));
-            if (!event.hasCustomImage && info.imageUrl) {
-                const imageUrl = sanitizeUrl(info.imageUrl);
-                if (imageUrl) {
-                    const posterEl = document.getElementById('modal-event-poster');
-                    posterEl.src = imageUrl;
-                    document.getElementById('modal-poster-container').classList.remove('hidden');
-                }
-            }
+            if (!event.hasCustomImage && info.imageUrl) this._setHeaderImage(sanitizeUrl(info.imageUrl));
             if (info.mediaType === 'tv' && info.id) {
                 this._renderEpisodeThumbnails(event, episodeText, info.id);
             }
@@ -466,6 +486,16 @@ export class ModalView {
         const cached = getCachedSeasonEpisodes(tmdbId, season);
         if (cached) { apply(cached); return; }
         fetchTmdbSeason(tmdbId, season).then(apply);
+    }
+
+    /**
+     * Pose (ou retire) l'image de fond du bandeau d'en-tête (V2.7.1, voir #modal-header dans
+     * index.html) - `url` est déjà passée par sanitizeUrl/resolveEventImage par l'appelant, pas
+     * re-vérifiée ici. Chaîne vide/`null` : retire simplement le style, le bandeau retombe alors
+     * sur son fond plein uni (bg-[var(--surface-2)], déjà posé en dessous dans la classe HTML).
+     */
+    static _setHeaderImage(url) {
+        document.getElementById('modal-header').style.backgroundImage = url ? `url('${url}')` : '';
     }
 
     /** Affiche/masque un des boutons-lien optionnels de la modale (fiche/salon/sondage). */

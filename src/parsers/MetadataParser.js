@@ -32,9 +32,15 @@ export class MetadataParser {
             const trimmedLine = line.trim();
             if (!trimmedLine) return;
 
-            // 1. Détection des Tags (#tag)
+            // 1. Détection des Tags (#tag) - plusieurs tags sur une même ligne ("#GarticPhone
+            // #AmongUs", habitude courante en copiant-collant depuis Discord) sont acceptés en
+            // plus du format "un par ligne" documenté : on découpe sur CHAQUE "#" plutôt que de
+            // ne retirer que le premier, sans quoi tout le reste de la ligne (second "#" inclus)
+            // finissait avalé comme un unique tag. Un "#" isolé ne produit aucune entrée vide
+            // (filter Boolean) ; une ligne à un seul tag garde exactement son comportement
+            // d'avant (aucun "#" supplémentaire à découper).
             if (trimmedLine.startsWith("#")) {
-                tagSet.add(trimmedLine.slice(1).trim().toLowerCase());
+                trimmedLine.split("#").map(t => t.trim().toLowerCase()).filter(Boolean).forEach(t => tagSet.add(t));
                 return;
             }
 
