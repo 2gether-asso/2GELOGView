@@ -9,6 +9,17 @@
     <link rel="apple-touch-icon" href="./assets/img/pwa/icon-192.png">
     <meta name="theme-color" content="#161b22">
 
+    <script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.min.js" crossorigin="anonymous"></script>
+    <script>
+        Sentry.init({
+            dsn: "https://f54e05b3ecaa47e497299818ad036b1e@glitchtip.matiboux.com/1",
+            release: "2gelogview@2.7",
+            environment: "production",
+            tracesSampleRate: 0.05,
+            autoSessionTracking: false,
+        });
+    </script>
+
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
