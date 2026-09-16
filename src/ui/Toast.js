@@ -15,14 +15,22 @@ export function showToast(message, { icon = '', duration = 2200 } = {}) {
     if (!container) return;
 
     const el = document.createElement('div');
-    el.className = 'toast-item flex items-center gap-2 bg-[var(--surface-2)]/95 border border-white/10 text-slate-100 text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl pointer-events-auto';
+    // `relative overflow-hidden` (V2.10) : accueille la barre de progression ci-dessous, posée en
+    // `absolute` tout en bas du toast - visualise le temps restant avant disparition automatique
+    // plutôt qu'une disparition sans prévenir.
+    el.className = 'toast-item relative overflow-hidden flex items-center gap-2 bg-[var(--surface-2)]/95 border border-white/10 text-slate-100 text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl pointer-events-auto';
     el.setAttribute('role', 'status');
-    el.innerHTML = `${icon}<span>${message}</span>`;
+    el.innerHTML = `${icon}<span>${message}</span><div class="toast-progress absolute left-0 bottom-0 h-0.5 bg-white/40" style="width:100%; transition: width ${duration}ms linear;"></div>`;
     container.appendChild(el);
 
     // Classe ajoutée sur la frame suivante (pas immédiatement) : sans ce décalage, le navigateur
-    // peut fusionner l'état initial et l'état "in" en un seul rendu et sauter la transition.
-    requestAnimationFrame(() => el.classList.add('toast-in'));
+    // peut fusionner l'état initial et l'état "in" en un seul rendu et sauter la transition. Même
+    // raison pour lancer la barre de progression vers 0 ici plutôt qu'à la création de l'élément.
+    requestAnimationFrame(() => {
+        el.classList.add('toast-in');
+        const progress = el.querySelector('.toast-progress');
+        if (progress) progress.style.width = '0%';
+    });
 
     setTimeout(() => {
         el.classList.remove('toast-in');

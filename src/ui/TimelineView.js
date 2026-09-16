@@ -38,6 +38,13 @@ function renderMonthRail(year, monthsWithData) {
  * segment de trait qui s'enchaîne naturellement d'un nœud au suivant (bordure de la colonne
  * d'axe, pas un positionnement absolu à coordonnées magiques). */
 function axisNode(dotHtml, contentHtml) {
+    // `content-visibility: auto` a été essayé ici (V2.10) pour alléger le rendu d'une Frise
+    // chargée, puis RETIRÉ (V3.0) : le repère "Aujourd'hui" atterrissait alors visiblement hors
+    // champ (~26px sous le bord visible, constaté à l'usage) au scrollIntoView({block:'center'})
+    // de l'ouverture - le navigateur calcule la position cible à partir de la hauteur ESTIMÉE
+    // (contain-intrinsic-size) des nœuds encore hors écran, pas leur vraie hauteur une fois
+    // rendus, ce qui décale suffisamment le calcul pour ce cas précis. La justesse du repère prime
+    // sur ce gain de perf.
     return `
         <div class="flex gap-3">
             <div class="flex flex-col items-center w-5 shrink-0">

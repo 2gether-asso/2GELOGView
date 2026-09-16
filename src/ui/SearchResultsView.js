@@ -10,24 +10,45 @@ function shortDate(iso) {
     return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
+/**
+ * Titre échappé (V2.10) avec la portion correspondant à la recherche en cours mise en évidence -
+ * scanner une longue liste de résultats est plus rapide quand on VOIT tout de suite où/pourquoi
+ * chaque ligne a matché, pas juste qu'elle est dans la liste. Simple sous-chaîne (pas la même
+ * logique de correspondance que SearchEngine.js, qui tolère aussi les tags/hôte/notes) : reste un
+ * "au moins ça" utile même quand le VRAI match se trouve ailleurs (rien à surligner alors, sans
+ * casser l'affichage). Échappe séparément avant/match/après plutôt que d'injecter `<mark>` dans du
+ * HTML déjà échappé, pour ne jamais réintroduire de faille XSS via le titre d'un événement.
+ */
+function highlightMatch(text, query) {
+    const q = (query || '').trim();
+    if (!q) return escapeHtml(text);
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return escapeHtml(text);
+    const before = text.slice(0, idx);
+    const match = text.slice(idx, idx + q.length);
+    const after = text.slice(idx + q.length);
+    return `${escapeHtml(before)}<mark class="bg-indigo-500/30 text-indigo-200 rounded-sm">${escapeHtml(match)}</mark>${escapeHtml(after)}`;
+}
+
 /** Gabarit compact (voir renderCompactRow dans EventCardTemplate.js, même principe/mêmes
  * classes) pour la vue Recherche/Frise : ces deux vues ne passaient jusqu'ici jamais par
  * renderEventCard et ignoraient donc html.density-compact - le mode Compact n'avait aucun
  * effet dessus. 2 lignes plutôt que la carte complète (pas de notes/tags/affiche en fond). */
-function renderCompactSearchRow(e, idx, readableDate, view) {
+function renderCompactSearchRow(e, idx, readableDate, view, query = '') {
     const iconSrc = getIconSrc(e);
     const episode = escapeHtml(getEpisodeLabel(e));
     const hostRaw = e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST;
     const host = escapeHtml(hostRaw);
     const title = escapeHtml(e.title);
+    const titleHtml = highlightMatch(e.title, query);
     const type = escapeHtml(e.type || 'Événement');
 
     return `
-        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden cursor-pointer ${e.isCanceled ? 'opacity-30 line-through' : ''}" style="border-left: 3px solid ${e.col};" data-idx="${idx}" ${umamiCardAttrs(e, view)}>
+        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden cursor-pointer ${e.isCanceled ? 'opacity-60' : ''}" style="border-left: 3px solid ${e.col};" data-idx="${idx}" ${umamiCardAttrs(e, view)}>
             <img src="${iconSrc}" alt="" class="w-6 aspect-[8/9] rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
-                    <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
+                    <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0 ${e.isCanceled ? 'line-through' : ''}" title="${title}">${titleHtml}</span>
                     <span class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</span>
                 </div>
                 <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
@@ -41,11 +62,11 @@ function renderCompactSearchRow(e, idx, readableDate, view) {
     `;
 }
 
-export function renderRow(e, idx, view = 'search') {
+export function renderRow(e, idx, view = 'search', query = '') {
     const dateObj = new Date(e.start);
     if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
         const readableDateCompact = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
-        return renderCompactSearchRow(e, idx, readableDateCompact, view);
+        return renderCompactSearchRow(e, idx, readableDateCompact, view, query);
     }
     const iconSrc = getIconSrc(e);
     const readableDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
@@ -55,6 +76,7 @@ export function renderRow(e, idx, view = 'search') {
     const host = escapeHtml(hostRaw);
     const duration = formatMinutes(e.dur);
     const title = escapeHtml(e.title);
+    const titleHtml = highlightMatch(e.title, query);
     const type = escapeHtml(e.type || 'Événement');
     const notes = escapeHtml(e.notes);
     const posterUrl = resolveEventImage(e);
@@ -73,7 +95,7 @@ export function renderRow(e, idx, view = 'search') {
             <img src="${iconSrc}" alt="" class="relative z-10 w-14 aspect-[8/9] rounded-lg object-cover shrink-0" onerror="this.style.display='none'">
             <div class="relative z-10 flex-1 min-w-0 space-y-1.5">
                 <div class="flex items-start justify-between gap-2 flex-wrap">
-                    <div class="text-sm font-bold text-slate-100 ${e.isCanceled ? 'line-through opacity-50' : ''}" title="${title}">${title}</div>
+                    <div class="text-sm font-bold text-slate-100 ${e.isCanceled ? 'line-through opacity-50' : ''}" title="${title}">${titleHtml}</div>
                     <div class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${readableDate}${e.heure ? ' · ' + e.heure + escapeHtml(getOvernightSuffix(e)) : ''}</div>
                 </div>
                 <div class="flex flex-wrap gap-1.5 text-xxs">
@@ -110,12 +132,13 @@ export function groupByTitle(events) {
  * d'être) : icône/padding réduits, badges secondaires (durée cumulée, nouvelles, lieu, hôte,
  * tags) retirés pour ne garder que l'essentiel - toujours dépliable pour retrouver le détail
  * complet de chaque occurrence. */
-function renderCompactGroupRow(group, indexOf, view) {
+function renderCompactGroupRow(group, indexOf, view, query = '') {
     const sorted = [...group].sort((a, b) => a.start.localeCompare(b.start));
     const first = sorted[0];
     const iconSrc = getIconSrc(first);
     const canceledCount = group.filter(e => e.isCanceled).length;
     const title = escapeHtml(first.title);
+    const titleHtml = highlightMatch(first.title, query);
     const type = escapeHtml(first.type || 'Événement');
 
     const occurrencesHtml = sorted.map(e => {
@@ -135,7 +158,7 @@ function renderCompactGroupRow(group, indexOf, view) {
                 <img src="${iconSrc}" alt="" class="w-6 aspect-[8/9] rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
-                        <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
+                        <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${titleHtml}</span>
                         <span class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${shortDate(sorted[0].start)} → ${shortDate(sorted[sorted.length - 1].start)}</span>
                     </div>
                     <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
@@ -158,9 +181,9 @@ function renderCompactGroupRow(group, indexOf, view) {
  * ligne résumant le total (occurrences, durée cumulée, plage de dates), dépliable pour
  * voir chaque date individuellement et l'ouvrir dans la modale.
  */
-export function renderGroupRow(group, indexOf, view = 'search') {
+export function renderGroupRow(group, indexOf, view = 'search', query = '') {
     if (typeof document !== 'undefined' && document.documentElement.classList.contains('density-compact')) {
-        return renderCompactGroupRow(group, indexOf, view);
+        return renderCompactGroupRow(group, indexOf, view, query);
     }
     const sorted = [...group].sort((a, b) => a.start.localeCompare(b.start));
     const first = sorted[0];
@@ -176,6 +199,7 @@ export function renderGroupRow(group, indexOf, view = 'search') {
     const hostRaw = first.meta?.host || first.meta?.orga || CONFIG.DEFAULT_HOST;
     const host = escapeHtml(hostRaw);
     const title = escapeHtml(first.title);
+    const titleHtml = highlightMatch(first.title, query);
     const type = escapeHtml(first.type || 'Événement');
 
     // Une ligne "hebdo"/série unique génère des notes identiques sur toutes ses instances ;
@@ -221,7 +245,7 @@ export function renderGroupRow(group, indexOf, view = 'search') {
                 <img src="${iconSrc}" alt="" class="relative z-10 w-14 aspect-[8/9] rounded-lg object-cover shrink-0" onerror="this.style.display='none'">
                 <div class="relative z-10 flex-1 min-w-0 space-y-1.5">
                     <div class="flex items-start justify-between gap-2 flex-wrap">
-                        <div class="text-sm font-bold text-slate-100" title="${title}">${title}</div>
+                        <div class="text-sm font-bold text-slate-100" title="${title}">${titleHtml}</div>
                         <div class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0 whitespace-nowrap">${shortDate(sorted[0].start)} → ${shortDate(sorted[sorted.length - 1].start)}</div>
                     </div>
                     <div class="flex flex-wrap gap-1.5 text-xxs">
@@ -275,7 +299,7 @@ export function wireGroupToggle(container) {
  *   bouton data-search-order-toggle, le tri lui-même reste fait par l'appelant (main.js) sur
  *   searchResultsCache, comme pour la Frise (voir TimelineView.js data-timeline-order-toggle).
  */
-export function renderSearchResults(container, events, order = 'asc') {
+export function renderSearchResults(container, events, order = 'asc', query = '') {
     if (!events || events.length === 0) {
         container.innerHTML = renderEmptyState({
             illustration: EmptyIllustrations.search('w-16 h-16'),
@@ -291,7 +315,7 @@ export function renderSearchResults(container, events, order = 'asc') {
     })();
 
     const rowsHtml = groupByTitle(events)
-        .map(group => group.length > 1 ? renderGroupRow(group, indexOf, 'search') : renderRow(group[0], indexOf(group[0]), 'search'))
+        .map(group => group.length > 1 ? renderGroupRow(group, indexOf, 'search', query) : renderRow(group[0], indexOf(group[0]), 'search', query))
         .join('');
 
     container.innerHTML = `

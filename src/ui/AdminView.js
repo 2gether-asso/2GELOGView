@@ -1,5 +1,6 @@
 import { StatsService } from '../services/StatsService.js';
 import { AdminIssuesService } from '../services/AdminIssuesService.js';
+import { forceRewarmTmdbCache, getTmdbSourceStats } from '../services/TMDBService.js';
 import { escapeHtml } from '../utils/Html.js';
 import { formatMinutes, topN } from '../utils/Format.js';
 import { Icons } from './Icons.js';
@@ -171,6 +172,111 @@ function mountIssuesPanel(root) {
 }
 
 /**
+ * Panneau "Cache TMDB (Grist)" (V2.9) : bouton Admin pour forcer un remplissage complet du cache
+ * partagé côté n8n/Grist (voir forceRewarmTmdbCache dans TMDBService.js) - sans lui, ce cache ne
+ * se peuple qu'organiquement au fil des visites (une recherche déclenchée seulement quand QUELQU'UN
+ * ouvre/prefetch ce titre précis). Même schéma auto-contenu que mountIssuesPanel (son propre root +
+ * draw()), mais l'état affiché ici (en cours/terminé/résultat) est purement local à cette fonction
+ * - il ne survit pas à un rechargement de page, contrairement au journal d'AdminIssuesService.
+ * @param {HTMLElement} root - Wrapper vide dédié, injecté par renderAdminView.
+ * @param {Array<Object>} events - Tous les événements du dépôt (non filtrés).
+ */
+// Trois portées distinctes (V2.9) plutôt qu'un unique bouton "tout" : une fois les fiches déjà
+// correctes en cache (Grist + local), rafraîchir aussi les saisons à chaque fois gâche des appels
+// TMDB pour rien - et inversement, ne corriger QUE des fiches (ex: après un correctif de titre)
+// ne doit pas rouvrir des saisons déjà bonnes. Voir le paramètre `scope` de forceRewarmTmdbCache.
+const REWARM_SCOPES = {
+    all: {
+        label: 'Tout recharger',
+        icon: Icons.refresh('w-3 h-3 shrink-0'),
+        confirm: "Forcer une recherche TMDB pour TOUS les titres Film/Série du planning, puis leurs saisons ? Ça peut prendre plusieurs minutes et solliciter fortement le proxy n8n/TMDB."
+    },
+    fiches: {
+        label: 'Fiches uniquement',
+        icon: Icons.film('w-3 h-3 shrink-0'),
+        confirm: "Forcer une recherche TMDB pour chaque titre (sans toucher aux saisons déjà en cache) ?"
+    },
+    seasons: {
+        label: 'Saisons uniquement',
+        icon: Icons.tv('w-3 h-3 shrink-0'),
+        confirm: "Rafraîchir les épisodes de saison des séries déjà en cache (aucune nouvelle recherche de fiche, aucun appel TMDB supplémentaire pour ça) ?"
+    }
+};
+
+function rewarmResultText(scope, result) {
+    if (scope === 'seasons') {
+        const skipped = result.seasonsSkippedNoFiche > 0 ? ` (${result.seasonsSkippedNoFiche} série(s) ignorée(s), pas encore de fiche en cache local)` : '';
+        return `Terminé : ${result.seasonsFound}/${result.seasonsTotal} saison(s) rafraîchie(s)${skipped}.`;
+    }
+    if (scope === 'fiches') {
+        return `Terminé : ${result.fichesFound}/${result.fichesTotal} fiche(s) trouvée(s).`;
+    }
+    return `Terminé : ${result.fichesFound}/${result.fichesTotal} fiche(s) trouvée(s), ${result.seasonsFound}/${result.seasonsTotal} saison(s).`;
+}
+
+function mountTmdbCachePanel(root, events) {
+    let running = false;
+    let runningScope = null;
+    let progress = null; // { phase: 'fiches'|'seasons', done, total }
+    let lastScope = null;
+    let result = null;
+
+    function draw() {
+        const statusHtml = running
+            ? `<div class="text-xs text-slate-400">${progress ? `${progress.phase === 'fiches' ? 'Fiches' : 'Saisons'} : ${progress.done} / ${progress.total}` : 'Démarrage...'}</div>`
+            : result
+                ? `<div class="text-xs text-slate-400">${rewarmResultText(lastScope, result)}</div>`
+                : '';
+
+        const buttonsHtml = Object.entries(REWARM_SCOPES).map(([scope, def]) => `
+            <button data-tmdb-rewarm data-scope="${scope}" ${running ? 'disabled' : ''} class="inline-flex items-center gap-1.5 text-2xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg transition-all">
+                ${running && runningScope === scope ? 'En cours...' : `${def.icon}${def.label}`}
+            </button>
+        `).join('');
+
+        // Compteur Grist-hit vs vrai-appel-TMDB (V2.10, voir getTmdbSourceStats dans
+        // TMDBService.js) : repose sur un champ `_source` optionnel que le proxy n8n peut renvoyer
+        // - tant qu'il n'est pas ajouté côté n8n, tout retombe dans "inconnu", ce qui reste un
+        // signal utile en soi (rappelle que ce diagnostic n'est pas encore câblé côté serveur).
+        const stats = getTmdbSourceStats();
+        const statsHtml = `<div class="text-3xs text-slate-500">Depuis ce chargement de page : ${stats.grist} via Grist, ${stats.tmdb} appel(s) TMDB direct, ${stats.unknown} source inconnue${stats.unknown > 0 ? ' (le proxy n8n ne renvoie pas encore de champ `_source`)' : ''}.</div>`;
+
+        root.innerHTML = `
+            <div class="glass-panel rounded-2xl p-5 space-y-2">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <h3 class="flex items-center gap-2 text-sm font-black text-white">${Icons.film('w-4 h-4 shrink-0 text-sky-400')}Cache TMDB (Grist)</h3>
+                    <div class="flex items-center gap-1.5 flex-wrap">${buttonsHtml}</div>
+                </div>
+                <p class="text-xxs text-slate-500">Relance une recherche TMDB pour les titres Film/Série du planning (même déjà en cache localement) et alimente le cache partagé côté n8n/Grist. "Saisons uniquement" réutilise les fiches déjà en cache local, sans nouvel appel de recherche. Peut prendre plusieurs minutes sur un gros planning.</p>
+                ${statsHtml}
+                ${statusHtml}
+            </div>
+        `;
+    }
+
+    root.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-tmdb-rewarm]');
+        if (!btn || running) return;
+        const scope = btn.dataset.scope;
+        if (!window.confirm(REWARM_SCOPES[scope].confirm)) return;
+
+        running = true;
+        runningScope = scope;
+        progress = null;
+        result = null;
+        draw();
+
+        result = await forceRewarmTmdbCache(events, (p) => { progress = p; draw(); }, { scope });
+        lastScope = scope;
+        running = false;
+        runningScope = null;
+        draw();
+    });
+
+    draw();
+}
+
+/**
  * Rendu de la vue Admin (mode ?admin) : rapport d'anomalies + rétrospective complète
  * année par année, pour permettre l'analyse a posteriori (bilans annuels).
  * @param {HTMLElement} container
@@ -183,10 +289,11 @@ export function renderAdminView(container, events, anomalies = []) {
     const anomaliesHtml = renderAnomaliesSection(anomalies, events);
 
     if (years.length === 0) {
-        container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div id="admin-issues-panel"></div><div class="text-center text-slate-500 py-24">Aucune donnée disponible.</div></div>`;
+        container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div id="admin-issues-panel"></div><div id="admin-tmdb-cache-panel"></div><div class="text-center text-slate-500 py-24">Aucune donnée disponible.</div></div>`;
     } else {
-        container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div id="admin-issues-panel"></div>${years.map(year => renderYearCard(year, byYear[year])).join('')}</div>`;
+        container.innerHTML = `<div class="space-y-6 max-w-5xl mx-auto">${anomaliesHtml}<div id="admin-issues-panel"></div><div id="admin-tmdb-cache-panel"></div>${years.map(year => renderYearCard(year, byYear[year])).join('')}</div>`;
     }
 
     mountIssuesPanel(container.querySelector('#admin-issues-panel'));
+    mountTmdbCachePanel(container.querySelector('#admin-tmdb-cache-panel'), events);
 }

@@ -290,6 +290,20 @@ Si vous n'avez pas d'accès en écriture au repo, [imgbb.com](https://imgbb.com)
 alternative fiable : upload anonyme, lien direct **permanent** (contrairement à Discord) — dans
 ce cas, collez l'**URL complète** (`https://...`) plutôt qu'un simple nom de fichier.
 
+### Signaler une rediffusion (`#redif`)
+
+Le tag `#redif` sur la ligne affiche une petite étiquette "Rediffusion" sur la tuile/carte de
+l'événement (même principe que `#highlight` ci-dessus, juste un indicateur visuel) :
+
+```
+#redif
+```
+
+Indépendant du lien YouTube collé dans les Notes complémentaires (§ 3.d) : un lien YouTube
+brut dans les Notes est automatiquement transformé en lecteur intégré *que la ligne porte ce
+tag ou non* — `#redif` sert uniquement à signaler visuellement la session comme une redif,
+pas à déclencher le lecteur.
+
 ## 12. Fiches TMDB (Film/Série)
 
 Pour tout événement de catégorie Film/Série (`Soirée Film`, `Soirée Série`, et `Hors Prog` qui

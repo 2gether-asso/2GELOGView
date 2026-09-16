@@ -3,20 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2GELOG V2.7 - UwU</title>
+    <title>2GELOG V3.0 - UwU</title>
     <link rel="icon" type="image/png" href="./assets/img/icon.png">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="apple-touch-icon" href="./assets/img/pwa/icon-192.png">
     <meta name="theme-color" content="#161b22">
 
-    <script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.min.js" crossorigin="anonymous"></script>
+    <!-- Preconnect (V2.10) : établit tôt (DNS+TLS) la connexion vers les hôtes externes les plus
+         sollicités une fois l'app démarrée (affiches/casting TMDB, CSV du planning, proxy n8n) -
+         sans attendre la toute première requête réelle vers chacun pour payer ce coût. -->
+    <link rel="preconnect" href="https://image.tmdb.org">
+    <link rel="preconnect" href="https://docs.google.com">
+    <link rel="preconnect" href="https://n8n.matiboux.com">
+
+    <!-- `defer` (V2.10) : Sentry n'est qu'un traceur d'erreurs, pas un script nécessaire au rendu
+         - avant, en tout premier dans <head> et SANS defer/async, il bloquait le parsing de TOUT
+         le reste de la page (y compris FullCalendar/Tailwind juste en dessous) le temps de
+         télécharger + exécuter tout le bundle Sentry. `defer` sort le SDK du chemin critique -
+         mais `defer` n'a AUCUN effet sur un <script> inline SANS `src` (le second ci-dessous
+         s'exécuterait alors immédiatement, avant que le SDK différé n'ait fini de charger, d'où
+         un "Sentry is not defined" constaté à l'usage) : l'init est donc repoussée à
+         DOMContentLoaded, garanti postérieur à l'exécution de tout script `defer`. -->
+    <script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.min.js" crossorigin="anonymous" defer></script>
     <script>
-        Sentry.init({
-            dsn: "https://f54e05b3ecaa47e497299818ad036b1e@glitchtip.matiboux.com/1",
-            release: "2gelogview@2.7",
-            environment: "production",
-            tracesSampleRate: 0.05,
-            autoSessionTracking: false,
+        document.addEventListener('DOMContentLoaded', () => {
+            Sentry.init({
+                dsn: "https://f54e05b3ecaa47e497299818ad036b1e@glitchtip.matiboux.com/1",
+                release: "2gelogview@3.0",
+                environment: "production",
+                tracesSampleRate: 0.05,
+                autoSessionTracking: false,
+            });
         });
     </script>
 
@@ -110,7 +127,10 @@
 
         .glass-panel { background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border); }
         .glass-card { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.04); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
-        .glass-card:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); }
+        /* `transform: scale()` (V2.10) plutôt qu'un changement de taille/marge : composé par le
+           GPU, ne déclenche ni recalcul de mise en page ni de backdrop-filter (voir Mode
+           Performance plus bas) même répété sur des centaines de cartes en vue Recherche/Frise. */
+        .glass-card:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 10px 34px 0 rgba(0, 0, 0, 0.4); transform: scale(1.008); }
 
         /* Thème clair (V2.2, bascule manuelle) : #btn-toggle-theme dans l'en-tête, persisté en
            localStorage (voir setupThemeToggle() dans main.js) - indépendant du thème SAISONNIER
@@ -144,7 +164,7 @@
         }
         html[data-theme="light"] body { background: radial-gradient(circle at 50% 0%, #ffffff 0%, var(--bg-deep) 70%) !important; }
         html[data-theme="light"] .glass-card { background: rgba(15, 23, 42, 0.025); border-color: rgba(15, 23, 42, 0.07); }
-        html[data-theme="light"] .glass-card:hover { background: rgba(15, 23, 42, 0.05); border-color: rgba(99, 102, 241, 0.35); box-shadow: 0 8px 24px 0 rgba(15, 23, 42, 0.1); }
+        html[data-theme="light"] .glass-card:hover { background: rgba(15, 23, 42, 0.05); border-color: rgba(99, 102, 241, 0.35); box-shadow: 0 10px 26px 0 rgba(15, 23, 42, 0.12); transform: scale(1.008); }
         html[data-theme="light"] header { background: rgba(255, 255, 255, 0.75) !important; }
         /* FullCalendar (vues Mois/Semaine/Planning) : sa propre feuille de style dense (voir plus
            bas dans ce bloc <style>) est entièrement pensée pour le fond sombre (bordures/texte en
@@ -171,6 +191,30 @@
         html[data-theme="light"] [class~="text-slate-400"] { color: #5b6472 !important; }
         html[data-theme="light"] [class~="text-slate-500"] { color: #78818f !important; }
         html[data-theme="light"] [class~="text-slate-600"] { color: #9aa2ad !important; }
+
+        /* Badges d'accent (V2.10, ex: statuts, "✨ Highlights", "↻ Rediffusion", genres TMDB...) -
+           les teintes claires (300/400) choisies pour ressortir sur le fond très sombre de l'appli
+           deviennent quasi illisibles une fois posées sur leur pastille de fond à peine teintée
+           (bg-COLEUR-500/10) elle-même posée sur un fond CLAIR en thème clair (constaté : ratio de
+           contraste ~1.3:1 mesuré sur le badge "Rediffusion", très en dessous du minimum WCAG AA
+           de 4.5:1). Assombri vers un ~700 de la même teinte plutôt que de toucher l'opacité du
+           fond : garde l'identité de couleur (rouge=highlight, cyan=redif...) tout en redevenant
+           lisible sur clair. Voir l'exception `.has-poster` plus bas pour les mêmes badges posés
+           sur une affiche/photo plutôt que sur le fond de l'appli. */
+        html[data-theme="light"] [class~="text-indigo-200"] { color: #4338ca !important; }
+        html[data-theme="light"] [class~="text-indigo-300"] { color: #4338ca !important; }
+        html[data-theme="light"] [class~="text-indigo-400"] { color: #3730a3 !important; }
+        html[data-theme="light"] [class~="text-rose-200"] { color: #be123c !important; }
+        html[data-theme="light"] [class~="text-rose-300"] { color: #be123c !important; }
+        html[data-theme="light"] [class~="text-rose-400"] { color: #9f1239 !important; }
+        html[data-theme="light"] [class~="text-amber-300"] { color: #b45309 !important; }
+        html[data-theme="light"] [class~="text-amber-400"] { color: #92400e !important; }
+        html[data-theme="light"] [class~="text-emerald-300"] { color: #047857 !important; }
+        html[data-theme="light"] [class~="text-emerald-400"] { color: #065f46 !important; }
+        html[data-theme="light"] [class~="text-sky-400"] { color: #0369a1 !important; }
+        html[data-theme="light"] [class~="text-cyan-300"] { color: #0e7490 !important; }
+        html[data-theme="light"] [class~="text-pink-200"] { color: #be185d !important; }
+
         html[data-theme="light"] [class~="bg-white/5"] { background-color: rgba(15, 23, 42, 0.035) !important; }
         html[data-theme="light"] [class~="bg-white/10"] { background-color: rgba(15, 23, 42, 0.06) !important; }
         html[data-theme="light"] [class~="bg-white/15"] { background-color: rgba(15, 23, 42, 0.09) !important; }
@@ -191,6 +235,19 @@
         html[data-theme="light"] .has-poster [class~="text-slate-200"] { color: #e2e8f0 !important; }
         html[data-theme="light"] .has-poster [class~="text-slate-300"] { color: #cbd5e1 !important; }
         html[data-theme="light"] .has-poster [class~="text-slate-400"] { color: #94a3b8 !important; }
+        html[data-theme="light"] .has-poster [class~="text-indigo-200"] { color: #c7d2fe !important; }
+        html[data-theme="light"] .has-poster [class~="text-indigo-300"] { color: #a5b4fc !important; }
+        html[data-theme="light"] .has-poster [class~="text-indigo-400"] { color: #818cf8 !important; }
+        html[data-theme="light"] .has-poster [class~="text-rose-200"] { color: #fecdd3 !important; }
+        html[data-theme="light"] .has-poster [class~="text-rose-300"] { color: #fda4af !important; }
+        html[data-theme="light"] .has-poster [class~="text-rose-400"] { color: #fb7185 !important; }
+        html[data-theme="light"] .has-poster [class~="text-amber-300"] { color: #fcd34d !important; }
+        html[data-theme="light"] .has-poster [class~="text-amber-400"] { color: #fbbf24 !important; }
+        html[data-theme="light"] .has-poster [class~="text-emerald-300"] { color: #6ee7b7 !important; }
+        html[data-theme="light"] .has-poster [class~="text-emerald-400"] { color: #34d399 !important; }
+        html[data-theme="light"] .has-poster [class~="text-sky-400"] { color: #38bdf8 !important; }
+        html[data-theme="light"] .has-poster [class~="text-cyan-300"] { color: #67e8f9 !important; }
+        html[data-theme="light"] .has-poster [class~="text-pink-200"] { color: #fbcfe8 !important; }
 
         /* Micro-interaction globale (V2.2) : un léger tassement au clic sur n'importe quel
            bouton natif de l'appli donne un retour tactile immédiat, sans avoir à l'ajouter
@@ -293,6 +350,34 @@
         @keyframes skeletonShimmer {
             0% { background-position: 200% 0; }
             100% { background-position: -200% 0; }
+        }
+
+        /* Interrupteur "Masquer les terminés" (V3.0, voir #btn-toggle-hide-completed) - même
+           transition douce que le reste de l'app plutôt qu'un changement d'état sec. */
+        #btn-toggle-hide-completed { transition: background-color 200ms ease; }
+        #btn-toggle-hide-completed span { transition: transform 200ms ease, background-color 200ms ease; }
+        #btn-toggle-hide-completed[aria-checked="true"] { background-color: rgba(99, 102, 241, 0.6); border-color: rgba(129, 140, 248, 0.6); }
+        #btn-toggle-hide-completed[aria-checked="true"] span { transform: translateX(1rem); background-color: #fff; }
+
+        /* Crossfade+rotation lune/soleil (V2.10, voir #btn-toggle-theme) - transitions désactivées
+           d'un coup via prefers-reduced-motion comme le reste des animations de l'app. */
+        .theme-icon { opacity: 1; transform: rotate(0deg) scale(1); }
+        .theme-icon.theme-icon-hidden { opacity: 0; transform: rotate(-90deg) scale(0.5); pointer-events: none; }
+        @media (prefers-reduced-motion: no-preference) {
+            .theme-icon { transition: opacity 300ms ease, transform 300ms ease; }
+        }
+
+        /* Effet Ken Burns (V2.10, zoom lent en va-et-vient) sur une image de fond statique - donne
+           un peu de vie à l'en-tête de la modale (voir #modal-header-bg-a/b) et au Kiosque (voir
+           .kiosk-poster dans KioskView.js) sans dépendre d'un GIF/vidéo. `alternate infinite` :
+           va-et-vient continu plutôt qu'un zoom qui saute au maximum puis recommence sec.
+           `transform-origin: center` implicite suffit ici (bg-cover déjà centrée). */
+        @media (prefers-reduced-motion: no-preference) {
+            .kenburns-slow { animation: kenburnsSlow 20s ease-in-out infinite alternate; }
+        }
+        @keyframes kenburnsSlow {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.08); }
         }
 
         /* Anneau de focus clavier à la marque (V2.2) plutôt que l'anneau bleu par défaut du
@@ -597,12 +682,22 @@
     <div id="seasonal-particles" aria-hidden="true"></div>
 
     <header class="shrink-0 border-b border-white/5 bg-[#161b22]/40 backdrop-blur-xl flex flex-wrap items-center justify-between gap-3 px-3 sm:px-6 py-2.5 z-40 shadow-lg shadow-black/10">
-        <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center space-x-4 cursor-pointer shrink-0">
-            <div id="header-status-dot" class="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></div>
-            <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
-                2GELOG <span id="app-version-badge" class="hidden sm:inline text-indigo-400 font-bold text-2xs bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V2.7</span>
-                <span id="seasonal-badge" class="hidden font-bold text-2xs px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
-            </h1>
+        <div class="flex items-center space-x-3 shrink-0">
+            <!-- Actualisation légère (V2.10) : point de statut devenu un vrai bouton, distinct du
+                 logo juste à côté - un clic relance juste une resynchro du tableur (loadData en
+                 mode "quiet", voir main.js), SANS réinitialiser filtres/recherche/vue comme le
+                 fait le logo (goHome). Séparé du logo plutôt qu'imbriqué dedans (comme avant) :
+                 un élément interactif dans un autre est un anti-pattern d'accessibilité, et les
+                 deux gestes ont des conséquences différentes qui méritent des cibles séparées. -->
+            <button id="btn-quick-refresh" type="button" title="Actualiser le planning (sans réinitialiser les filtres)" aria-label="Actualiser le planning" class="shrink-0 rounded-full p-1 -m-1 hover:bg-white/10 transition-all">
+                <span id="header-status-dot" class="block h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse"></span>
+            </button>
+            <div id="btn-go-home" role="button" tabindex="0" aria-label="Retour à l'accueil" title="Retour à l'accueil : réinitialise les filtres, la recherche et la vue" class="flex items-center cursor-pointer">
+                <h1 class="text-sm font-black tracking-wider text-slate-100 uppercase">
+                    2GELOG <span id="app-version-badge" class="hidden sm:inline text-indigo-400 font-bold text-2xs bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 normal-case tracking-normal ml-1">Planning V3.0</span>
+                    <span id="seasonal-badge" class="hidden font-bold text-2xs px-2 py-0.5 rounded border normal-case tracking-normal ml-1"></span>
+                </h1>
+            </div>
         </div>
 
         <!-- Regroupée en zones (Vues / Réglages / Export / Perso), séparées par un fin liseré sur
@@ -675,6 +770,13 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><circle cx="9" cy="6" r="2"></circle><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="15" cy="12" r="2"></circle><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="7" cy="18" r="2"></circle></svg>
                 <span class="hidden sm:inline">Confortable</span>
             </button>
+            <!-- Mode focus (V3.0) : replie/déplie les DEUX panneaux latéraux (filtres + tableau de
+                 bord) d'un seul clic, plutôt que de devoir replier chacun séparément pour une vue
+                 Planning/Frise sans distraction. -->
+            <button id="btn-toggle-focus-mode" aria-pressed="false" title="Mode focus : masquer les deux panneaux latéraux" aria-label="Activer le mode focus" class="flex items-center gap-1.5 text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M3 12h4"></path><path d="M17 12h4"></path><path d="M12 3v4"></path><path d="M12 17v4"></path></svg>
+                <span class="hidden sm:inline">Focus</span>
+            </button>
             <label for="theme-select" class="sr-only">Thème saisonnier</label>
             <select id="theme-select" title="Choisir le thème saisonnier (par défaut : automatique selon la date)" class="text-xxs font-bold text-slate-400 hover:text-white hover:bg-white/10 pl-2 pr-1 py-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
                 <option value="auto">🎨 Auto</option>
@@ -695,9 +797,14 @@
                  ci-dessus (celui-ci ne fait que TEINTER le fond sombre, il ne l'inverse jamais) -
                  voir setupThemeToggle() dans main.js. Icône seule (titre en aria-label) comme le
                  reste des boutons compacts de l'en-tête. -->
-            <button id="btn-toggle-theme" title="Basculer le thème clair/sombre" aria-label="Basculer le thème clair/sombre" class="flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 p-1.5 rounded-lg border border-white/5 bg-white/5 transition-all">
-                <svg id="theme-toggle-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
-                <svg id="theme-toggle-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="hidden w-4 h-4 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line><line x1="4.6" y1="4.6" x2="6.8" y2="6.8"></line><line x1="17.2" y1="17.2" x2="19.4" y2="19.4"></line><line x1="4.6" y1="19.4" x2="6.8" y2="17.2"></line><line x1="17.2" y1="6.8" x2="19.4" y2="4.6"></line></svg>
+            <!-- Icônes en crossfade+rotation (V2.10) plutôt qu'une bascule instantanée `hidden` :
+                 les deux SVG restent superposés (`absolute` dans ce bouton `relative` de taille
+                 fixe) et transitionnent opacité+rotation via .theme-icon/.theme-icon-hidden (voir
+                 index.html plus haut) - `hidden` ne peut pas s'animer (aucun état intermédiaire),
+                 d'où ce changement de mécanique plutôt qu'un simple ajout de classe CSS. -->
+            <button id="btn-toggle-theme" title="Basculer le thème clair/sombre" aria-label="Basculer le thème clair/sombre" class="relative flex items-center justify-center w-7 h-7 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg border border-white/5 bg-white/5 transition-all">
+                <svg id="theme-toggle-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="theme-icon absolute w-4 h-4 shrink-0" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
+                <svg id="theme-toggle-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="theme-icon theme-icon-hidden absolute w-4 h-4 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line><line x1="4.6" y1="4.6" x2="6.8" y2="6.8"></line><line x1="17.2" y1="17.2" x2="19.4" y2="19.4"></line><line x1="4.6" y1="19.4" x2="6.8" y2="17.2"></line><line x1="17.2" y1="6.8" x2="19.4" y2="4.6"></line></svg>
             </button>
 
             <!-- Outils d'organisateur (admin/kiosque/discord) : regroupés derrière un seul menu
@@ -797,6 +904,19 @@
                         </button>
                     </div>
                 </div>
+                <!-- Bascule "Masquer les terminés" (V3.0) : traitée comme un filtre à part entière
+                     (pas une préférence durable façon Mode Compact) - incluse dans anyFilterActive
+                     et remise à zéro par "✕ Annuler les filtres"/le logo, comme catégorie/type/
+                     tag/organisateur juste en dessous. -->
+                <div class="flex items-center justify-between gap-2 py-3">
+                    <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
+                        Masquer les terminés
+                    </span>
+                    <button id="btn-toggle-hide-completed" type="button" role="switch" aria-checked="false" aria-label="Masquer les sessions déjà terminées" title="N'afficher que ce qui reste à venir ou en cours" class="relative w-9 h-5 rounded-full bg-white/10 border border-white/10 transition-all shrink-0">
+                        <span class="absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-slate-400 transition-all"></span>
+                    </button>
+                </div>
                 <div class="flex flex-col gap-2 py-3">
                     <div class="flex items-center justify-between gap-2">
                         <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
@@ -822,10 +942,20 @@
                     <div id="filter-types-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3">
-                    <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
-                        Organisateurs
-                    </span>
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="flex items-center gap-1.5 font-extrabold text-xxs uppercase tracking-wider text-slate-400 shrink-0">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-slate-500" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
+                            Organisateurs
+                        </span>
+                        <!-- "Mes sessions" (V3.0) : mémorise le nom d'organisateur une fois (prompt
+                             au premier clic, voir setupMyHostFilter dans main.js), puis filtre
+                             directement dessus à chaque clic suivant - sans devoir le retrouver/
+                             recliquer dans la liste ci-dessous à chaque visite. -->
+                        <button id="btn-my-sessions" title="Filtrer sur mes propres sessions" aria-label="Filtrer sur mes sessions" class="inline-flex items-center gap-1 text-2xs font-bold text-indigo-300 hover:text-white px-1.5 py-0.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 hover:bg-indigo-500/20 transition-all shrink-0">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M4 20l2-5h12l2 5z"></path></svg>
+                            Moi
+                        </button>
+                    </div>
                     <div id="filter-hosts-container" class="flex gap-1.5 flex-wrap"></div>
                 </div>
                 <div class="flex flex-col gap-2 py-3 last:pb-0">
@@ -856,10 +986,15 @@
                  qui les a ouverts - peu découvrable (retour utilisateur : personne ne pensait à
                  recliquer dessus pour "fermer"). Affordance explicite unique, partagée par les 4
                  vues plutôt que dupliquée dans chacune - voir applyViewButtonStyles dans main.js
-                 pour l'affichage/masquage. -->
-            <button id="btn-close-secondary-view" title="Retour au calendrier" aria-label="Retour au calendrier" class="hidden absolute top-3 right-3 z-20 flex items-center gap-1.5 text-xxs font-bold text-slate-300 hover:text-white bg-[var(--surface-2-90)] hover:bg-white/10 border border-white/10 px-3 py-1.5 rounded-lg shadow-lg backdrop-blur-md transition-all">
+                 pour l'affichage/masquage. Libellé masqué en dessous de sm (V2.9) : la Frise
+                 démarre auto-scrollée sur "Aujourd'hui" dès l'ouverture sur mobile (voir
+                 justOpened dans main.js), donc ce bouton flottant peut atterrir directement
+                 au-dessus d'une carte dès le premier écran - en icône seule (même logique que les
+                 boutons d'en-tête, voir #app-version-badge plus haut) il recouvre beaucoup moins
+                 le texte de la carte en dessous qu'avec son libellé complet. -->
+            <button id="btn-close-secondary-view" title="Retour au calendrier" aria-label="Retour au calendrier" class="hidden absolute top-3 right-3 z-20 flex items-center gap-1.5 text-xxs font-bold text-slate-300 hover:text-white bg-[var(--surface-2-90)] hover:bg-white/10 border border-white/10 px-2 py-1.5 sm:px-3 rounded-lg shadow-lg backdrop-blur-md transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
-                Retour au calendrier
+                <span class="hidden sm:inline">Retour au calendrier</span>
             </button>
             <div id="calendar" class="w-full min-h-full"></div>
             <div id="search-results" class="hidden w-full h-full overflow-y-auto custom-scroll pr-1"></div>
@@ -1037,8 +1172,8 @@
                      cette image, `background-image` ne s'anime pas nativement en CSS - un cut sec
                      là où un fondu enchaîné est bien plus doux (même technique que le fond flouté
                      du carrousel Highlights, voir #highlight-lightbox-backdrop). -->
-                <div id="modal-header-bg-a" class="absolute inset-0 bg-cover bg-center opacity-0 transition-opacity duration-500 ease-out" aria-hidden="true"></div>
-                <div id="modal-header-bg-b" class="absolute inset-0 bg-cover bg-center opacity-0 transition-opacity duration-500 ease-out" aria-hidden="true"></div>
+                <div id="modal-header-bg-a" class="absolute inset-0 bg-cover bg-center opacity-0 transition-opacity duration-500 ease-out kenburns-slow" aria-hidden="true"></div>
+                <div id="modal-header-bg-b" class="absolute inset-0 bg-cover bg-center opacity-0 transition-opacity duration-500 ease-out kenburns-slow" aria-hidden="true"></div>
                 <div id="modal-header-scrim" class="absolute inset-0 bg-black/50 pointer-events-none" aria-hidden="true"></div>
                 <div class="relative flex items-start space-x-3 min-w-0">
                     <!-- Pas de cadre (border) ni d'ombre propre : l'icône a sa propre couleur de
@@ -1210,17 +1345,34 @@
                 <div id="modal-similar-events" class="flex flex-col gap-1.5"></div>
             </div>
 
+            <!-- Squelette de chargement TMDB (V2.10) : affiché SEULEMENT quand aucune fiche n'est
+                 encore en cache (ni fraîche, ni même stale-utilisable) au moment d'ouvrir la
+                 modale - un vrai aller-retour réseau va suivre, voir ModalView._renderTmdbInfo.
+                 Évite l'apparition brute du bloc résumé une fois la réponse arrivée (aucun signal
+                 "ça charge" entre-temps jusque-là). Jamais affiché en même temps que le résumé
+                 réel (voir _resetTmdbBlocks/_renderTmdbSummary, qui se chargent de l'un ou
+                 l'autre). -->
+            <div id="modal-tmdb-skeleton" class="hidden flex-col space-y-2 bg-black/20 p-3 rounded-xl border border-white/5">
+                <div class="flex items-center gap-1.5">
+                    <div class="skeleton-block h-4 w-10 rounded-md"></div>
+                    <div class="skeleton-block h-4 w-16 rounded-md"></div>
+                    <div class="skeleton-block h-4 w-14 rounded-md"></div>
+                </div>
+                <div class="skeleton-block skeleton-line w-3-4"></div>
+                <div class="skeleton-block skeleton-line w-1-2"></div>
+            </div>
+
             <!-- Résumé TMDB (synopsis + note, V2.8) : posé/masqué par ModalView._renderTmdbInfo en
                  même temps que le bouton "Voir sur TMDB" ci-dessous (même condition : fiche
                  trouvée) - donne un aperçu directement dans la modale plutôt que d'obliger à
                  quitter l'app pour savoir de quoi ça parle. -->
             <div id="modal-tmdb-summary" class="hidden flex-col space-y-2 bg-black/20 p-3 rounded-xl border border-white/5">
                 <div class="flex items-center gap-1.5 flex-wrap">
-                    <span id="modal-tmdb-rating" class="hidden items-center gap-1 w-fit text-xxs font-black text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-md"></span>
+                    <span id="modal-tmdb-rating" class="hidden items-center gap-1 w-fit text-xxs font-black text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded"></span>
                     <!-- Classification d'âge (V2.9, ex: "16", "-12") : posée seulement si le proxy
                          n8n la renvoie - voir GUIDE_METADONNEES.md §12 pour l'action "search"/
                          "details" étendue nécessaire côté n8n. -->
-                    <span id="modal-tmdb-certification" class="hidden items-center text-xxs font-black text-slate-300 bg-white/10 border border-white/10 px-1.5 py-0.5 rounded-md"></span>
+                    <span id="modal-tmdb-certification" class="hidden items-center text-xxs font-black text-slate-300 bg-white/10 border border-white/10 px-1.5 py-0.5 rounded"></span>
                     <div id="modal-tmdb-genres" class="hidden flex-wrap gap-1"></div>
                 </div>
                 <p id="modal-tmdb-overview" class="text-slate-300 text-xs leading-relaxed line-clamp-4"></p>
@@ -1471,6 +1623,10 @@
             <div id="highlight-lightbox-backdrop" class="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
                 <div id="highlight-lightbox-backdrop-a" class="absolute inset-0 bg-cover bg-center scale-125 opacity-0 transition-opacity duration-500 ease-out" style="filter:blur(60px) brightness(0.35) saturate(1.15);"></div>
                 <div id="highlight-lightbox-backdrop-b" class="absolute inset-0 bg-cover bg-center scale-125 opacity-0 transition-opacity duration-500 ease-out" style="filter:blur(60px) brightness(0.35) saturate(1.15);"></div>
+                <!-- Vignette (V2.10) : assombrit les bords du fond flouté pour mieux faire ressortir
+                     la carte centrale du carrousel - statique (pas besoin de crossfade, au-dessus
+                     des deux couches quel que soit le clip actif). -->
+                <div class="absolute inset-0" style="background: radial-gradient(circle at center, transparent 35%, rgba(0,0,0,0.55) 100%);"></div>
             </div>
             <button id="btn-lightbox-prev" title="Précédent" aria-label="Élément précédent" class="absolute left-2 sm:left-6 z-40 p-2 rounded-full bg-black/40 hover:bg-black/60 text-white transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>

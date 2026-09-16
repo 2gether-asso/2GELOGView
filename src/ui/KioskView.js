@@ -14,8 +14,14 @@ function renderTile(e, big = false) {
     const posterUrl = resolveEventImage(e);
     const bgStyle = posterUrl ? `background-image:url('${posterUrl}')` : `background: linear-gradient(160deg, ${e.col}40, ${e.col}0d)`;
     const sizeClass = big ? 'w-64 aspect-[3/4]' : 'w-40 aspect-[3/4]';
+    // Le fond (kenburns-slow, voir index.html) vit dans une couche INTERNE séparée plutôt que
+    // directement sur cette carte (V2.10) : le zoom lent ne doit affecter que l'image, pas la
+    // bordure/les coins arrondis de la tuile elle-même (qui zoomeraient aussi si l'animation
+    // était posée ici, `overflow-hidden` ci-dessous rogne proprement le dépassement de la couche
+    // interne zoomée).
     return `
-        <div class="${sizeClass} shrink-0 relative rounded-xl overflow-hidden border border-white/10 bg-cover bg-center shadow-lg shadow-black/40" style="${bgStyle}">
+        <div class="${sizeClass} shrink-0 relative rounded-xl overflow-hidden border border-white/10 shadow-lg shadow-black/40">
+            <div class="absolute inset-0 bg-cover bg-center kenburns-slow" style="${bgStyle}"></div>
             ${!posterUrl ? `<img src="${getIconSrc(e)}" alt="" class="absolute inset-0 w-full h-full object-cover opacity-50">` : ''}
             <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent"></div>
             <div class="absolute inset-x-0 bottom-0 p-3 space-y-1">

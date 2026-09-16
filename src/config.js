@@ -5,7 +5,7 @@ export const CONFIG = {
     // (déjà constaté) d'en oublier un et de se retrouver avec un titre/badge en retard sur ce que
     // le code fait réellement depuis un moment. Les entrées PLUS ANCIENNES de l'historique restent
     // des chaînes figées (ce sont des versions passées, elles ne doivent plus bouger).
-    APP_VERSION: "V2.7",
+    APP_VERSION: "V3.0",
 
     CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSVu8Z5ZxyDpRVG3eFFLuWH_iWKZyKuLWKvW617wBfAMT6no6UVah6HSqlhM8LDKjheEc4EBfSXgooM/pub?gid=0&single=true&output=csv",
 

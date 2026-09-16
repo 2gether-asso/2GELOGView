@@ -19,32 +19,87 @@ import { AdminIssuesService } from './AdminIssuesService.js';
  * .md §12) : "search" (titre -> meilleure correspondance Film/Série), "details" (id TMDB connu
  * -> sa fiche directement, voir @tmdb: en §12.b) et "season" (id + numéro de saison -> la liste
  * des épisodes de cette saison, voir fetchTmdbSeason/§12.c pour les vignettes d'épisode).
+ *
+ * V2.10 - depuis que ce proxy n8n peut lui-même s'appuyer sur un cache PARTAGÉ (Grist, voir
+ * GUIDE_METADONNEES.md §12), un "miss" du cache LOCAL (ce fichier) ne coûte plus un aller-retour
+ * TMDB complet à chaque fois - juste une lecture Grist rapide côté serveur. Le cache local a donc
+ * été repensé en conséquence (voir FRESH_TTL_MS/STALE_MAX_AGE_MS ci-dessous) : fraîcheur courte
+ * avec revalidation en tâche de fond (stale-while-revalidate) plutôt qu'un unique TTL de 30 jours
+ * qui pouvait laisser un visiteur avec une fiche périmée bien après une correction du tableur.
  */
 
-const CACHE_KEY = 'tmdb:cache:v1';
-const SEASON_CACHE_KEY = 'tmdb:season-cache:v1';
-const CACHE_TTL_MS = 30 * 24 * 3600 * 1000; // 30 jours - une affiche/fiche TMDB change rarement.
+// Un peu d'historique sur ces deux TTL distincts (V2.10) : avant, un SEUL TTL (30 jours) servait
+// à la fois à décider "on retape le réseau" ET "on peut encore afficher ça en attendant mieux" -
+// logique quand chaque miss coûtait un aller-retour TMDB complet (mieux vaut garder une vieille
+// fiche que de spammer TMDB). Le proxy n8n servant désormais depuis Grist en premier, un miss
+// local est presque gratuit côté serveur : FRESH_TTL_MS (court) déclenche une revalidation bien
+// plus souvent, tout en gardant STALE_MAX_AGE_MS (toujours 30 jours) comme filet de sécurité -
+// une entrée entre les deux reste affichée TOUT DE SUITE (stale-while-revalidate, voir
+// isFresh/isUsable) pendant qu'une revalidation part en tâche de fond, sans jamais bloquer le
+// rendu sur ce réseau.
+const FRESH_TTL_MS = 4 * 24 * 3600 * 1000; // 4 jours avant de revalider en arrière-plan.
+const STALE_MAX_AGE_MS = 30 * 24 * 3600 * 1000; // 30 jours avant de considérer l'entrée illisible.
 
-// Miroir en mémoire du contenu déjà lu de chaque clé localStorage (CACHE_KEY / SEASON_CACHE_KEY) :
-// readCache() est appelée de façon SYNCHRONE à chaque rendu de tuile/carte (voir resolveEventImage
-// dans EventCardTemplate.js) et, en amont, une fois par événement candidat dans
-// prefetchTmdbImages (main.js) - sur un planning de plusieurs centaines d'occurrences, ça
-// représentait un JSON.parse() de tout le cache À CHAQUE appel plutôt qu'une fois. Le module
-// est le seul à écrire dans ces clés (writeCache), donc ce miroir ne peut pas devenir périmé par
-// rapport à localStorage tant que l'onglet reste ouvert.
-const memCaches = new Map();
+// Bump (V2.10) dès qu'une évolution change la FORME des entrées mises en cache (ex: l'ajout des
+// champs enrichis genres/cast/trailerKey/providers/certification plus tôt cette session) : sans
+// ça, une entrée mise en cache AVANT cet ajout reste "fraîche" jusqu'à 30 jours tout en manquant
+// silencieusement ces champs - obligeant un visiteur à vider lui-même son localStorage pour les
+// voir apparaître (vécu concrètement cette session, voir le "problème de cache" Scooby Doo). Une
+// entrée dont `schemaVersion` ne correspond plus est traitée comme absente (voir isUsable).
+const TMDB_CACHE_SCHEMA_VERSION = 2;
 
-function readCache(key) {
-    if (memCaches.has(key)) return memCaches.get(key);
-    let parsed;
-    try { parsed = JSON.parse(localStorage.getItem(key)) || {}; } catch { parsed = {}; }
-    memCaches.set(key, parsed);
-    return parsed;
+const FICHE_PREFIX = 'tmdb:cache:v1:';
+const SEASON_PREFIX = 'tmdb:season-cache:v1:';
+
+// Miroir en mémoire du contenu déjà lu de chaque entrée (une clé par titre/saison plutôt qu'un
+// seul gros blob JSON, voir getEntry/setEntry ci-dessous) : évite un JSON.parse() répété au
+// rendu de chaque tuile/carte (voir resolveEventImage dans EventCardTemplate.js). Le module est
+// le seul à écrire ces clés, donc ce miroir ne peut pas devenir périmé tant que l'onglet reste
+// ouvert.
+const memFiches = new Map();
+const memSeasons = new Map();
+
+/**
+ * Stockage par entrée (V2.10, une clé localStorage par titre/saison) plutôt qu'un unique blob
+ * JSON pour tout le cache (comme avant) : ce dernier obligeait à ré-sérialiser la TOTALITÉ du
+ * cache (JSON.stringify) à chaque mise à jour d'UNE SEULE entrée - de plus en plus coûteux à
+ * mesure que le cache grossit (plusieurs centaines de fiches, chacune bien plus lourde depuis
+ * l'ajout du casting/genres/bande-annonce/fournisseurs). Ici, une écriture ne touche que sa
+ * propre clé.
+ */
+function getEntry(mem, prefix, key) {
+    if (mem.has(key)) return mem.get(key);
+    let entry = null;
+    try { entry = JSON.parse(localStorage.getItem(prefix + key)); } catch { entry = null; }
+    mem.set(key, entry);
+    return entry;
 }
-function writeCache(key, cache) {
-    memCaches.set(key, cache);
-    try { localStorage.setItem(key, JSON.stringify(cache)); } catch { /* quota plein, stockage désactivé... tant pis, juste pas de cache persistant */ }
+function setEntry(mem, prefix, key, entry) {
+    mem.set(key, entry);
+    try { localStorage.setItem(prefix + key, JSON.stringify(entry)); } catch { /* quota plein, stockage désactivé... tant pis, juste pas de cache persistant */ }
 }
+function deleteEntry(mem, prefix, key) {
+    mem.delete(key);
+    try { localStorage.removeItem(prefix + key); } catch { /* tant pis */ }
+}
+/** Énumère les clés (suffixes, sans le préfixe) actuellement stockées sous un préfixe donné -
+ * utilisé par pruneTmdbCache, qui doit visiter CHAQUE entrée pour vérifier sa fraîcheur (une
+ * lecture par clé localStorage n'expose pas de "liste toutes les clés commençant par X" native,
+ * d'où ce petit scan de localStorage.key(i) une fois par jour maximum, voir PRUNE_INTERVAL_MS). */
+function listEntryKeys(prefix) {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) keys.push(k.slice(prefix.length));
+    }
+    return keys;
+}
+
+const getFicheEntry = key => getEntry(memFiches, FICHE_PREFIX, key);
+const setFicheEntry = (key, entry) => setEntry(memFiches, FICHE_PREFIX, key, entry);
+const deleteFicheEntry = key => deleteEntry(memFiches, FICHE_PREFIX, key);
+const getSeasonEntry = key => getEntry(memSeasons, SEASON_PREFIX, key);
+const setSeasonEntry = (key, entry) => setEntry(memSeasons, SEASON_PREFIX, key, entry);
 
 /**
  * Retire un ou plusieurs suffixes de saison/partie en fin de titre ("S1", "S3-S4", "S1 & S2",
@@ -161,8 +216,17 @@ export function isTmdbEligible(event) {
     return TMDB_ELIGIBLE_CATEGORIES.has(event.category);
 }
 
-function freshEntry(entry) {
-    return entry && (Date.now() - entry.fetchedAt) < CACHE_TTL_MS;
+/** Entrée encore montrable telle quelle (V2.10) - pas totalement périmée, ni d'une forme trop
+ * ancienne (voir TMDB_CACHE_SCHEMA_VERSION). Base des lectures SYNCHRONES (getCachedImageUrl,
+ * getCachedTmdbInfo, getCachedSeasonEpisodes) : un rendu de tuile/modale ne doit jamais attendre
+ * le réseau, une entrée un peu âgée reste largement préférable à rien du tout. */
+function isUsable(entry) {
+    return Boolean(entry) && entry.schemaVersion === TMDB_CACHE_SCHEMA_VERSION && (Date.now() - entry.fetchedAt) < STALE_MAX_AGE_MS;
+}
+/** Entrée assez récente pour qu'aucune revalidation ne soit nécessaire (voir FRESH_TTL_MS) -
+ * sous-ensemble strict de isUsable. */
+function isFresh(entry) {
+    return isUsable(entry) && (Date.now() - entry.fetchedAt) < FRESH_TTL_MS;
 }
 
 /**
@@ -170,43 +234,48 @@ function freshEntry(entry) {
  * tuiles/cartes (voir resolveEventImage dans EventCardTemplate.js), qui ne peut pas attendre un
  * aller-retour réseau au moment de construire le HTML. Ne renvoie quelque chose qu'une fois
  * qu'un fetchTmdbInfo() précédent (modale déjà ouverte pour ce titre, ou pré-chargement en
- * arrière-plan - voir prefetchTmdbImages dans main.js) a rempli le cache.
+ * arrière-plan - voir prefetchTmdbImages dans main.js) a rempli le cache. Renvoie une entrée
+ * STALE (au-delà de FRESH_TTL_MS mais encore utilisable, voir isUsable) telle quelle - une
+ * revalidation en tâche de fond peut être en cours ailleurs (voir fetchTmdbInfo), un prochain
+ * rendu en profitera automatiquement sans câblage supplémentaire.
  * @param {string} title
  * @returns {string|null}
  */
 export function getCachedImageUrl(title) {
-    const entry = readCache(CACHE_KEY)[normalizeKey(title)];
-    return freshEntry(entry) && entry.found ? (entry.imageUrl || null) : null;
+    const entry = getFicheEntry(normalizeKey(title));
+    return isUsable(entry) && entry.found ? (entry.imageUrl || null) : null;
 }
 
 /** Idem getCachedImageUrl, mais renvoie la fiche complète (lien TMDB, résumé, note, id...) -
  * utilisée par ModalView pour l'enrichissement affiché dans la modale (voir _renderTmdbInfo). */
 export function getCachedTmdbInfo(title) {
-    const entry = readCache(CACHE_KEY)[normalizeKey(title)];
-    return freshEntry(entry) && entry.found ? entry : null;
+    const entry = getFicheEntry(normalizeKey(title));
+    return isUsable(entry) && entry.found ? entry : null;
 }
 
-/** Un titre a-t-il déjà une entrée fraîche en cache, trouvée OU PAS (voir prefetchTmdbImages
- * dans main.js) ? Contrairement à getCachedTmdbInfo/getCachedImageUrl (qui ne renvoient
- * quelque chose que si une fiche a été TROUVÉE), sert ici à éviter de re-interroger en boucle
- * un titre déjà su "sans fiche TMDB" - fetchTmdbInfo le ferait déjà tout seul (cache interne),
- * mais un appelant qui boucle sur plusieurs titres avec un throttle entre chaque veut le savoir
- * à l'avance pour ne pas gâcher un créneau du throttle sur un titre déjà résolu. */
+/** Un titre a-t-il déjà une entrée FRAÎCHE en cache (pas juste utilisable, voir isFresh),
+ * trouvée OU PAS (voir prefetchTmdbImages dans main.js) ? Contrairement à getCachedTmdbInfo/
+ * getCachedImageUrl (qui acceptent une entrée simplement stale), sert ici à décider si un titre
+ * a besoin d'être (re)visité par le pré-chargement en arrière-plan - une entrée stale (au-delà de
+ * FRESH_TTL_MS) doit au contraire y RESTER candidate, pour que sa revalidation ait une chance de
+ * se déclencher (voir fetchTmdbInfo). */
 export function hasFreshCacheEntry(title) {
-    return freshEntry(readCache(CACHE_KEY)[normalizeKey(title)]);
+    return isFresh(getFicheEntry(normalizeKey(title)));
 }
 
 /**
- * Un seul appel POST au proxy n8n (timeout 6s, comme PollService), factorisé pour être appelé
- * plusieurs fois par fetchTmdbInfo (voir le repli @tmdb: cassé ci-dessous, qui retente un second
- * appel différent sans dupliquer tout ce boilerplate fetch/AbortController/timeout).
+ * Un seul appel POST au proxy n8n, avec une petite retentative (V2.10) avant d'abandonner : un
+ * timeout isolé est désormais plus probablement un blip transitoire qu'une vraie panne, le proxy
+ * n8n répondant en général vite (lecture Grist) plutôt que d'attendre TMDB à chaque appel. Le
+ * second essai utilise un timeout plus court : pas la peine d'attendre à nouveau 6s en plein
+ * échec réseau franc.
  * @param {Object} body
- * @returns {Promise<Object|null>} Le JSON de la réponse, ou `null` sur toute panne/timeout.
+ * @returns {Promise<Object|null>} Le JSON de la réponse, ou `null` si les deux tentatives échouent.
  */
-async function requestTmdb(body) {
+async function requestTmdbOnce(body, timeoutMs) {
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         const res = await fetch(CONFIG.TMDB_LOOKUP_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -220,6 +289,29 @@ async function requestTmdb(body) {
         return null;
     }
 }
+async function requestTmdb(body) {
+    const first = await requestTmdbOnce(body, 6000);
+    if (first) { trackTmdbSource(first); return first; }
+    const retry = await requestTmdbOnce(body, 3000);
+    if (retry) trackTmdbSource(retry);
+    return retry;
+}
+
+// Compteur Grist-hit vs vrai-appel-TMDB (V2.10, voir getTmdbSourceStats/mountTmdbCachePanel dans
+// AdminView.js) : purement indicatif, réinitialisé à chaque rechargement de page. Repose sur un
+// champ `_source` optionnel ("grist"|"tmdb") que le proxy n8n peut renvoyer dans sa réponse - tant
+// que le workflow n8n n'est pas étendu pour l'exposer, tout retombe simplement dans "unknown"
+// (dégradation silencieuse, comme le reste de l'intégration TMDB).
+const sourceStats = { grist: 0, tmdb: 0, unknown: 0 };
+function trackTmdbSource(data) {
+    if (data._source === 'grist') sourceStats.grist++;
+    else if (data._source === 'tmdb') sourceStats.tmdb++;
+    else sourceStats.unknown++;
+}
+/** @returns {{grist: number, tmdb: number, unknown: number}} */
+export function getTmdbSourceStats() {
+    return { ...sourceStats };
+}
 
 /**
  * Interroge le proxy n8n pour la fiche Film/Série d'un événement. `@tmdb:` (event.meta.tmdb,
@@ -228,20 +320,41 @@ async function requestTmdb(body) {
  * Repli automatique (V2.9) si cette fiche forcée ne répond plus (id supprimé/faute de frappe
  * dans l'URL @tmdb:) : retente une recherche par titre plutôt que d'abandonner - toujours mieux
  * qu'aucune fiche du tout, même si ce n'est alors qu'une approximation (voir
- * reportTmdbLookupIssue, qui distingue encore les deux cas dans le Mode Admin). Résultat mis en
- * cache - un succès COMME un "pas trouvé" (`found:false`), pour ne pas re-interroger en boucle à
- * chaque rendu un titre qui n'a simplement aucune fiche sur TMDB.
+ * reportTmdbLookupIssue, qui distingue encore les deux cas dans le Mode Admin).
+ *
+ * Stale-while-revalidate (V2.10) : une entrée fraîche (isFresh) est renvoyée sans réseau, comme
+ * avant. Une entrée simplement UTILISABLE mais périmée (isUsable, au-delà de FRESH_TTL_MS) est
+ * elle aussi renvoyée IMMÉDIATEMENT (jamais d'attente réseau visible), mais déclenche en plus une
+ * revalidation en tâche de fond (déduplique via ficheRevalidating pour ne jamais empiler deux
+ * revalidations du même titre en parallèle) - un futur rendu profitera de la version à jour une
+ * fois arrivée, sans que CET appel n'ait eu à attendre quoi que ce soit.
  * @param {Object} event
+ * @param {{force?: boolean}} [options] - `force: true` (voir forceRewarmTmdbCache dans
+ *   AdminView.js) ignore fraîcheur ET utilisabilité, toujours un aller-retour réseau bloquant.
  * @returns {Promise<{id: string, mediaType: string, imageUrl: string|null, tmdbUrl: string, overview: string, rating: number, genres?: string[], runtime?: number, cast?: Array, trailerKey?: string, providers?: Array, certification?: string, alternates?: Array}|null>}
  *   `null` si pas de fiche trouvée ou si le service est indisponible - jamais de rejet. Les
  *   champs au-delà de `rating` sont optionnels : absents tant que le proxy n8n n'est pas étendu
  *   pour les renvoyer (voir GUIDE_METADONNEES.md §12), l'app s'en passe silencieusement.
  */
-export async function fetchTmdbInfo(event) {
+export async function fetchTmdbInfo(event, { force = false } = {}) {
     const key = normalizeKey(event.title);
-    const cached = readCache(CACHE_KEY)[key];
-    if (freshEntry(cached)) return cached.found ? cached : null;
+    const cached = getFicheEntry(key);
 
+    if (!force && isFresh(cached)) return cached.found ? cached : null;
+
+    if (!force && isUsable(cached)) {
+        if (!ficheRevalidating.has(key)) {
+            ficheRevalidating.add(key);
+            doFetchTmdbInfo(event, key).finally(() => ficheRevalidating.delete(key));
+        }
+        return cached.found ? cached : null;
+    }
+
+    return doFetchTmdbInfo(event, key);
+}
+const ficheRevalidating = new Set();
+
+async function doFetchTmdbInfo(event, key) {
     const override = parseTmdbRef(event.meta?.tmdb);
     const body = override
         ? { action: 'details', mediaType: override.mediaType, id: override.id }
@@ -257,11 +370,17 @@ export async function fetchTmdbInfo(event) {
         overrideBroken = true;
     }
 
-    const cache = readCache(CACHE_KEY);
-    cache[key] = { ...data, fetchedAt: Date.now() };
-    writeCache(CACHE_KEY, cache);
+    // Garde-fou (V2.9) : le proxy n8n a renvoyé à une occasion un `id` sous forme d'URL complète
+    // ("https://www.themoviedb.org/tv/97645") au lieu de l'identifiant numérique brut attendu
+    // partout côté client (ex: fetchTmdbSeason(tmdbId, ...) construit alors une URL TMDB cassée,
+    // "/tv/https://.../season/..."). Ne corrige pas la cause côté n8n, mais évite qu'un id mal
+    // formé ne se propage silencieusement dans le cache local ET dans Grist via l'écriture n8n.
+    if (data.id) data.id = String(data.id).match(/(\d+)\s*$/)?.[1] || data.id;
+
+    const entry = { ...data, fetchedAt: Date.now(), schemaVersion: TMDB_CACHE_SCHEMA_VERSION };
+    setFicheEntry(key, entry);
     reportTmdbLookupIssue(event, key, override, data, overrideBroken);
-    return data.found ? cache[key] : null;
+    return data.found ? entry : null;
 }
 
 /**
@@ -296,79 +415,217 @@ function reportTmdbLookupIssue(event, key, override, data, overrideBroken = fals
 }
 
 /**
+ * Registre séparé (V2.10) du dernier `@tmdb:` connu pour chaque titre déjà vu, pour détecter
+ * quand un organisateur AJOUTE/CORRIGE/RETIRE ce tag sur une ligne du tableur - la clé de cache
+ * d'une fiche (normalizeKey) ne dépend que du TITRE, pas de son override, donc sans ce registre
+ * un tel changement resterait invisible du cache local jusqu'à son expiration naturelle (jusqu'à
+ * STALE_MAX_AGE_MS, vécu concrètement cette session). Distinct du cache fiche lui-même : ce n'est
+ * qu'un petit journal de signatures, jamais lu pour l'affichage.
+ * @param {Array<Object>} events - Tous les événements du dépôt (non filtrés).
+ */
+export function syncTmdbOverrideSignatures(events) {
+    let signatures;
+    try { signatures = JSON.parse(localStorage.getItem(OVERRIDE_SIGNATURES_KEY)) || {}; } catch { signatures = {}; }
+
+    const seenTitles = new Set();
+    let changed = false;
+
+    events.filter(isTmdbEligible).forEach(e => {
+        if (seenTitles.has(e.title)) return;
+        seenTitles.add(e.title);
+        const key = normalizeKey(e.title);
+        const signature = e.meta?.tmdb || '';
+        if (signatures[key] !== undefined && signatures[key] !== signature) {
+            // Le @tmdb: de ce titre a changé depuis le dernier chargement connu (ajouté, corrigé
+            // ou retiré) : la fiche déjà en cache correspond à l'ANCIEN override, à jeter.
+            deleteFicheEntry(key);
+            changed = true;
+        }
+        if (signatures[key] !== signature) { signatures[key] = signature; changed = true; }
+    });
+
+    if (changed) {
+        try { localStorage.setItem(OVERRIDE_SIGNATURES_KEY, JSON.stringify(signatures)); } catch { /* tant pis */ }
+    }
+}
+const OVERRIDE_SIGNATURES_KEY = 'tmdb:overrideSignatures:v1';
+
+/**
  * Lecture SYNCHRONE (jamais de réseau) des épisodes d'une saison déjà en cache - même logique
- * que getCachedImageUrl. Clé = série + saison (une même série a plusieurs saisons, donc pas
- * suffisant de ne clé que sur l'id TMDB).
+ * que getCachedImageUrl (accepte une entrée stale-mais-utilisable, voir isUsable). Clé = série +
+ * saison (une même série a plusieurs saisons, donc pas suffisant de ne clé que sur l'id TMDB).
  * @param {string} tmdbId
  * @param {number} season
  * @returns {Array<{episodeNumber: number, name: string, stillUrl: string|null}>|null}
  */
 export function getCachedSeasonEpisodes(tmdbId, season) {
-    const entry = readCache(SEASON_CACHE_KEY)[`${tmdbId}:${season}`];
-    return freshEntry(entry) && entry.found ? entry.episodes : null;
+    const entry = getSeasonEntry(`${tmdbId}:${season}`);
+    return isUsable(entry) && entry.found ? entry.episodes : null;
 }
 
 /**
- * Interroge le proxy n8n pour la liste des épisodes d'UNE saison d'une série TMDB (timeout 6s) -
- * un seul appel par saison (pas un par épisode), le résultat couvre alors TOUTES les occurrences
- * de cette saison quel que soit l'épisode précis affiché (voir _renderEpisodeThumbnails dans
- * ModalView.js, qui pioche dedans les numéros pertinents pour CETTE occurrence).
+ * Interroge le proxy n8n pour la liste des épisodes d'UNE saison d'une série TMDB - un seul appel
+ * par saison (pas un par épisode), le résultat couvre alors TOUTES les occurrences de cette
+ * saison quel que soit l'épisode précis affiché (voir _renderEpisodeThumbnails dans ModalView.js,
+ * qui pioche dedans les numéros pertinents pour CETTE occurrence). Même stale-while-revalidate
+ * que fetchTmdbInfo (V2.10, voir sa JSDoc pour le détail du mécanisme).
  * @param {string} tmdbId
  * @param {number} season
+ * @param {{force?: boolean}} [options]
  * @returns {Promise<Array<{episodeNumber: number, name: string, stillUrl: string|null}>|null>}
  */
-export async function fetchTmdbSeason(tmdbId, season) {
+export async function fetchTmdbSeason(tmdbId, season, { force = false } = {}) {
     const key = `${tmdbId}:${season}`;
-    const cached = readCache(SEASON_CACHE_KEY)[key];
-    if (freshEntry(cached)) return cached.found ? cached.episodes : null;
+    const cached = getSeasonEntry(key);
 
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(CONFIG.TMDB_LOOKUP_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'season', tmdbId, season }),
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        if (!res.ok) return null;
-        const data = await res.json();
+    if (!force && isFresh(cached)) return cached.found ? cached.episodes : null;
 
-        const cache = readCache(SEASON_CACHE_KEY);
-        cache[key] = { ...data, fetchedAt: Date.now() };
-        writeCache(SEASON_CACHE_KEY, cache);
-        return data.found ? data.episodes : null;
-    } catch {
-        return null;
+    if (!force && isUsable(cached)) {
+        if (!seasonRevalidating.has(key)) {
+            seasonRevalidating.add(key);
+            doFetchTmdbSeason(tmdbId, season, key).finally(() => seasonRevalidating.delete(key));
+        }
+        return cached.found ? cached.episodes : null;
     }
+
+    return doFetchTmdbSeason(tmdbId, season, key);
+}
+const seasonRevalidating = new Set();
+
+async function doFetchTmdbSeason(tmdbId, season, key) {
+    const data = await requestTmdb({ action: 'season', tmdbId, season });
+    if (!data) return null;
+
+    const entry = { ...data, fetchedAt: Date.now(), schemaVersion: TMDB_CACHE_SCHEMA_VERSION };
+    setSeasonEntry(key, entry);
+    return data.found ? data.episodes : null;
 }
 
 const PRUNE_LAST_RUN_KEY = 'tmdb:cache:lastPrunedAt';
-const PRUNE_INTERVAL_MS = 24 * 3600 * 1000; // Le TTL est de 30 jours - une fois par jour suffit largement.
+const PRUNE_INTERVAL_MS = 24 * 3600 * 1000; // Le TTL "utilisable" est de 30 jours - une fois par jour suffit largement.
+const LEGACY_BLOB_MIGRATED_KEY = 'tmdb:cache:migratedV2';
 
 /**
- * Purge les entrées expirées des deux caches (fiches + épisodes de saison, V2.8) - sans ça, une
- * entrée ("trouvée" ou "pas trouvée") pour un titre qui ne revient jamais dans le planning
- * s'accumule indéfiniment dans localStorage, jamais retirée (seulement RE-remplacée si ce même
- * titre est un jour recherché à nouveau). À appeler une fois au démarrage (voir main.js) - pas
- * besoin à chaque chargement de page vu le TTL de 30 jours, un repère dans localStorage borne
- * l'exécution réelle à une fois par jour maximum.
+ * Purge les entrées expirées des deux caches (fiches + épisodes de saison) - sans ça, une entrée
+ * ("trouvée" ou "pas trouvée") pour un titre qui ne revient jamais dans le planning s'accumule
+ * indéfiniment dans localStorage, jamais retirée. À appeler une fois au démarrage (voir main.js) -
+ * pas besoin à chaque chargement de page, un repère dans localStorage borne l'exécution réelle à
+ * une fois par jour maximum. Profite du passage pour supprimer, une seule fois (V2.10), les deux
+ * anciens blobs JSON pré-migration (`tmdb:cache:v1`/`tmdb:season-cache:v1`, un seul gros objet
+ * pour tout le cache) devenus orphelins depuis le passage à une clé par entrée ci-dessus - sans
+ * ça ils restent inertes dans localStorage indéfiniment.
  */
 export function pruneTmdbCache() {
+    try {
+        if (!localStorage.getItem(LEGACY_BLOB_MIGRATED_KEY)) {
+            localStorage.removeItem('tmdb:cache:v1');
+            localStorage.removeItem('tmdb:season-cache:v1');
+            localStorage.setItem(LEGACY_BLOB_MIGRATED_KEY, '1');
+        }
+    } catch { /* stockage indisponible - tant pis */ }
+
     try {
         const last = parseInt(localStorage.getItem(PRUNE_LAST_RUN_KEY) || '0', 10);
         if (Date.now() - last < PRUNE_INTERVAL_MS) return;
     } catch { /* repère illisible - on tente quand même la purge ci-dessous */ }
 
-    [CACHE_KEY, SEASON_CACHE_KEY].forEach(key => {
-        const cache = readCache(key);
-        let changed = false;
-        Object.keys(cache).forEach(k => {
-            if (!freshEntry(cache[k])) { delete cache[k]; changed = true; }
+    [
+        { mem: memFiches, prefix: FICHE_PREFIX },
+        { mem: memSeasons, prefix: SEASON_PREFIX }
+    ].forEach(({ mem, prefix }) => {
+        listEntryKeys(prefix).forEach(key => {
+            const entry = getEntry(mem, prefix, key);
+            if (!isUsable(entry)) deleteEntry(mem, prefix, key);
         });
-        if (changed) writeCache(key, cache);
     });
 
     try { localStorage.setItem(PRUNE_LAST_RUN_KEY, Date.now().toString()); } catch { /* stockage indisponible - tant pis */ }
+}
+
+const FORCE_REWARM_DELAY_MS = 400;
+
+/** Même repli que ModalView._renderEpisodeThumbnails pour déduire un numéro de saison : celui du
+ * titre ("AHS S13") en priorité, sinon celui du texte d'épisode le plus récent ("S13 E10"). */
+function guessSeasonNumber(event) {
+    const episodeText = event.meta?.episode || event.meta?.diffusion || event.sub || event.episode || "";
+    return parseSeasonNumber(event.title) ?? parseSeasonEpisode(episodeText)?.season ?? null;
+}
+
+/**
+ * Action Admin (V2.9, voir mountTmdbCachePanel dans AdminView.js) : force un aller-retour réseau
+ * pour les fiches et/ou saisons Film-Série éligibles du planning, même si le cache local est
+ * encore utilisable - contrairement à prefetchTmdbImages (main.js), qui saute volontairement tout
+ * ce qui est déjà frais et se limite à un petit lot. Utile pour peupler le cache PARTAGÉ côté n8n/
+ * Grist juste après sa mise en place (sans ça, il ne se remplit qu'organiquement au fil des
+ * visites), ou pour rafraîchir en masse après une correction côté n8n/tableur.
+ * `scope` (V2.9) : une fois les FICHES déjà correctes en cache (Grist et local), inutile de
+ * retaper une recherche TMDB par titre pour ne rafraîchir QUE les épisodes de saison (ex: après
+ * un correctif touchant uniquement l'action "season" côté n8n) - `'seasons'` réutilise alors les
+ * fiches déjà en cache LOCAL (getCachedTmdbInfo, aucun réseau) pour retrouver les tmdbId/saisons
+ * concernés, sans consommer de nouveaux appels "search"/"details". Symétriquement, `'fiches'`
+ * laisse les saisons intactes (utile pour ne pas rouvrir inutilement des saisons déjà bonnes le
+ * temps de corriger uniquement les fiches).
+ * Espacé (FORCE_REWARM_DELAY_MS) comme le prefetch, pour ne pas saturer le proxy n8n/TMDB - sur
+ * plusieurs centaines de titres, l'opération complète peut prendre plusieurs minutes.
+ * @param {Array<Object>} events - Tous les événements du dépôt (non filtrés).
+ * @param {(progress: {phase: 'fiches'|'seasons', done: number, total: number}) => void} [onProgress]
+ * @param {{scope?: 'all'|'fiches'|'seasons'}} [options]
+ * @returns {Promise<{fichesTotal: number, fichesFound: number, seasonsTotal: number, seasonsFound: number, seasonsSkippedNoFiche: number}>}
+ */
+export async function forceRewarmTmdbCache(events, onProgress, { scope = 'all' } = {}) {
+    const byTitle = new Map();
+    events
+        .filter(e => !e.isCanceled && isTmdbEligible(e))
+        .forEach(e => { if (!byTitle.has(e.title)) byTitle.set(e.title, e); });
+    const ficheEvents = [...byTitle.values()];
+
+    const seasonKeys = new Map(); // `${tmdbId}:${season}` -> { tmdbId, season }
+    let fichesFound = 0;
+    let seasonsSkippedNoFiche = 0;
+
+    if (scope === 'all' || scope === 'fiches') {
+        for (let i = 0; i < ficheEvents.length; i++) {
+            const event = ficheEvents[i];
+            const info = await fetchTmdbInfo(event, { force: true });
+            if (info) {
+                fichesFound++;
+                if (scope === 'all' && info.mediaType === 'tv') {
+                    const season = guessSeasonNumber(event);
+                    if (season != null) seasonKeys.set(`${info.id}:${season}`, { tmdbId: info.id, season });
+                }
+            }
+            onProgress?.({ phase: 'fiches', done: i + 1, total: ficheEvents.length });
+            await new Promise(r => setTimeout(r, FORCE_REWARM_DELAY_MS));
+        }
+    } else if (scope === 'seasons') {
+        // Pas de réseau ici : on ne veut QUE les saisons, les fiches déjà en cache local suffisent
+        // à retrouver tmdbId/mediaType (les mêmes que ce que prefetch/fetchTmdbInfo y ont déjà mis).
+        for (const event of ficheEvents) {
+            const info = getCachedTmdbInfo(event.title);
+            if (!info) { seasonsSkippedNoFiche++; continue; }
+            if (info.mediaType === 'tv') {
+                const season = guessSeasonNumber(event);
+                if (season != null) seasonKeys.set(`${info.id}:${season}`, { tmdbId: info.id, season });
+            }
+        }
+    }
+
+    const seasonList = scope === 'fiches' ? [] : [...seasonKeys.values()];
+    let seasonsFound = 0;
+
+    for (let i = 0; i < seasonList.length; i++) {
+        const { tmdbId, season } = seasonList[i];
+        const episodes = await fetchTmdbSeason(tmdbId, season, { force: true });
+        if (episodes) seasonsFound++;
+        onProgress?.({ phase: 'seasons', done: i + 1, total: seasonList.length });
+        await new Promise(r => setTimeout(r, FORCE_REWARM_DELAY_MS));
+    }
+
+    return {
+        fichesTotal: scope === 'seasons' ? 0 : ficheEvents.length,
+        fichesFound,
+        seasonsTotal: seasonList.length,
+        seasonsFound,
+        seasonsSkippedNoFiche
+    };
 }

@@ -11,6 +11,19 @@ import { extractYouTubeId, fetchYouTubeTitle } from '../utils/YouTube.js';
  */
 
 const PLAY_ICON = '<svg viewBox="0 0 24 24" class="w-4 h-4 text-white translate-x-[1px]" aria-hidden="true"><polygon points="8 5 19 12 8 19" fill="currentColor" stroke="none"></polygon></svg>';
+
+/** Bouton lecture avec anneau pulsant (V2.10) - même idiome que les autres pastilles "en direct"
+ * de l'app (voir renderLiveDot dans EventCardTemplate.js) : un `animate-ping` derrière le rond
+ * plein, pour mieux signaler "c'est cliquable" au premier coup d'oeil qu'un simple triangle
+ * statique. `sizeClass` partagé par les 3 endroits qui affichent ce bouton (lecteur inline,
+ * vignette de clip, vignette Highlights plein écran). */
+function playButtonHtml(sizeClass) {
+    return `
+        <div class="relative ${sizeClass}">
+            <span class="absolute inset-0 rounded-full bg-rose-500 opacity-60 animate-ping"></span>
+            <div class="relative ${sizeClass} rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${PLAY_ICON}</div>
+        </div>`;
+}
 const EXPAND_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-white" aria-hidden="true"><path d="M9 4H4v5"></path><path d="M15 4h5v5"></path><path d="M9 20H4v-5"></path><path d="M15 20h5v-5"></path></svg>';
 
 // 'normal' (modale, plus de place) vs 'compact' (nichée sous une carte événement plus étroite,
@@ -99,7 +112,7 @@ export function renderInlineYouTubePlayer(id) {
         <button type="button" data-inline-yt-id="${id}" class="relative block w-full aspect-video rounded-lg overflow-hidden border border-white/10 bg-black group" aria-label="Lire la vidéo YouTube">
             <img src="${thumb.src}" onerror="this.onerror=null;this.src='${thumb.fallback}'" alt="" class="w-full h-full object-cover">
             <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition-all">
-                <div class="w-10 h-10 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${PLAY_ICON}</div>
+                ${playButtonHtml('w-10 h-10')}
             </div>
         </button>`;
 }
@@ -128,7 +141,7 @@ function renderClipTile(id, format, sizeClass, index) {
             <div class="relative ${isShort ? 'aspect-[9/16]' : 'aspect-video'} rounded-lg overflow-hidden border border-white/10 bg-black">
                 <img src="${thumb.src}" onerror="this.onerror=null;this.src='${thumb.fallback}'" alt="" class="w-full h-full object-cover">
                 <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition-all">
-                    <div class="w-8 h-8 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${PLAY_ICON}</div>
+                    ${playButtonHtml('w-8 h-8')}
                 </div>
             </div>
             <div data-clip-title="${id}" class="text-2xs text-slate-400 font-semibold mt-1 line-clamp-2">${isShort ? 'Short' : 'Clip vidéo'}</div>
@@ -372,7 +385,7 @@ function renderGalleryCardInner(item, isActive) {
         return `
             <img src="${thumb.src}" onerror="this.onerror=null;this.src='${thumb.fallback}'" alt="" class="w-full h-full object-cover">
             <div class="absolute inset-0 bg-black/35 flex items-center justify-center">
-                <div class="w-10 h-10 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">${PLAY_ICON}</div>
+                ${playButtonHtml('w-10 h-10')}
             </div>`;
     }
     return `<img src="${escapeHtml(item.url)}" alt="Capture d'écran" class="w-full h-full ${isActive ? 'object-contain' : 'object-cover'}">`;

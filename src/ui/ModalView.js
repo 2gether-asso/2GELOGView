@@ -40,6 +40,24 @@ export class ModalView {
         container.addEventListener('click', (e) => {
             if (e.target === container) this.hide();
         });
+
+        // Glisser gauche/droite (V3.0, tactile) pour passer à l'événement chronologiquement
+        // suivant/précédent, même geste que le carrousel Highlights (voir attachGallerySwipeHandlers
+        // dans HighlightsView.js, mêmes seuils) - sans preventDefault : un vrai scroll vertical du
+        // contenu (grand dy, petit dx) n'est jamais intercepté, seul un geste surtout HORIZONTAL
+        // déclenche la navigation.
+        const modalBox = document.getElementById('custom-modal-box');
+        let touchStartX = 0, touchStartY = 0;
+        modalBox.addEventListener('touchstart', (e) => {
+            touchStartX = e.changedTouches[0].clientX;
+            touchStartY = e.changedTouches[0].clientY;
+        }, { passive: true });
+        modalBox.addEventListener('touchend', (e) => {
+            const dx = e.changedTouches[0].clientX - touchStartX;
+            const dy = e.changedTouches[0].clientY - touchStartY;
+            if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+            this._navigateToAdjacentEvent(dx < 0 ? 1 : -1);
+        }, { passive: true });
         // Accessibilité clavier : Échap ferme la modale, quel que soit l'élément focus.
         // Sauf si la visionneuse Highlights (voir HighlightsView.js) est ouverte par-dessus :
         // elle doit se fermer en premier (topmost d'abord), pas les deux d'un coup sur un seul
@@ -155,9 +173,60 @@ export class ModalView {
      * Ouvre la modale et injecte les données enrichies de l'événement cliqué.
      * @param {Object} event - L'instance de l'événement (tags cliquables, métadonnées, sous-épisodes)
      */
+    /**
+     * Ouvre l'événement chronologiquement suivant (+1) ou précédent (-1) par rapport à celui
+     * actuellement affiché (V3.0, voir le glisser tactile dans init()) - s'appuie sur le même
+     * callback `getAllEvents` que les suggestions "Vous aimerez peut-être", trié sur `start` à la
+     * volée (pas de tri mémorisé : la liste peut changer entre deux ouvertures de modale).
+     * Silencieux (rien à ouvrir) en bout de liste ou si l'événement courant n'y figure plus.
+     */
+    static _navigateToAdjacentEvent(direction) {
+        if (!this._getAllEvents || !this._currentEvent) return;
+        const sorted = [...this._getAllEvents()].filter(e => !e.isCanceled).sort((a, b) => a.start.localeCompare(b.start));
+        const idx = sorted.findIndex(e => e.id === this._currentEventId);
+        if (idx === -1) return;
+        const next = sorted[idx + direction];
+        if (next) this.open(next);
+    }
+
+    /**
+     * Mémorise la position de défilement de la vue liste actuellement visible (Frise/Recherche/
+     * Aujourd'hui/Année/Planning-Mois-Semaine) AVANT de l'obscurcir par la modale (V3.0) - restaurée
+     * par _restoreListScroll au ferme (voir hide()), pour ne pas perdre sa place en refermant.
+     * Chaque vue liste a son propre scroll indépendant SAUF le calendrier FullCalendar en
+     * `height:'auto'` (voir CalendarView.js), qui ne scrolle pas lui-même : c'est son conteneur
+     * englobant (`<section>`) qui le fait, d'où le repli sur `.closest('section')`.
+     */
+    static _captureListScroll() {
+        const paneIds = ['timeline-view', 'search-results', 'today-view', 'year-view'];
+        for (const id of paneIds) {
+            const el = document.getElementById(id);
+            if (el && !el.classList.contains('hidden')) {
+                this._savedScrollEl = el;
+                this._savedScrollTop = el.scrollTop;
+                return;
+            }
+        }
+        const section = document.getElementById('calendar')?.closest('section');
+        this._savedScrollEl = section || null;
+        this._savedScrollTop = section ? section.scrollTop : 0;
+    }
+
+    static _restoreListScroll() {
+        if (!this._savedScrollEl) return;
+        this._savedScrollEl.scrollTop = this._savedScrollTop;
+        this._savedScrollEl = null;
+    }
+
     static open(event) {
         this.init();
         if (!event) return;
+
+        // Seulement au changement RÉEL de vue liste (pas d'une modale à l'autre via le glisser
+        // tactile/les suggestions, où la vue liste sous-jacente n'a de toute façon pas bougé
+        // pendant que la modale la recouvrait) - éviter d'écraser une valeur déjà correcte par
+        // une lecture inutile ne coûte rien mais reste plus explicite ainsi.
+        if (!this._currentEvent) this._captureListScroll();
 
         this._currentEvent = event;
         this._currentEventId = event.id || null;
@@ -232,7 +301,15 @@ export class ModalView {
         // Métadonnées avancées (@host ou @orga, Helldwin par défaut si non précisé, @plateforme)
         const hostContainer = document.getElementById('modal-host-container');
         this._currentEventHost = event.meta?.host || event.meta?.orga || CONFIG.DEFAULT_HOST;
-        document.getElementById('modal-event-host').innerHTML = `${renderAvatarInitials(this._currentEventHost)}<span class="group-hover:underline">${escapeHtml(this._currentEventHost)}</span>`;
+        // Compteur "X sessions" (V3.0) - déjà visible sur le PROFIL dédié de l'organisateur, mais
+        // fallait jusque-là le quitter la modale pour le voir. Affiché seulement au-delà d'une
+        // session (le cas courant "1 session" n'apporte rien d'utile à signaler ici).
+        let hostCountLabel = '';
+        if (this._getAllEvents) {
+            const count = this._getAllEvents().filter(e => !e.isCanceled && (e.meta?.host || e.meta?.orga || CONFIG.DEFAULT_HOST) === this._currentEventHost).length;
+            if (count > 1) hostCountLabel = ` <span class="text-3xs text-slate-500 font-normal">· ${count} sessions</span>`;
+        }
+        document.getElementById('modal-event-host').innerHTML = `${renderAvatarInitials(this._currentEventHost)}<span class="group-hover:underline">${escapeHtml(this._currentEventHost)}</span>${hostCountLabel}`;
         hostContainer.classList.remove('hidden');
 
         // Plateforme (@plateforme) si renseignée, sinon Durée réelle en repli (V2.7.1), sinon
@@ -468,6 +545,8 @@ export class ModalView {
         }
         const eventId = event.id;
         const apply = (info) => {
+            document.getElementById('modal-tmdb-skeleton').classList.add('hidden');
+            document.getElementById('modal-tmdb-skeleton').classList.remove('flex');
             if (this._currentEventId !== eventId || !info) return;
             this._toggleModalLink('modal-event-tmdb', sanitizeUrl(info.tmdbUrl));
             if (!event.hasCustomImage && info.imageUrl) this._setHeaderImage(sanitizeUrl(info.imageUrl));
@@ -484,6 +563,12 @@ export class ModalView {
         const cached = getCachedTmdbInfo(event.title);
         if (cached) { apply(cached); return; }
         this._toggleModalLink('modal-event-tmdb', null);
+        // Squelette (V2.10) : rien d'utilisable en cache (ni frais, ni stale) - un vrai aller-
+        // retour réseau va suivre, affiche un signal de chargement plutôt qu'un bloc vide en
+        // attendant (voir #modal-tmdb-skeleton dans index.html).
+        const skeleton = document.getElementById('modal-tmdb-skeleton');
+        skeleton.classList.remove('hidden');
+        skeleton.classList.add('flex');
         fetchTmdbInfo(event).then(apply);
     }
 
@@ -503,6 +588,10 @@ export class ModalView {
             el.classList.remove('flex');
         });
         document.getElementById('modal-covered-episodes').innerHTML = '';
+
+        const skeletonReset = document.getElementById('modal-tmdb-skeleton');
+        skeletonReset.classList.add('hidden');
+        skeletonReset.classList.remove('flex');
 
         const summaryReset = document.getElementById('modal-tmdb-summary');
         summaryReset.classList.add('hidden');
@@ -557,7 +646,7 @@ export class ModalView {
         const genresEl = document.getElementById('modal-tmdb-genres');
         if (hasGenres) {
             genresEl.innerHTML = info.genres.slice(0, 4).map(g =>
-                `<span class="text-xxs font-bold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded-md">${escapeHtml(g)}</span>`
+                `<span class="text-xxs font-bold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded">${escapeHtml(g)}</span>`
             ).join('');
             genresEl.classList.remove('hidden');
             genresEl.classList.add('flex');
@@ -575,12 +664,16 @@ export class ModalView {
         }
 
         if (hasCast) {
+            // `w-16` + `line-clamp-2` sur le nom (V2.10, au lieu de `w-14` + `truncate` une seule
+            // ligne) : un nom un peu long ("Anne Hathaway") se coupait en plein mot ("Anne
+            // Hat…") - la place gagnée + une deuxième ligne autorisée laisse la plupart des noms
+            // se lire en entier. Le personnage (info secondaire) reste sur une seule ligne tronquée.
             document.getElementById('modal-tmdb-cast-row').innerHTML = info.cast.slice(0, 8).map(c => `
-                <div class="w-14 shrink-0 text-center">
+                <div class="w-16 shrink-0 text-center">
                     ${c.photoUrl
-                        ? `<img src="${escapeHtml(c.photoUrl)}" alt="" class="w-11 h-11 rounded-full object-cover mx-auto border border-white/10" onerror="this.style.display='none'">`
-                        : `<div class="w-11 h-11 rounded-full mx-auto bg-white/10 border border-white/10"></div>`}
-                    <div class="text-2xs text-slate-300 font-semibold mt-1 truncate" title="${escapeHtml(c.name || '')}">${escapeHtml(c.name || '')}</div>
+                        ? `<img src="${escapeHtml(c.photoUrl)}" alt="" loading="lazy" class="w-12 h-12 rounded-full object-cover mx-auto border border-white/10" onerror="this.style.display='none'">`
+                        : `<div class="w-12 h-12 rounded-full mx-auto bg-white/10 border border-white/10"></div>`}
+                    <div class="text-2xs text-slate-300 font-semibold mt-1 line-clamp-2" title="${escapeHtml(c.name || '')}">${escapeHtml(c.name || '')}</div>
                     ${c.character ? `<div class="text-3xs text-slate-500 truncate" title="${escapeHtml(c.character)}">${escapeHtml(c.character)}</div>` : ''}
                 </div>`).join('');
             const castEl = document.getElementById('modal-tmdb-cast');
@@ -589,8 +682,12 @@ export class ModalView {
         }
 
         if (hasProviders) {
+            // Fond blanc derrière chaque logo (V2.10) : plusieurs services (Apple TV+...) ont un
+            // logo clair/transparent qui se fondait dans le fond sombre de la modale - un petit
+            // cadre blanc arrondi (même idée que JustWatch/TMDB eux-mêmes) rend TOUS les logos
+            // lisibles quel que soit leur propre jeu de couleurs, sans avoir à connaître chacun.
             document.getElementById('modal-tmdb-providers-row').innerHTML = info.providers.slice(0, 6).map(p =>
-                `<img src="${escapeHtml(p.logoUrl)}" alt="${escapeHtml(p.name || '')}" title="${escapeHtml(p.name || '')}" class="w-6 h-6 rounded object-cover" onerror="this.style.display='none'">`
+                `<div class="w-7 h-7 rounded-md bg-white p-0.5 shadow-sm shrink-0" title="${escapeHtml(p.name || '')}"><img src="${escapeHtml(p.logoUrl)}" alt="${escapeHtml(p.name || '')}" loading="lazy" class="w-full h-full rounded object-contain" onerror="this.parentElement.style.display='none'"></div>`
             ).join('');
             const providersEl = document.getElementById('modal-tmdb-providers');
             providersEl.classList.remove('hidden');
@@ -659,7 +756,16 @@ export class ModalView {
         if (!totalEpisodes || episodeNumbers.length === 0) return;
         const maxEp = Math.max(...episodeNumbers);
         const pct = Math.max(0, Math.min(100, (maxEp / totalEpisodes) * 100));
-        document.getElementById('modal-season-progress-bar').style.width = `${pct}%`;
+        const bar = document.getElementById('modal-season-progress-bar');
+        bar.style.width = `${pct}%`;
+        // Couleur qui évolue avec l'avancement (V2.10, indigo -> émeraude) plutôt qu'un remplissage
+        // toujours de la même teinte - un simple coup d'oeil à la COULEUR (pas juste la largeur)
+        // suffit alors à distinguer "on démarre la saison" de "on l'a presque terminée".
+        const t = pct / 100;
+        const r = Math.round(129 + (52 - 129) * t);
+        const g = Math.round(140 + (211 - 140) * t);
+        const b = Math.round(248 + (153 - 248) * t);
+        bar.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
         document.getElementById('modal-season-progress-text').textContent = `Épisode ${maxEp} / ${totalEpisodes}`;
         const wrap = document.getElementById('modal-season-progress');
         wrap.classList.remove('hidden');
@@ -757,6 +863,7 @@ export class ModalView {
         this._currentEventId = null;
         this._currentEventTitle = null;
         this._currentEventHost = null;
+        this._restoreListScroll();
 
         // Restaure le focus sur l'élément qui avait ouvert la modale.
         if (this._lastFocused && typeof this._lastFocused.focus === 'function') {

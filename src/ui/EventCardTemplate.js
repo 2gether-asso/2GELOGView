@@ -160,6 +160,19 @@ function renderHighlightBadge(e) {
 }
 
 /**
+ * Étiquette "Rediffusion" (V2.10) - événement tagué #redif dans ses Notes, même principe que
+ * renderHighlightBadge juste au-dessus (#highlight) : un simple indicateur visuel directement sur
+ * la tuile/carte, pour repérer une rediffusion en un coup d'œil sans avoir à ouvrir la modale.
+ * Tag dédié plutôt que déduit d'un lien YouTube dans les Notes (voir ModalView._renderNotesVideo) :
+ * un lien YouTube n'est pas toujours une rediffusion (bande-annonce, référence...), alors qu'un
+ * tag posé à la main par l'organisateur est sans ambiguïté.
+ */
+function renderRedifBadge(e) {
+    if (!(e.tags || []).includes('redif')) return '';
+    return `<span class="inline-flex items-center gap-1 text-xxs font-bold text-cyan-300 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20" title="Rediffusion">${Icons.repeat('w-3 h-3 shrink-0')}Rediffusion</span>`;
+}
+
+/**
  * Attributs `data-umami-event*` (tracking analytics Umami, voir docs.umami.is/docs/track-events)
  * posés sur la tuile d'un événement, quelle que soit la vue qui l'affiche - Umami écoute les
  * clics globalement via cet attribut, aucun écouteur JS dédié n'est nécessaire ici. `view`
@@ -188,18 +201,28 @@ function renderCompactRow(e, readableDate, view) {
 
     const liveBorderCompact = isGenuinelyLive(e) && !e.isCanceled ? 'live-glow-border' : '';
     return `
-        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorderCompact}" style="border-left: 3px solid ${e.col};" ${umamiCardAttrs(e, view)}>
+        <!-- Annulé (V2.10) : barré réservé au SEUL titre (pas toute la carte) + opacité moins
+             agressive (60% au lieu de 30%) - avant, badges de type/statut/tags devenaient
+             quasi illisibles (30% d'opacité sur une pastille déjà semi-transparente), au lieu
+             de rester scannables sur une carte qu'on comprend juste comme "désactivée". -->
+        <!-- Fond très légèrement teinté par catégorie (V2.10, background-image plutôt que
+             background pour composer avec la couleur de fond déjà posée par .glass-card) - avant,
+             seule une fine bordure gauche signalait la couleur ; un repérage visuel par catégorie
+             dans une longue liste/grille devient plus rapide avec toute la carte teintée, même
+             discrètement. -->
+        <div class="glass-card relative flex items-start gap-2 w-full text-left px-2.5 py-1.5 my-0.5 rounded-lg overflow-hidden ${e.isCanceled ? 'opacity-60' : ''} ${liveBorderCompact}" style="border-left: 3px solid ${e.col}; background-image: linear-gradient(135deg, ${e.col}14, transparent 65%);" ${umamiCardAttrs(e, view)}>
             <img src="${iconSrc}" alt="" class="w-6 ${ICON_ASPECT_CLASS} rounded object-cover shrink-0 mt-0.5" onerror="this.style.display='none'">
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 min-w-0 whitespace-nowrap">
                     ${renderLiveDot(e)}
-                    <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0" title="${title}">${title}</span>
+                    <span class="text-sm font-bold text-slate-100 truncate flex-1 min-w-0 ${e.isCanceled ? 'line-through' : ''}" title="${title}">${title}</span>
                     ${e.heure ? `<span class="inline-flex items-center gap-1 text-xxs font-extrabold text-indigo-400 shrink-0">${Icons.clock('w-3 h-3 shrink-0')}${e.heure}${escapeHtml(getOvernightSuffix(e))}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-1.5 mt-0.5 min-w-0 flex-wrap">
                     <span class="text-2xs font-bold shrink-0 px-1.5 py-0.5 rounded border" style="color:${e.col}; background:linear-gradient(135deg, ${e.col}26, ${e.col}0d); border-color:${e.col}40;" title="${type}">${type}</span>
                     ${renderStatusBadge(e.progressStatus)}
                     ${renderHighlightBadge(e)}
+                    ${renderRedifBadge(e)}
                     ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-xxs font-medium text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 truncate">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
                     ${readableDate ? `<span class="text-xxs font-black text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">${readableDate}</span>` : ''}
                 </div>
@@ -243,7 +266,12 @@ export function renderEventCard(e, readableDate = null, view = '') {
     // l'appli) - cette classe permet à index.html de restaurer le texte clair par-dessus en thème
     // clair, là où le reste du texte de l'appli passe sombre (voir html[data-theme="light"] .has-poster).
     return `
-        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 my-1 rounded-xl ${e.isCanceled ? 'opacity-30 line-through' : ''} ${liveBorder} ${posterUrl ? 'has-poster' : ''}" style="border-left: 3px solid ${e.col};" ${umamiCardAttrs(e, view)}>
+        <!-- Annulé (V2.10) : voir la même note dans renderCompactRow plus haut - barré réservé au
+             titre, opacité de carte moins agressive pour garder les badges scannables. -->
+        <!-- Fond teinté par catégorie (V2.10) seulement SANS affiche (voir renderCompactRow pour
+             la même idée) - avec une affiche, posterLayer ci-dessous fait déjà le travail visuel,
+             superposer une teinte dessous n'apporterait rien et compliquerait son propre dégradé. -->
+        <div class="glass-card relative overflow-hidden flex flex-col w-full text-left p-3 my-1 rounded-xl ${e.isCanceled ? 'opacity-60' : ''} ${liveBorder} ${posterUrl ? 'has-poster' : ''}" style="border-left: 3px solid ${e.col};${posterUrl ? '' : ` background-image: linear-gradient(135deg, ${e.col}14, transparent 65%);`}" ${umamiCardAttrs(e, view)}>
             ${posterLayer}
             <div class="relative z-10 flex flex-col">
                 <div class="flex items-start justify-between space-x-1.5 w-full">
@@ -252,7 +280,7 @@ export function renderEventCard(e, readableDate = null, view = '') {
                         <div class="min-w-0">
                             <div class="flex items-center gap-1.5 min-w-0">
                                 ${renderLiveDot(e)}
-                                <div class="text-sm font-bold text-slate-100 truncate tracking-tight" title="${title}">${title}</div>
+                                <div class="text-sm font-bold text-slate-100 truncate tracking-tight ${e.isCanceled ? 'line-through' : ''}" title="${title}">${title}</div>
                             </div>
                             <div class="text-xxs font-bold text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
                                 <span class="text-xxs tracking-wide px-1.5 py-0.5 rounded-md border" style="color:${e.col}; background:linear-gradient(135deg, ${e.col}26, ${e.col}0d); border-color:${e.col}40;">${type}</span>
@@ -268,6 +296,7 @@ export function renderEventCard(e, readableDate = null, view = '') {
                     ${renderNewBadge(e)}
                     ${renderReminderBadge(e)}
                     ${renderHighlightBadge(e)}
+                    ${renderRedifBadge(e)}
                     ${detailsEpisode ? `<span class="inline-flex items-center gap-1 text-xxs font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">${Icons.tv('w-3 h-3 shrink-0')}${detailsEpisode}</span>` : ''}
                     ${location ? `<span class="inline-flex items-center gap-1 text-xxs font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">${Icons.mapPin('w-3 h-3 shrink-0')}${location}</span>` : ''}
                 </div>
